@@ -1,0 +1,82 @@
+import json
+import os
+from pathlib import Path
+
+
+DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_BASE_URL = "https://api.deepseek.com"
+
+
+def _load_env_file() -> None:
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def _api_key() -> str:
+    _load_env_file()
+    return os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+
+def is_available() -> bool:
+    return bool(_api_key())
+
+
+def _normalize_messages(messages, context=None) -> list[dict]:
+    if isinstance(messages, list):
+        return messages
+
+    context_json = json.dumps(context or {}, ensure_ascii=False, separators=(",", ":"))
+    return [
+        {
+            "role": "system",
+            "content": (
+                "คุณคือ SME Companion AI สำหรับเจ้าของร้านไทย "
+                "ตอบเป็นภาษาไทยเท่านั้น ใช้ข้อมูลจากบริบทที่ให้มา "
+                "ห้ามแต่งข้อมูลร้าน ยอดขาย ลูกค้า หรือเหตุการณ์ใหม่เอง "
+                "ตอบให้กระชับ ชัดเจน และมีสิ่งที่ทำได้ทันที"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"คำถามจากเจ้าของร้าน:\n{messages}\n\n"
+                f"บริบทของร้าน:\n{context_json}\n\n"
+                "โปรดตอบเป็นภาษาไทยโดยยึดบริบทนี้"
+            ),
+        },
+    ]
+
+
+def generate_response(messages, context=None) -> str | None:
+    api_key = _api_key()
+    if not api_key:
+        return None
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return None
+
+    client = OpenAI(api_key=api_key, base_url=DEFAULT_BASE_URL)
+    model = os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=_normalize_messages(messages, context),
+            temperature=0.7,
+            max_tokens=500,
+        )
+    except Exception:
+        return None
+
+    message = response.choices[0].message.content if response.choices else None
+    return message.strip() if message else None

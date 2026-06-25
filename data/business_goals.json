@@ -1,0 +1,153 @@
+{
+  "stores": {
+    "ร้านเสื้อผ้าใส่สบาย": {
+      "store_name": "ร้านเสื้อผ้าใส่สบาย",
+      "goals": [
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 2.0,
+          "current_value": 0.0,
+          "deadline": null,
+          "created_at": "2026-06-24T22:37:58",
+          "updated_at": "2026-06-24T22:37:58"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 2.0,
+          "current_value": 20000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T22:38:51",
+          "updated_at": "2026-06-24T22:38:51"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 2.0,
+          "current_value": 20000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:07:30",
+          "updated_at": "2026-06-24T23:07:30"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 20000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:07:47",
+          "updated_at": "2026-06-24T23:07:47"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 20000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:07:48",
+          "updated_at": "2026-06-24T23:07:48"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 20000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:07:50",
+          "updated_at": "2026-06-24T23:07:50"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 20000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:07:50",
+          "updated_at": "2026-06-24T23:07:50"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:01",
+          "updated_at": "2026-06-24T23:08:01"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:03",
+          "updated_at": "2026-06-24T23:08:03"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:03",
+          "updated_at": "2026-06-24T23:08:03"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:03",
+          "updated_at": "2026-06-24T23:08:03"
+        },
+        {
+          "goal_type": "content_consistency",
+          "goal_label": "ความสม่ำเสมอของคอนเทนต์",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:08",
+          "updated_at": "2026-06-24T23:08:08"
+        },
+        {
+          "goal_type": "content_consistency",
+          "goal_label": "ความสม่ำเสมอของคอนเทนต์",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:11",
+          "updated_at": "2026-06-24T23:08:11"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:20",
+          "updated_at": "2026-06-24T23:08:20"
+        },
+        {
+          "goal_type": "monthly_sales",
+          "goal_label": "ยอดขายรายเดือน",
+          "target_value": 30001.0,
+          "current_value": 2000.0,
+          "deadline": "2026-12-01",
+          "created_at": "2026-06-24T23:08:22",
+          "updated_at": "2026-06-24T23:08:22"
+        }
+      ],
+      "active_goal": {
+        "goal_type": "monthly_sales",
+        "goal_label": "ยอดขายรายเดือน",
+        "target_value": 30001.0,
+        "current_value": 2000.0,
+        "deadline": "2026-12-01",
+        "created_at": "2026-06-24T23:08:22",
+        "updated_at": "2026-06-24T23:08:22"
+      }
+    }
+  }
+}
