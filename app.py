@@ -24,7 +24,7 @@ from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
-from llm.llm_router import generate_llm_response, is_llm_available
+from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
 from memory.store_memory import (
     get_content_history,
     get_recent_topics,
@@ -813,8 +813,8 @@ def _show_chat_companion(
     )
     response = deterministic_response
     demo_ai_success = False
+    demo_mode = bool(st.session_state.get("demo_mode"))
     if use_llm_companion:
-        demo_mode = bool(st.session_state.get("demo_mode"))
         llm_context = build_llm_context(
             store_profile=profile,
             business_diagnosis=diagnosis or {},
@@ -829,8 +829,10 @@ def _show_chat_companion(
             intent_analysis=intent_analysis,
         )
         llm_reply = None
+        llm_attempted = False
         budget_allows_llm = can_call_llm(st)
         if not budget_allows_llm:
+            print("Fallback reason: budget guard")
             usage = get_llm_usage_state(st)
             if usage["monthly_used_usd"] >= usage["monthly_budget_usd"]:
                 st.info("เดือนนี้ระบบ AI ใช้งานครบโควต้าทดลองแล้ว แต่ยังสามารถดูภาพรวมธุรกิจและข้อมูลร้านตัวอย่างได้ตามปกติ")
@@ -838,6 +840,7 @@ def _show_chat_companion(
                 st.info("วันนี้ระบบ AI ใช้งานครบโควต้าทดลองแล้ว แต่ยังสามารถดูภาพรวมธุรกิจและข้อมูลร้านตัวอย่างได้ตามปกติ")
         elif not demo_mode or _allow_demo_llm_call(user_message, llm_context):
             with st.spinner("AI กำลังวิเคราะห์ข้อมูลร้าน..."):
+                llm_attempted = True
                 llm_reply = generate_llm_response(
                     user_message,
                     context=llm_context,
@@ -849,8 +852,15 @@ def _show_chat_companion(
                     st.session_state["demo_first_ai_success_shown"] = True
                     demo_ai_success = True
         else:
+            print("Fallback reason: demo token guard")
             st.info("วันนี้ใช้ผู้ช่วย AI สำหรับร้านตัวอย่างครบโควต้าแล้ว แต่ยังสามารถคุยต่อด้วยคำตอบพื้นฐานและใช้ฟีเจอร์เดโมอื่นได้ตามปกติ")
-        if budget_allows_llm and not llm_reply:
+        if llm_attempted and not llm_reply:
+            fallback_reason = (
+                "missing key"
+                if not provider_has_api_key(demo_mode=demo_mode)
+                else "provider error"
+            )
+            print(f"Fallback reason: {fallback_reason}")
             st.caption("ระบบใช้คำตอบพื้นฐานแทนผู้ช่วย AI ชั่วคราว")
         if llm_reply:
             response = {
@@ -859,6 +869,8 @@ def _show_chat_companion(
                 "related_feature": "ผู้ช่วย AI",
                 "related_module": "ผู้ช่วย AI",
             }
+    elif not provider_has_api_key(demo_mode=demo_mode):
+        print("Fallback reason: missing key")
 
     save_business_event(
         store_name=profile["store_name"],

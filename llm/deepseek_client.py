@@ -29,6 +29,10 @@ def is_available() -> bool:
     return bool(_api_key())
 
 
+def has_api_key() -> bool:
+    return bool(_api_key())
+
+
 def _normalize_messages(messages, context=None) -> list[dict]:
     if isinstance(messages, list):
         return messages
@@ -58,11 +62,13 @@ def _normalize_messages(messages, context=None) -> list[dict]:
 def generate_response(messages, context=None) -> str | None:
     api_key = _api_key()
     if not api_key:
+        print("DeepSeek response fail")
         return None
 
     try:
         from openai import OpenAI
     except ImportError:
+        print("DeepSeek response fail")
         return None
 
     client = OpenAI(api_key=api_key, base_url=DEFAULT_BASE_URL)
@@ -75,8 +81,15 @@ def generate_response(messages, context=None) -> str | None:
             temperature=0.7,
             max_tokens=500,
         )
-    except Exception:
+    except Exception as exc:
+        print(f"DeepSeek API Error: {exc.__class__.__name__}")
+        print("DeepSeek response fail")
         return None
 
     message = response.choices[0].message.content if response.choices else None
-    return message.strip() if message else None
+    if not message:
+        print("DeepSeek response fail")
+        return None
+
+    print("DeepSeek response success")
+    return message.strip()
