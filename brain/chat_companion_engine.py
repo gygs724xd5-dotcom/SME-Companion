@@ -326,6 +326,251 @@ def _casual_reply(intent: str) -> str:
     return "ได้ครับ เล่าเพิ่มอีกนิดว่าต้องการให้ช่วยเรื่องอะไร\nถ้าเป็นเรื่องร้าน ผมจะช่วยคิดให้เป็นขั้นตอนสั้นๆ ครับ"
 
 
+def _mobile_lines(lines: list[str], limit: int = 8) -> str:
+    clean_lines = [str(line or "").strip() for line in lines if str(line or "").strip()]
+    return "\n".join(clean_lines[:limit])
+
+
+def _first_action_line(text: str, fallback: str) -> str:
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = line.lstrip("-*• ").strip()
+        if len(line) > 3 and line[0].isdigit() and line[1:2] in {".", ")"}:
+            line = line[2:].strip()
+        if line:
+            return line
+    return fallback
+
+
+def _format_reply(
+    direct_answer: str,
+    why: str,
+    suggested_action: str,
+    related_module: str,
+    include_feature_block: bool = True,
+) -> str:
+    action = _first_action_line(suggested_action, direct_answer)
+    lines = [
+        direct_answer,
+        why,
+        f"ถ้าต้องเลือกทำอย่างเดียววันนี้ ผมแนะนำให้{action}ครับ",
+    ]
+    if include_feature_block:
+        lines.append(f"ดูภาพรวมประกอบได้จาก {localize_internal_labels(related_module)}")
+    return localize_internal_labels(_mobile_lines(lines))
+
+
+def _format_os_reply(
+    ctx: dict,
+    diagnosis: dict,
+    goal_status: dict,
+    business_os_state: dict,
+    fallback_action: str,
+) -> str:
+    store_name = ctx["store_name"]
+    today_action = business_os_state.get("today_action") or diagnosis.get("recommended_fix") or fallback_action
+    current_risk = business_os_state.get("current_risk") or diagnosis.get("likely_problem") or ""
+    opportunity = business_os_state.get("growth_opportunity") or ctx["next_angle"]
+    root_cause = diagnosis.get("root_cause") or ctx["recommendation"]
+
+    lines = [
+        f"ตอนนี้ {store_name} ควรโฟกัสเรื่องนี้ก่อนครับ: {today_action}",
+        root_cause,
+    ]
+    if current_risk:
+        lines.append(f"จุดที่ควรระวังคือ {current_risk}")
+    lines.extend(
+        [
+            f"โอกาสที่น่าลองต่อคือ {opportunity}",
+            f"วันนี้เริ่มจาก {today_action} ก่อนครับ",
+        ]
+    )
+    return localize_internal_labels(_mobile_lines(lines))
+
+
+def _startup_advisor_reply(user_message: str) -> str:
+    product_hint = "ธุรกิจนี้"
+    message = _clean(user_message)
+    for marker in ["เปิดร้าน", "เริ่มร้าน", "เริ่มธุรกิจ", "จะขาย", "อยากขาย", "เริ่มขาย"]:
+        if marker in message:
+            product_hint = message.split(marker, 1)[-1].strip() or product_hint
+            break
+    for phrase in ["ต้องเริ่มยังไง", "เริ่มยังไง", "ยังไง", "อย่างไร", "ดีไหม", "ดีมั้ย", "?"]:
+        product_hint = product_hint.replace(phrase, "").strip()
+    if "ไม่ใช่" in product_hint:
+        product_hint = product_hint.split("ไม่ใช่", 1)[0].strip()
+    product_hint = product_hint or "ธุรกิจนี้"
+
+    return _mobile_lines(
+        [
+            f"ถ้าจะเริ่ม{product_hint} ผมแนะนำให้เริ่มเล็กก่อนครับ",
+            "อย่าเพิ่งรีบทำครบทุกอย่างตั้งแต่วันแรก",
+            "ให้ชัดก่อนว่าใครคือลูกค้าหลัก และเขาซื้อเพราะปัญหาอะไร",
+            "จากนั้นคำนวณต้นทุน ราคาขาย และกำไรต่อชิ้นให้เห็นตัวเลขจริง",
+            "ลองขายล็อตเล็กก่อน เพื่อดูว่าลูกค้าถามอะไรและตัดสินใจตรงไหน",
+            "ตอนนี้คุณจะเริ่มขายออนไลน์หรือมีหน้าร้านก่อนครับ?",
+        ]
+    )
+
+
+def _casual_reply(intent: str) -> str:
+    if intent == GREETING:
+        return _mobile_lines(
+            [
+                "สวัสดีครับ ผมช่วยคิดเรื่องร้าน การขาย คอนเทนต์ หรือการเริ่มธุรกิจได้ครับ",
+                "วันนี้อยากให้ช่วยเรื่องไหนครับ?",
+            ]
+        )
+    if intent == FOLLOW_UP:
+        return _mobile_lines(
+            [
+                "ขอโทษครับ ผมน่าจะจับประเด็นไม่ตรง",
+                "คุณหมายถึงเรื่องไหนครับ?",
+            ]
+        )
+    return _mobile_lines(
+        [
+            "ได้ครับ เล่าเพิ่มอีกนิดว่าต้องการให้ช่วยเรื่องอะไร",
+            "ผมจะช่วยจัดเป็นขั้นตอนสั้นๆ ให้ครับ",
+        ]
+    )
+
+
+def _thai_business_intent(user_message: str, broad_intent: str) -> str:
+    message = _clean(user_message).lower()
+    if any(word in message for word in ["โพสต์", "คอนเทนต์", "ลงอะไร"]):
+        return "ask_daily_post"
+    if any(word in message for word in ["แคปชั่น", "caption"]):
+        return "ask_caption"
+    if any(word in message for word in ["รูป", "ถ่ายรูป", "ภาพ"]):
+        return "ask_photo_idea"
+    if any(word in message for word in ["วิดีโอ", "คลิป", "reels", "รีล", "tiktok"]):
+        return "ask_video_idea"
+    if any(word in message for word in ["โปร", "โปรโมชั่น", "โปรโมชัน", "ส่วนลด", "แคมเปญ"]):
+        return "ask_promotion"
+    if any(word in message for word in ["ยอดตก", "ขายตก", "เงียบ", "ไม่มีออเดอร์"]):
+        return "ask_sales_drop"
+    if any(word in message for word in ["เพิ่มยอด", "ขายดี", "ปิดการขาย"]):
+        return "ask_sales_growth"
+    if any(word in message for word in ["ลูกค้าใหม่", "หาลูกค้า"]):
+        return "ask_new_customer"
+    if any(word in message for word in ["ซื้อซ้ำ", "ลูกค้าเก่า", "กลับมาซื้อ", "รักษาลูกค้า"]):
+        return "ask_repeat_customer"
+    if any(word in message for word in ["รีวิว", "น่าเชื่อถือ", "ไว้ใจ", "มั่นใจ"]):
+        return "ask_customer_trust"
+    if any(word in message for word in ["สัปดาห์", "7 วัน"]):
+        return "ask_week_plan"
+    if any(word in message for word in ["เดือน", "เป้าหมาย"]):
+        return "ask_month_plan"
+    if any(word in message for word in ["คู่แข่ง", "ร้านอื่น"]):
+        return "ask_competitor"
+    if broad_intent == CONTENT:
+        return "ask_content_idea"
+    if broad_intent == MARKETING:
+        return "ask_promotion"
+    if broad_intent == SALES:
+        return "ask_sales_growth"
+    if broad_intent == CUSTOMER_RETENTION:
+        return "ask_repeat_customer"
+    return "ask_business_problem"
+
+
+def _thai_suggested_action(intent: str) -> str:
+    actions = {
+        "ask_daily_post": "โพสต์รีวิวลูกค้าหรือผลลัพธ์จริง 1 ชิ้น",
+        "ask_content_idea": "เลือกมุมคอนเทนต์ใหม่ที่ไม่ซ้ำกับโพสต์ล่าสุด",
+        "ask_caption": "เขียนแคปชั่นที่เริ่มจากปัญหาลูกค้า แล้วปิดด้วยคำชวนทัก",
+        "ask_photo_idea": "ถ่ายภาพที่เห็นสินค้าในการใช้งานจริง",
+        "ask_video_idea": "ทำคลิปสั้นแบบปัญหา วิธีแก้ และชวนทักแชท",
+        "ask_promotion": "ทำโปรที่มีเหตุผลซื้อชัด ไม่ลดราคาจนเสียคุณค่า",
+        "ask_sales_drop": "ทำโพสต์สร้างความน่าเชื่อถือ 1 ชิ้น",
+        "ask_sales_growth": "ดันสินค้าหลักด้วยข้อเสนอที่ตัดสินใจง่าย",
+        "ask_new_customer": "ทำคอนเทนต์ลดความเสี่ยงสำหรับลูกค้าใหม่",
+        "ask_repeat_customer": "ทำข้อเสนอเฉพาะลูกค้าเก่า",
+        "ask_customer_trust": "โพสต์รีวิวลูกค้าจริงหรือเบื้องหลังร้าน",
+        "ask_week_plan": "วางแผน 7 วันให้สลับรีวิว ความรู้ เบื้องหลัง และโปร",
+        "ask_month_plan": "แบ่งเดือนนี้เป็นรู้จักร้าน เชื่อมั่น กระตุ้นซื้อ และซื้อซ้ำ",
+        "ask_competitor": "เล่าจุดต่างของร้านโดยไม่โจมตีคู่แข่ง",
+    }
+    return actions.get(intent, "เริ่มจากแยกปัญหาว่าอยู่ที่คนเห็นน้อย ความเชื่อมั่น ข้อเสนอ หรือการปิดการขาย")
+
+
+def _intent_answer(intent: str, ctx: dict) -> tuple[str, str]:
+    product = ctx["product"]
+    target_customer = ctx["target_customer"]
+    store_name = ctx["store_name"]
+    store_type = ctx["store_type"]
+    next_angle = ctx["next_angle"]
+
+    answers = {
+        "ask_daily_post": (
+            f"วันนี้ผมแนะนำให้ {store_name} โพสต์มุมที่ช่วยให้{target_customer}ตัดสินใจง่ายขึ้นครับ",
+            f"มุมที่เหมาะตอนนี้คือ {next_angle}",
+        ),
+        "ask_content_idea": (
+            f"สำหรับ{store_type} ให้สลับ 3 มุมนี้ครับ: ประโยชน์สินค้า รีวิวลูกค้า และเบื้องหลังร้าน",
+            f"อย่าโพสต์ขายตรงซ้ำๆ เพราะลูกค้าจะเลื่อนผ่านเร็ว",
+        ),
+        "ask_caption": (
+            f"แคปชั่นควรเริ่มจากปัญหาของ{target_customer} แล้วค่อยพาไปที่คุณค่าของ {product}",
+            "ปิดท้ายด้วยคำชวนทักที่ชัด เช่น ทักแชทเพื่อดูราคา หรือจองวันนี้",
+        ),
+        "ask_photo_idea": (
+            f"ภาพที่ควรถ่ายคือภาพ {product} ตอนใช้งานจริงครับ",
+            "ภาพแบบนี้ช่วยให้ลูกค้านึกออกว่าเขาจะได้ประโยชน์อะไร",
+        ),
+        "ask_video_idea": (
+            f"ทำคลิปสั้น 3 ช่วงครับ: ปัญหาลูกค้า วิธีที่ {product} ช่วย และคำชวนทัก",
+            "คลิปไม่ต้องยาว แต่ต้องเห็นเหตุผลซื้อใน 3 วินาทีแรก",
+        ),
+        "ask_promotion": (
+            f"โปรที่เหมาะกับ{store_type}ควรทำให้ลูกค้าตัดสินใจง่าย ไม่ใช่ลดราคาอย่างเดียว",
+            "ลองใช้เซตแนะนำ ของแถม หรือโปรสำหรับลูกค้าใหม่ก่อนครับ",
+        ),
+        "ask_sales_drop": (
+            "ยอดตกมักเริ่มจากคนเห็นน้อยลง ความน่าเชื่อถือลด หรือข้อเสนอไม่น่าตัดสินใจพอ",
+            "ให้เริ่มจากโพสต์รีวิวจริงก่อน เพราะช่วยลดความลังเลได้เร็ว",
+        ),
+        "ask_sales_growth": (
+            f"ถ้าอยากเพิ่มยอด ให้เลือกดัน {product} ด้วยข้อเสนอที่เข้าใจง่ายครับ",
+            "ลูกค้าควรเห็นความคุ้ม รีวิว และวิธีสั่งในโพสต์เดียว",
+        ),
+        "ask_new_customer": (
+            "ลูกค้าใหม่ยังไม่เชื่อร้าน จึงต้องเห็นหลักฐานก่อนซื้อครับ",
+            "เริ่มจากรีวิว วิธีสั่งที่ชัด และข้อเสนอแรกซื้อที่ไม่เสี่ยง",
+        ),
+        "ask_repeat_customer": (
+            "ลูกค้าเก่าต้องมีเหตุผลใหม่ให้กลับมาครับ",
+            "ใช้สิทธิพิเศษ เซตคุ้มกว่าเดิม หรือแจ้งสินค้าใหม่ให้เขาก่อน",
+        ),
+        "ask_customer_trust": (
+            "ถ้าลูกค้ายังไม่มั่นใจ ให้เพิ่มหลักฐานจากคนจริงครับ",
+            "รีวิว เบื้องหลังร้าน และวิธีสั่งที่ชัดช่วยได้มาก",
+        ),
+        "ask_week_plan": (
+            "สัปดาห์นี้ควรวางคอนเทนต์ให้ครบทั้งรู้จักร้าน เชื่อมั่น และตัดสินใจซื้อครับ",
+            "อย่าให้ทั้งสัปดาห์เป็นโพสต์ขายแบบเดียวกัน",
+        ),
+        "ask_month_plan": (
+            "แผนเดือนนี้ควรแบ่งเป็น 4 ช่วง: รู้จักร้าน เชื่อมั่น กระตุ้นซื้อ และดึงลูกค้าเก่ากลับมา",
+            "แบบนี้จะไม่กดขายซ้ำทุกวัน และยังพาลูกค้าไปถึงการซื้อได้",
+        ),
+        "ask_competitor": (
+            "อย่าเริ่มจากแข่งราคา ให้เริ่มจากจุดต่างของร้านก่อนครับ",
+            f"เล่าให้ชัดว่า {product} เหมาะกับ{target_customer}ตรงไหนมากกว่าตัวเลือกทั่วไป",
+        ),
+    }
+    return answers.get(
+        intent,
+        (
+            f"ตอนนี้คำแนะนำของผมคือมองปัญหา {store_name} ให้เป็น 4 จุดก่อนครับ",
+            "คนเห็นน้อย ความเชื่อมั่น ข้อเสนอ และการปิดการขาย จุดไหนตัน ให้แก้จุดนั้นก่อน",
+        ),
+    )
+
+
 def generate_chat_response(
     user_message,
     store_profile,
@@ -373,6 +618,14 @@ def generate_chat_response(
         }
 
     intent_analysis = analyze_chat_intent(user_message, profile, insight, topics)
+    thai_intent = _thai_business_intent(user_message, broad_intent)
+    intent_analysis = {
+        **intent_analysis,
+        "intent": thai_intent,
+        "suggested_action": _thai_suggested_action(thai_intent),
+        "related_module": intent_analysis.get("related_module") or "SME Companion",
+        "confidence": max(float(intent_analysis.get("confidence") or 0), 0.75),
+    }
     ctx = _context(profile, insight, topics)
     message = _clean(user_message).lower()
     show_os = should_show_business_insights(broad_intent, user_message) if show_business_insights is None else show_business_insights

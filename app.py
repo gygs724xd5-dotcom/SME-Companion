@@ -346,6 +346,28 @@ def _init_session_state() -> None:
     st.session_state.setdefault("use_llm_companion", False)
 
 
+def _legacy_reset_conversation_state_for_demo_switch() -> None:
+    st.session_state["chat_history"] = []
+    st.session_state["last_reasoning"] = None
+    st.session_state["cached_prompt"] = None
+    st.session_state["last_ai_state"] = None
+    st.session_state["pending_followup"] = None
+    st.session_state["demo_first_ai_success_shown"] = False
+    if st.session_state["chat_history"]:
+        st.session_state["chat_history"][0]["content"] = (
+        "สวัสดีครับ ผมช่วยคิดเรื่องร้าน การขาย และคอนเทนต์ให้เป็นขั้นตอนสั้นๆ ได้ครับ\n"
+        "วันนี้อยากให้ช่วยเรื่องไหนครับ?"
+    )
+    st.session_state["demo_llm_tokens_used"] = 0
+    for key in [
+        "llm_context_cache",
+        "business_context_cache",
+        "cached_llm_context",
+        "cached_business_context",
+    ]:
+        st.session_state.pop(key, None)
+
+
 def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["last_reasoning"] = None
@@ -440,6 +462,10 @@ def _start_demo_store(store_key: str) -> None:
             ),
         }
     ]
+    st.session_state["chat_history"][0]["content"] = (
+        "สวัสดีครับ ผมช่วยคิดเรื่องร้าน การขาย และคอนเทนต์ให้เป็นขั้นตอนสั้นๆ ได้ครับ\n"
+        "วันนี้อยากให้ช่วยเรื่องไหนครับ?"
+    )
     st.session_state["demo_llm_tokens_used"] = 0
     st.session_state["demo_first_ai_success_shown"] = False
 
@@ -954,16 +980,16 @@ def _show_chat_companion(
     assistant_message = {
         "role": "assistant",
         "content": response["reply"],
-        "suggested_action": response.get("suggested_action"),
-        "related_feature": response.get("related_feature"),
+        "suggested_action": response.get("suggested_action") if show_business_insights else None,
+        "related_feature": response.get("related_feature") if show_business_insights else None,
     }
     st.session_state["chat_history"].append(assistant_message)
 
     with st.chat_message("assistant"):
         _render_markdown(response["reply"])
-        if response.get("suggested_action"):
+        if show_business_insights and response.get("suggested_action"):
             st.caption(f"สิ่งที่แนะนำ: {response['suggested_action']}")
-        if response.get("related_feature"):
+        if show_business_insights and response.get("related_feature"):
             st.caption(f"ฟีเจอร์ที่เกี่ยวข้อง: {response['related_feature']}")
     if demo_ai_success:
         st.success("✨ คุณได้ทดลองใช้ AI แล้ว ลองดูภาพรวมธุรกิจ แผนงานวันนี้ หรือกดสร้างโพสต์ต่อได้เลย")

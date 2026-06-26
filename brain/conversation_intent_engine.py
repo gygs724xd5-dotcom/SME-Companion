@@ -88,3 +88,44 @@ def should_use_business_context(intent: str) -> bool:
 def should_show_business_insights(intent: str, user_message: str) -> bool:
     message = _normalize(user_message)
     return intent == BUSINESS_ANALYSIS and _contains_any(message, BUSINESS_INSIGHT_KEYWORDS)
+
+
+_THAI_GREETING_KEYWORDS = ["สวัสดี", "หวัดดี", "ดีครับ", "ดีค่ะ"]
+_THAI_FOLLOW_UP_KEYWORDS = ["ไม่ใช่", "ไม่เอา", "พูดใหม่", "หมายถึง", "ไม่ใช่แบบนั้น"]
+_THAI_START_KEYWORDS = ["เปิดร้าน", "เริ่มร้าน", "เริ่มธุรกิจ", "จะขาย", "อยากขาย", "เริ่มขาย"]
+_THAI_CONTENT_KEYWORDS = ["โพสต์", "คอนเทนต์", "แคปชั่น", "รีล", "reels", "tiktok", "รูป", "วิดีโอ"]
+_THAI_MARKETING_KEYWORDS = ["โปร", "โปรโมชั่น", "โปรโมชัน", "ส่วนลด", "แคมเปญ"]
+_THAI_RETENTION_KEYWORDS = ["ซื้อซ้ำ", "ลูกค้าเก่า", "รักษาลูกค้า", "กลับมาซื้อ"]
+_THAI_SALES_KEYWORDS = ["ยอดตก", "ยอดขาย", "ขายดี", "เพิ่มยอด", "ปิดการขาย", "ไม่มีออเดอร์"]
+_THAI_ANALYSIS_KEYWORDS = ["ร้านนี้", "วิเคราะห์", "คะแนน", "สุขภาพธุรกิจ", "ดูภาพรวม", "ปัญหาร้าน", "ควรทำอะไรต่อ"]
+_THAI_GENERAL_KEYWORDS = ["คุย", "ถาม", "ช่วย", "คืออะไร"]
+
+
+def detect_conversation_intent(user_message: str) -> str:
+    message = _normalize(user_message)
+    if not message:
+        return OTHER
+    if message in {"สวัสดี", "หวัดดี", "ไง"} or _contains_any(message, _THAI_GREETING_KEYWORDS):
+        return GREETING
+    if _contains_any(message, _THAI_START_KEYWORDS):
+        return START_BUSINESS
+    if message in {"ไม่ใช่", "ไม่", "พูดใหม่"} or _contains_any(message, _THAI_FOLLOW_UP_KEYWORDS):
+        return FOLLOW_UP
+    if _contains_any(message, _THAI_CONTENT_KEYWORDS):
+        return CONTENT
+    if _contains_any(message, _THAI_MARKETING_KEYWORDS):
+        return MARKETING
+    if _contains_any(message, _THAI_RETENTION_KEYWORDS):
+        return CUSTOMER_RETENTION
+    if _contains_any(message, _THAI_SALES_KEYWORDS):
+        return SALES
+    if _contains_any(message, _THAI_ANALYSIS_KEYWORDS):
+        return BUSINESS_ANALYSIS
+    if _contains_any(message, _THAI_GENERAL_KEYWORDS):
+        return GENERAL_CHAT
+    return OTHER
+
+
+def should_show_business_insights(intent: str, user_message: str) -> bool:
+    message = _normalize(user_message)
+    return intent == BUSINESS_ANALYSIS and _contains_any(message, _THAI_ANALYSIS_KEYWORDS)
