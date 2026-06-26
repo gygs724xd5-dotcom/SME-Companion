@@ -334,6 +334,45 @@ def _build_companion(profile: dict | None, history: list[dict]) -> dict | None:
     )
 
 
+DEFAULT_CONVERSATION_STATE = {
+    "current_topic": None,
+    "business_type": None,
+    "latest_business_goal": None,
+    "last_question": None,
+    "last_answer": None,
+    "follow_up_expected": False,
+    "last_intent": None,
+    "conversation_stage": "new",
+    "last_feedback": None,
+    "last_correction": None,
+    "greeted": False,
+}
+
+
+def _new_conversation_state() -> dict:
+    return dict(DEFAULT_CONVERSATION_STATE)
+
+
+def _ensure_conversation_state() -> dict:
+    state = st.session_state.setdefault("conversation_state", _new_conversation_state())
+    for key, value in DEFAULT_CONVERSATION_STATE.items():
+        state.setdefault(key, value)
+    return state
+
+
+def _reset_conversation_memory() -> None:
+    st.session_state["conversation_state"] = _new_conversation_state()
+    st.session_state["pending_followup"] = None
+
+
+def _reset_chat_session() -> None:
+    st.session_state["chat_history"] = []
+    st.session_state["last_reasoning"] = None
+    st.session_state["cached_prompt"] = None
+    st.session_state["last_ai_state"] = None
+    _reset_conversation_memory()
+
+
 def _init_session_state() -> None:
     st.session_state.setdefault("demo_mode", False)
     st.session_state.setdefault("selected_demo_store", None)
@@ -353,6 +392,8 @@ def _init_session_state() -> None:
     st.session_state.setdefault("active_store_name", "")
     st.session_state.setdefault("last_diagnosis_signature", "")
     st.session_state.setdefault("use_llm_companion", False)
+    st.session_state.setdefault("developer_mode", False)
+    _ensure_conversation_state()
 
 
 def _legacy_reset_conversation_state_for_demo_switch() -> None:
@@ -361,6 +402,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
     st.session_state["pending_followup"] = None
+    _reset_conversation_memory()
     st.session_state["demo_first_ai_success_shown"] = False
     if st.session_state["chat_history"]:
         st.session_state["chat_history"][0]["content"] = (
@@ -383,6 +425,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
     st.session_state["pending_followup"] = None
+    _reset_conversation_memory()
     st.session_state["demo_first_ai_success_shown"] = False
     st.session_state["demo_llm_tokens_used"] = 0
     for key in [
@@ -474,6 +517,11 @@ def _start_demo_store(store_key: str) -> None:
     st.session_state["chat_history"][0]["content"] = (
         "สวัสดีครับ ผมช่วยคิดเรื่องร้าน การขาย และคอนเทนต์ให้เป็นขั้นตอนสั้นๆ ได้ครับ\n"
         "วันนี้อยากให้ช่วยเรื่องไหนครับ?"
+    )
+    _sync_conversation_business_context(demo_data.get("store_profile") or {}, None, None)
+    _update_conversation_state_after_assistant(
+        st.session_state["chat_history"][0]["content"],
+        "GREETING",
     )
     st.session_state["demo_llm_tokens_used"] = 0
     st.session_state["demo_first_ai_success_shown"] = False
@@ -836,6 +884,201 @@ def _latest_chat_context(chat_history: list[dict]) -> tuple[str | None, str | No
     return previous_user_message, assistant_reply
 
 
+def _contains_any_text(message: str, keywords: list[str]) -> bool:
+    normalized = str(message or "").strip().lower()
+    return any(keyword in normalized for keyword in keywords)
+
+
+def _is_reset_command(message: str) -> bool:
+    normalized = str(message or "").strip().lower()
+    return normalized in {
+        "reset",
+        "new conversation",
+        "เริ่มใหม่",
+        "เริ่มแชทใหม่",
+        "ล้างบทสนทนา",
+        "คุยใหม่",
+    }
+
+
+def _is_correction_message(message: str) -> bool:
+    normalized = str(message or "").strip().lower()
+    return normalized in {"ไม่ใช่", "ผิด", "ยังไม่ตรง", "ไม่ได้ถามแบบนั้น"} or _contains_any_text(
+        normalized,
+        ["ไม่ใช่แบบนั้น", "ตอบผิด", "เข้าใจผิด", "ไม่ตรงที่ถาม"],
+    )
+
+
+def _extract_business_type(message: str, profile: dict | None = None) -> str | None:
+    normalized = str(message or "").strip().lower()
+    business_types = {
+        "กาแฟ": "ร้านกาแฟ",
+        "coffee": "ร้านกาแฟ",
+        "อาหาร": "ร้านอาหาร",
+        "restaurant": "ร้านอาหาร",
+        "เสื้อ": "ร้านเสื้อผ้า",
+        "ผ้า": "ร้านเสื้อผ้า",
+        "clothing": "ร้านเสื้อผ้า",
+        "บิวตี้": "ร้านบิวตี้",
+        "beauty": "ร้านบิวตี้",
+        "ออนไลน์": "ร้านออนไลน์",
+        "online": "ร้านออนไลน์",
+        "วัสดุก่อสร้าง": "ร้านวัสดุก่อสร้าง",
+        "ก่อสร้าง": "ร้านวัสดุก่อสร้าง",
+    }
+    for keyword, label in business_types.items():
+        if keyword in normalized:
+            return label
+    if profile and profile.get("store_type"):
+        return str(profile["store_type"]).strip()
+    return None
+
+
+def _topic_from_intent(intent: str, user_message: str) -> str:
+    topic_by_intent = {
+        "MARKETING": "โปรโมชัน",
+        "CONTENT": "คอนเทนต์",
+        "SALES": "ยอดขาย",
+        "CUSTOMER_RETENTION": "ลูกค้าเก่า",
+        "BUSINESS_ANALYSIS": "ภาพรวมธุรกิจ",
+        "START_BUSINESS": "เริ่มธุรกิจ",
+        "PRODUCT_FEEDBACK": "Product Feedback",
+    }
+    return topic_by_intent.get(intent) or str(user_message or "").strip()[:60] or "บทสนทนานี้"
+
+
+def _sync_conversation_business_context(
+    profile: dict | None,
+    goal_status: dict | None,
+    business_os_state: dict | None,
+) -> dict:
+    state = _ensure_conversation_state()
+    if profile:
+        state["business_type"] = _extract_business_type(profile.get("store_type", ""), profile)
+    goal = (goal_status or {}).get("goal_label") or (business_os_state or {}).get("active_goal")
+    if goal:
+        state["latest_business_goal"] = goal
+    return state
+
+
+def _profile_with_conversation_memory(profile: dict | None) -> dict | None:
+    if not profile:
+        return None
+    state = _ensure_conversation_state()
+    business_type = state.get("business_type")
+    if not business_type:
+        return profile
+    return {**profile, "store_type": business_type}
+
+
+def _update_conversation_state_after_user(
+    user_message: str,
+    intent: str,
+    profile: dict | None,
+) -> dict:
+    state = _ensure_conversation_state()
+    business_type = _extract_business_type(user_message, profile)
+    if business_type:
+        state["business_type"] = business_type
+    if _is_correction_message(user_message):
+        state["last_correction"] = user_message
+        state["last_feedback"] = user_message
+    state["last_answer"] = user_message
+    state["last_intent"] = intent
+    if intent not in {"GREETING", "FOLLOW_UP", "OTHER"}:
+        state["current_topic"] = _topic_from_intent(intent, user_message)
+    return state
+
+
+def _update_conversation_state_after_assistant(reply: str, intent: str, topic: str | None = None) -> None:
+    state = _ensure_conversation_state()
+    if topic:
+        state["current_topic"] = topic
+    state["last_intent"] = intent
+    state["conversation_stage"] = "active"
+    stripped = str(reply or "").strip()
+    question_lines = [line.strip() for line in stripped.splitlines() if line.strip().endswith(("?", "ครับ", "ครับ?"))]
+    state["last_question"] = question_lines[-1] if question_lines else None
+    state["follow_up_expected"] = bool(state["last_question"] and any(token in state["last_question"] for token in ["หรือ", "ไหม", "?"]))
+    if "สวัสดีครับ" in stripped:
+        state["greeted"] = True
+
+
+def _one_question_correction_reply() -> str:
+    state = _ensure_conversation_state()
+    topic = state.get("current_topic") or "เรื่องก่อนหน้า"
+    return (
+        "เข้าใจแล้วครับ ผมตีความผิดเอง\n\n"
+        f"เมื่อกี้เราคุยเรื่อง{topic}\n\n"
+        "คุณต้องการให้ผมช่วยปรับคำตอบไปทางไหนครับ?"
+    )
+
+
+def _greeting_reply() -> str:
+    state = _ensure_conversation_state()
+    if state.get("greeted"):
+        return "สวัสดีครับ\n\nมีอะไรให้ช่วยต่อได้เลยครับ"
+    return "สวัสดีครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
+
+
+def _follow_up_reply(user_message: str, profile: dict | None) -> str | None:
+    state = _ensure_conversation_state()
+    if not state.get("follow_up_expected"):
+        return None
+    answer = str(user_message or "").strip()
+    state["last_answer"] = answer
+    business_type = state.get("business_type") or _extract_business_type(answer, profile) or "ร้านของคุณ"
+    topic = state.get("current_topic") or "เรื่องนี้"
+    return (
+        f"รับทราบครับ เป็น{answer}\n\n"
+        f"ผมจะต่อจากเรื่อง{topic}ของ{business_type}เลย\n\n"
+        "อยากให้ผมช่วยคิดเป็นโปรโมชัน ตัวอย่างโพสต์ หรือแผนขายสั้นๆ ครับ?"
+    )
+
+
+def _clean_chat_reply(reply: str, preserve_greeting: bool = False) -> str:
+    text = clean_response(reply)
+    state = _ensure_conversation_state()
+    while text.count("สวัสดีครับ") > 1:
+        first = text.find("สวัสดีครับ")
+        second = text.find("สวัสดีครับ", first + len("สวัสดีครับ"))
+        text = text[:second] + text[second + len("สวัสดีครับ"):].lstrip()
+    if state.get("greeted") and not preserve_greeting and text.startswith("สวัสดีครับ"):
+        text = text[len("สวัสดีครับ"):].lstrip(" \n")
+    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+    if not paragraphs:
+        return text
+
+    split_paragraphs = []
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if len(words) <= 150:
+            split_paragraphs.append(paragraph)
+            continue
+        chunk = []
+        for word in words:
+            chunk.append(word)
+            if len(chunk) >= 120:
+                split_paragraphs.append(" ".join(chunk))
+                chunk = []
+        if chunk:
+            split_paragraphs.append(" ".join(chunk))
+    return "\n\n".join(split_paragraphs)
+
+
+def _should_show_chat_footer(message: dict) -> bool:
+    return bool(message.get("show_business_insights") and (message.get("suggested_action") or message.get("related_feature")))
+
+
+def _render_assistant_footer(message: dict) -> None:
+    if not _should_show_chat_footer(message):
+        return
+    if message.get("suggested_action"):
+        st.caption(f"สิ่งที่แนะนำ: {localize_internal_labels(message['suggested_action'])}")
+    if message.get("related_feature"):
+        st.caption(f"ฟีเจอร์ที่เกี่ยวข้อง: {localize_internal_labels(message['related_feature'])}")
+
+
 def _handle_product_feedback(
     user_message: str,
     profile: dict,
@@ -857,7 +1100,7 @@ def _handle_product_feedback(
         page="chat",
         previous_user_message=previous_user_message,
         assistant_reply=assistant_reply,
-        app_version="V1.9.5",
+        app_version="V1.9.6",
     )
     if st.session_state.get("selected_demo_store"):
         record["selected_demo_store"] = st.session_state["selected_demo_store"]
@@ -876,6 +1119,9 @@ def _handle_product_feedback(
 
 
 def _show_feedback_summary() -> None:
+    if not st.session_state.get("developer_mode"):
+        return
+
     with st.expander("Product Feedback", expanded=False):
         show_summary = st.checkbox("แสดงสรุป Feedback ภายใน", value=False)
         if not show_summary:
@@ -909,6 +1155,11 @@ def _show_chat_companion(
     use_llm_companion: bool,
 ) -> None:
     st.markdown("### คุยกับ SME Companion")
+    _sync_conversation_business_context(profile, goal_status, business_os_state)
+
+    if st.button("เริ่มบทสนทนาใหม่", use_container_width=True):
+        _reset_chat_session()
+        st.rerun()
 
     if not profile:
         st.info("กรอกข้อมูลร้านก่อน เพื่อให้แชทตอบโดยใช้บริบทของร้านได้")
@@ -921,13 +1172,22 @@ def _show_chat_companion(
         with st.chat_message(message["role"]):
             _render_markdown(clean_response(message["content"]))
             if message["role"] == "assistant":
-                if message.get("suggested_action"):
-                    st.caption(f"สิ่งที่แนะนำ: {localize_internal_labels(message['suggested_action'])}")
-                if message.get("related_feature"):
-                    st.caption(f"ฟีเจอร์ที่เกี่ยวข้อง: {localize_internal_labels(message['related_feature'])}")
+                _render_assistant_footer(message)
 
     user_message = st.chat_input("ถามเรื่องโพสต์ โปร ยอดขาย หรือแผนคอนเทนต์")
     if not user_message:
+        return
+
+    if _is_reset_command(user_message):
+        _reset_chat_session()
+        reset_reply = "เริ่มบทสนทนาใหม่แล้วครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
+        _update_conversation_state_after_assistant(reset_reply, "GREETING")
+        st.session_state["chat_history"].append({"role": "user", "content": user_message})
+        st.session_state["chat_history"].append({"role": "assistant", "content": reset_reply})
+        with st.chat_message("user"):
+            _render_markdown(user_message)
+        with st.chat_message("assistant"):
+            _render_markdown(reset_reply)
         return
 
     previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
@@ -937,6 +1197,30 @@ def _show_chat_companion(
 
     conversation_intent = detect_conversation_intent(user_message)
     conversation_mode = get_conversation_mode(conversation_intent)
+    state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
+    chat_profile = _profile_with_conversation_memory(profile) or profile
+
+    simple_reply = None
+    if conversation_intent == "GREETING":
+        simple_reply = _greeting_reply()
+    elif _is_correction_message(user_message):
+        simple_reply = _one_question_correction_reply()
+    elif conversation_intent in {"FOLLOW_UP", "OTHER", "GENERAL_CHAT"}:
+        simple_reply = _follow_up_reply(user_message, chat_profile)
+
+    if simple_reply:
+        simple_reply = _clean_chat_reply(simple_reply, preserve_greeting=conversation_intent == "GREETING")
+        topic = state.get("current_topic")
+        _update_conversation_state_after_assistant(simple_reply, conversation_intent, topic)
+        assistant_message = {
+            "role": "assistant",
+            "content": simple_reply,
+            "show_business_insights": False,
+        }
+        st.session_state["chat_history"].append(assistant_message)
+        with st.chat_message("assistant"):
+            _render_markdown(simple_reply)
+        return
 
     if conversation_intent == "PRODUCT_FEEDBACK":
         response = _handle_product_feedback(
@@ -948,7 +1232,9 @@ def _show_chat_companion(
         assistant_message = {
             "role": "assistant",
             "content": response["reply"],
+            "show_business_insights": False,
         }
+        _update_conversation_state_after_assistant(response["reply"], conversation_intent, "Product Feedback")
         st.session_state["chat_history"].append(assistant_message)
         with st.chat_message("assistant"):
             _render_markdown(response["reply"])
@@ -959,7 +1245,7 @@ def _show_chat_companion(
     intent_analysis = (
         analyze_chat_intent(
             user_message,
-            profile,
+            chat_profile,
             business_insight or {},
             recent_topics,
         )
@@ -975,7 +1261,7 @@ def _show_chat_companion(
     )
     deterministic_response = generate_chat_response(
         user_message=user_message,
-        store_profile=profile,
+        store_profile=chat_profile,
         business_insight=business_insight or {},
         recent_topics=recent_topics,
         chat_history=st.session_state["chat_history"],
@@ -992,7 +1278,7 @@ def _show_chat_companion(
     llm_allowed_for_intent = conversation_intent not in {"GREETING", "FOLLOW_UP", "START_BUSINESS"}
     if use_llm_companion and llm_allowed_for_intent:
         llm_context = build_llm_context(
-            store_profile=profile,
+            store_profile=chat_profile,
             business_diagnosis=diagnosis or {},
             goal_status=goal_status or {},
             business_memory=(
@@ -1075,7 +1361,7 @@ def _show_chat_companion(
             summary=user_message,
             metadata={"urgency_level": (diagnosis or {}).get("urgency_level")},
         )
-    response["reply"] = clean_response(response["reply"])
+    response["reply"] = _clean_chat_reply(response["reply"])
     if response.get("suggested_action"):
         response["suggested_action"] = localize_internal_labels(response["suggested_action"])
     if response.get("related_feature"):
@@ -1085,15 +1371,18 @@ def _show_chat_companion(
         "content": response["reply"],
         "suggested_action": response.get("suggested_action") if show_business_insights else None,
         "related_feature": response.get("related_feature") if show_business_insights else None,
+        "show_business_insights": show_business_insights,
     }
+    _update_conversation_state_after_assistant(
+        response["reply"],
+        conversation_intent,
+        state.get("current_topic"),
+    )
     st.session_state["chat_history"].append(assistant_message)
 
     with st.chat_message("assistant"):
         _render_markdown(response["reply"])
-        if show_business_insights and response.get("suggested_action"):
-            st.caption(f"สิ่งที่แนะนำ: {response['suggested_action']}")
-        if show_business_insights and response.get("related_feature"):
-            st.caption(f"ฟีเจอร์ที่เกี่ยวข้อง: {response['related_feature']}")
+        _render_assistant_footer(assistant_message)
     if demo_ai_success:
         st.success("✨ คุณได้ทดลองใช้ AI แล้ว ลองดูภาพรวมธุรกิจ แผนงานวันนี้ หรือกดสร้างโพสต์ต่อได้เลย")
 
@@ -1132,8 +1421,6 @@ if current_store_name != st.session_state["active_store_name"]:
     st.session_state["generated_daily"] = None
     st.session_state["generated_calendar"] = None
     st.session_state["generated_revenue"] = None
-    if not demo_mode:
-        st.session_state["chat_history"] = []
     st.session_state["last_diagnosis_signature"] = ""
 
 saved_profile = demo_profile or (get_store_profile(store_name) if store_name.strip() else None)
@@ -1419,18 +1706,27 @@ if saved_goal:
     )
     st.success("บันทึกเป้าหมายร้านแล้ว")
 _show_revenue_engine()
-llm_available = is_llm_available(demo_mode=demo_mode)
-llm_default = llm_available if demo_mode else st.session_state["use_llm_companion"]
-use_llm_companion = st.checkbox(
-    "ใช้ผู้ช่วย AI เรียบเรียงคำตอบ",
-    value=llm_default,
-    disabled=not llm_available,
+
+developer_mode = st.sidebar.checkbox(
+    "Developer Mode",
+    value=bool(st.session_state.get("developer_mode")),
 )
-st.session_state["use_llm_companion"] = use_llm_companion
-if use_llm_companion:
-    st.caption("ผู้ช่วย AI จะเรียบเรียงคำตอบให้อ่านง่าย โดยยังยึดเหตุผลจากระบบเดิม")
-elif not llm_available:
-    st.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
+st.session_state["developer_mode"] = developer_mode
+
+llm_available = is_llm_available(demo_mode=demo_mode)
+use_llm_companion = bool(st.session_state.get("use_llm_companion")) if developer_mode else False
+if developer_mode:
+    llm_default = llm_available if demo_mode else st.session_state["use_llm_companion"]
+    use_llm_companion = st.checkbox(
+        "ใช้ผู้ช่วย AI เรียบเรียงคำตอบ",
+        value=llm_default,
+        disabled=not llm_available,
+    )
+    st.session_state["use_llm_companion"] = use_llm_companion
+    if use_llm_companion:
+        st.caption("ผู้ช่วย AI จะเรียบเรียงคำตอบให้อ่านง่าย โดยยังยึดเหตุผลจากระบบเดิม")
+    elif not llm_available:
+        st.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
 
 _show_feedback_summary()
 
