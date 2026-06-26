@@ -2,6 +2,19 @@ import re
 
 
 LABEL_REPLACEMENTS = {
+    "Today's Strategy": "แผนวันนี้",
+    "Why this strategy": "เหตุผล",
+    "New content angle": "แนวคอนเทนต์ใหม่",
+    "Best posting time": "เวลาที่เหมาะ",
+    "Sales angle": "มุมขาย",
+    "Promotion idea": "ไอเดียโปรโมชัน",
+    "Facebook caption": "แคปชัน Facebook",
+    "LINE broadcast": "ข้อความ LINE",
+    "TikTok caption": "แคปชัน TikTok",
+    "Hashtags": "แฮชแท็ก",
+    "Image idea": "ไอเดียภาพ",
+    "Call to action": "คำกระตุ้นการซื้อ",
+    "Product Intelligence": "ระบบเรียนรู้จากผู้ใช้",
     "Business Operating System Dashboard": "แผนงานธุรกิจ",
     "Business Insight Dashboard": "ภาพรวมธุรกิจ",
     "Revenue Engine": "ระบบเพิ่มยอดขาย",

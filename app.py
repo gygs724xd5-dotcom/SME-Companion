@@ -1,5 +1,6 @@
 import re
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import streamlit as st
@@ -15,8 +16,16 @@ from brain.chat_intelligence_engine import analyze_chat_intent
 from brain.conversation_intent_engine import (
     detect_conversation_intent,
     get_conversation_mode,
+    is_product_feedback,
     should_show_business_insights,
     should_use_business_context,
+)
+from brain.conversation_workflow_engine import (
+    WORKFLOW_COST_CALCULATION,
+    WORKFLOW_DASHBOARD_REQUEST,
+    WORKFLOW_PRODUCT_FEEDBACK,
+    WORKFLOW_RECEIPT_CAPTURE,
+    detect_workflow,
 )
 from brain.content_calendar_engine import generate_content_calendar
 from brain.content_strategy_engine import get_content_strategy
@@ -34,6 +43,7 @@ from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
 from feedback.product_learning_engine import prepare_dashboard_data, record_product_feedback
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
+from memory.receipt_storage import save_uploaded_receipt
 from memory.store_memory import (
     get_content_history,
     get_recent_topics,
@@ -256,6 +266,16 @@ def _format_baht(value) -> str:
     return f"{amount:,.2f} บาท"
 
 
+def _format_number(value) -> str:
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    if amount.is_integer():
+        return f"{amount:,.0f}"
+    return f"{amount:,.2f}".rstrip("0").rstrip(".")
+
+
 def _valid_inputs(
     store_name: str,
     store_type: str,
@@ -335,10 +355,16 @@ DEFAULT_CONVERSATION_STATE = {
     "last_answer": None,
     "follow_up_expected": False,
     "last_intent": None,
+    "previous_intent": None,
     "conversation_stage": "new",
     "last_feedback": None,
     "last_correction": None,
     "greeted": False,
+    "current_workflow": None,
+    "workflow_step": None,
+    "workflow_data": {},
+    "workflow_started_at": None,
+    "last_workflow_message": None,
 }
 
 
@@ -759,22 +785,39 @@ def _show_daily_content() -> None:
     if not daily:
         return
 
-    with st.expander("คอนเทนต์วันนี้", expanded=True):
+    with st.expander("แผนวันนี้", expanded=True):
         strategy = daily["strategy"]
         content = daily["content"]
         st.markdown(
             f"""
-**{strategy["strategy_name"]}**
+**แผนวันนี้**
+{strategy["strategy_name"]}
 
-**เป้าหมาย:** {strategy["content_goal"]}
+**เหตุผล**
+{strategy["strategy_reason"]}
 
-**เวลาที่เหมาะ:** {strategy["best_posting_time"]}
+**แนวคอนเทนต์**
+{content["content_angle"]}
 
-**มุมคอนเทนต์:** {content["content_angle"]}
+**เวลาที่เหมาะ**
+{strategy["best_posting_time"]}
 """
         )
-        st.divider()
-        _render_markdown(content["markdown"])
+        with st.expander("สร้างแคปชัน", expanded=False):
+            st.markdown("**แคปชัน Facebook**")
+            st.markdown(content["facebook_caption"])
+            st.markdown("**คำกระตุ้นการซื้อ**")
+            st.markdown(content["call_to_action"])
+            st.markdown("**แฮชแท็ก**")
+            st.markdown(" ".join(content["hashtags"]))
+        with st.expander("ไอเดียภาพ", expanded=False):
+            st.markdown("**ไอเดียภาพ**")
+            st.markdown(content["image_idea"])
+        with st.expander("ข้อความสำหรับ LINE / TikTok", expanded=False):
+            st.markdown("**ข้อความ LINE**")
+            st.markdown(content["line_broadcast"])
+            st.markdown("**แคปชัน TikTok**")
+            st.markdown(content["tiktok_caption"])
 
 
 def _show_calendar() -> None:
@@ -981,6 +1024,7 @@ def _update_conversation_state_after_user(
         state["last_correction"] = user_message
         state["last_feedback"] = user_message
     state["last_answer"] = user_message
+    state["previous_intent"] = state.get("last_intent")
     state["last_intent"] = intent
     if intent not in {"GREETING", "FOLLOW_UP", "OTHER"}:
         state["current_topic"] = _topic_from_intent(intent, user_message)
@@ -1026,6 +1070,16 @@ def _follow_up_reply(user_message: str, profile: dict | None) -> str | None:
     state["last_answer"] = answer
     business_type = state.get("business_type") or _extract_business_type(answer, profile) or "ร้านของคุณ"
     topic = state.get("current_topic") or "เรื่องนี้"
+    if state.get("current_workflow") == WORKFLOW_COST_CALCULATION:
+        return "รับทราบครับ ส่งตัวเลขวัตถุดิบ จำนวนชิ้นที่ทำได้ และราคาขายต่อชิ้นมาได้เลยครับ"
+    if state.get("current_workflow") == WORKFLOW_RECEIPT_CAPTURE:
+        return "รับทราบครับ ส่งไฟล์ที่ช่องอัปโหลดบิล / สลิปได้เลยครับ ตอนนี้ระบบจะบันทึกไฟล์ไว้ก่อน"
+    if state.get("previous_intent") not in {"CONTENT", "MARKETING", "SALES"}:
+        return (
+            f"รับทราบครับ เป็น{answer}\n\n"
+            f"ผมจะต่อจากเรื่อง{topic}ของ{business_type}ให้ครับ\n\n"
+            "อยากให้ผมช่วยต่อจากข้อมูลไหนครับ?"
+        )
     return (
         f"รับทราบครับ เป็น{answer}\n\n"
         f"ผมจะต่อจากเรื่อง{topic}ของ{business_type}เลย\n\n"
@@ -1110,12 +1164,162 @@ def _handle_product_feedback(
     }
 
 
+def _set_workflow_state(workflow: str, step: str, user_message: str, data: dict | None = None) -> None:
+    state = _ensure_conversation_state()
+    state["current_workflow"] = workflow
+    state["workflow_step"] = step
+    state["workflow_data"] = data or state.get("workflow_data") or {}
+    state["workflow_started_at"] = state.get("workflow_started_at") or datetime.now(timezone.utc).isoformat()
+    state["last_workflow_message"] = user_message
+
+
+def _clear_workflow_state() -> None:
+    state = _ensure_conversation_state()
+    state["current_workflow"] = None
+    state["workflow_step"] = None
+    state["workflow_data"] = {}
+    state["workflow_started_at"] = None
+    state["last_workflow_message"] = None
+
+
+def _cost_intro_reply() -> str:
+    return """ได้ครับ ผมช่วยคำนวณต้นทุนต่อชิ้นให้ได้
+
+ช่วยส่งข้อมูลแบบนี้ครับ:
+
+1. วัตถุดิบแต่ละอย่าง + ราคา
+2. จำนวนชิ้นที่ทำได้ทั้งหมด
+3. ราคาขายต่อชิ้น ถ้ามี
+
+ตัวอย่าง:
+แป้ง 40 บาท
+ไข่ 30 บาท
+น้ำตาล 20 บาท
+ทำได้ 50 ชิ้น
+ขายชิ้นละ 15 บาท"""
+
+
+def _parse_cost_inputs(message: str) -> dict:
+    ingredients = []
+    total_pieces = None
+    selling_price = None
+
+    for raw_line in str(message or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        numbers = [float(value.replace(",", "")) for value in re.findall(r"\d+(?:,\d{3})*(?:\.\d+)?", line)]
+        if not numbers:
+            continue
+
+        lowered = line.lower()
+        if any(keyword in lowered for keyword in ["ทำได้", "ได้ทั้งหมด", "จำนวนชิ้น", "ผลิตได้"]):
+            total_pieces = numbers[-1]
+            continue
+        if any(keyword in lowered for keyword in ["ขาย", "ราคาขาย", "ชิ้นละ"]):
+            selling_price = numbers[-1]
+            continue
+        ingredients.append({"name": re.sub(r"\d+(?:,\d{3})*(?:\.\d+)?|บาท", "", line).strip() or "วัตถุดิบ", "cost": numbers[-1]})
+
+    total_cost = sum(item["cost"] for item in ingredients)
+    return {
+        "ingredients": ingredients,
+        "total_cost": total_cost,
+        "total_pieces": total_pieces,
+        "selling_price": selling_price,
+    }
+
+
+def _cost_result_reply(parsed: dict) -> tuple[str, bool]:
+    ingredients = parsed.get("ingredients") or []
+    total_cost = float(parsed.get("total_cost") or 0)
+    total_pieces = parsed.get("total_pieces")
+    selling_price = parsed.get("selling_price")
+
+    if not ingredients:
+        return "ขอราคาวัตถุดิบแต่ละอย่างก่อนครับ เช่น แป้ง 40 ไข่ 30 น้ำตาล 20", False
+    if not total_pieces:
+        return "รวมต้นทุนวัตถุดิบได้แล้วครับ ขอจำนวนชิ้นที่ทำได้ทั้งหมดอีกอย่างเดียวครับ", False
+
+    cost_per_piece = total_cost / float(total_pieces)
+    lines = [
+        "คำนวณเบื้องต้นได้แบบนี้ครับ",
+        "",
+        f"ต้นทุนรวม: {_format_number(total_cost)} บาท",
+        f"จำนวนที่ทำได้: {_format_number(total_pieces)} ชิ้น",
+        f"ต้นทุนต่อชิ้น: {_format_number(cost_per_piece)} บาท",
+    ]
+
+    if selling_price:
+        gross_profit = float(selling_price) - cost_per_piece
+        margin = (gross_profit / float(selling_price)) * 100 if float(selling_price) else 0
+        lines.extend(
+            [
+                f"ราคาขายต่อชิ้น: {_format_number(selling_price)} บาท",
+                f"กำไรขั้นต้นต่อชิ้น: {_format_number(gross_profit)} บาท",
+                f"มาร์จิ้น: {_format_number(margin)}%",
+                "",
+                "ขั้นต่อไปลองเช็กต้นทุนแฝง เช่น กล่อง ถุง ค่าแก๊ส หรือค่าขนส่งครับ",
+            ]
+        )
+    else:
+        lines.extend(["", "ถ้าต้องการคำนวณกำไรต่อชิ้น ส่งราคาขายต่อชิ้นมาได้ครับ"])
+
+    return "\n".join(lines), True
+
+
+def _handle_cost_workflow(user_message: str, starting: bool = False) -> dict:
+    if starting:
+        _set_workflow_state(WORKFLOW_COST_CALCULATION, "collecting_cost_inputs", user_message)
+        return {"reply": _cost_intro_reply(), "intent": WORKFLOW_COST_CALCULATION, "done": False}
+
+    parsed = _parse_cost_inputs(user_message)
+    reply, done = _cost_result_reply(parsed)
+    _set_workflow_state(WORKFLOW_COST_CALCULATION, "completed" if done else "collecting_cost_inputs", user_message, parsed)
+    return {"reply": reply, "intent": WORKFLOW_COST_CALCULATION, "done": done}
+
+
+def _handle_dashboard_workflow(user_message: str) -> dict:
+    record_product_feedback(user_message, conversation_id=st.session_state.get("conversation_id"))
+    _clear_workflow_state()
+    return {
+        "reply": """ตอนนี้ระบบมีแดชบอร์ดพื้นฐานให้แล้วครับ
+ถ้าต้องการแดชบอร์ดเฉพาะร้าน ผมบันทึกเป็นคำขอฟีเจอร์ให้ทีมพัฒนาแล้ว
+
+ตัวอย่างแดชบอร์ดที่ทำได้ในอนาคต:
+- ยอดขายรายวัน
+- ต้นทุน / กำไร
+- สต๊อกสินค้า
+- ลูกค้าประจำ
+- คอนเทนต์ที่ได้ผลดี""",
+        "intent": WORKFLOW_DASHBOARD_REQUEST,
+    }
+
+
+def _handle_receipt_workflow(user_message: str) -> dict:
+    _set_workflow_state(WORKFLOW_RECEIPT_CAPTURE, "waiting_for_upload", user_message)
+    normalized = str(user_message or "").strip().lower()
+    if "อ่าน" in normalized:
+        reply = "ตอนนี้บันทึกบิลได้แล้ว แต่ยังอ่านตัวเลขอัตโนมัติไม่ได้เต็มรูปแบบ ขั้นต่อไปคือเพิ่ม OCR"
+    else:
+        reply = "ส่งไฟล์ที่ช่องอัปโหลดบิล / สลิปได้ครับ ตอนนี้ระบบจะบันทึกไฟล์ไว้ก่อน และขั้นถัดไปจะเพิ่ม OCR เพื่ออ่านยอดเงินจากบิล"
+    return {"reply": reply, "intent": WORKFLOW_RECEIPT_CAPTURE}
+
+
+def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) -> None:
+    assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
+    _update_conversation_state_after_assistant(reply, intent, topic)
+    st.session_state["chat_history"].append(assistant_message)
+    with st.chat_message("assistant"):
+        _render_markdown(reply)
+
+
 def _show_feedback_summary() -> None:
     if not st.session_state.get("developer_mode"):
         return
 
-    with st.expander("Product Intelligence", expanded=False):
-        show_summary = st.checkbox("แสดง Developer Dashboard", value=False)
+    with st.expander("ระบบเรียนรู้จากผู้ใช้", expanded=False):
+        show_summary = st.checkbox("แสดงแดชบอร์ดทีมพัฒนา", value=False)
         if not show_summary:
             st.caption("ส่วนนี้ใช้สำหรับทีมพัฒนาเท่านั้น")
             return
@@ -1125,7 +1329,7 @@ def _show_feedback_summary() -> None:
         st.metric("Feedback ทั้งหมด", counts["total_count"])
         st.metric("Backlog เปิดอยู่", counts["backlog_open"])
 
-        st.write("Counts")
+        st.write("จำนวนตามหมวด")
         st.json(
             {
                 "category": counts["by_category"],
@@ -1134,27 +1338,48 @@ def _show_feedback_summary() -> None:
             }
         )
 
-        st.write("Top Requested Features")
+        st.write("ฟีเจอร์ที่ถูกขอมากที่สุด")
         for issue in dashboard["top_requested_features"]:
             st.markdown(f"- **{issue['title']}** ({issue['priority']}) x{issue['count']}")
 
-        st.write("Top Bugs")
+        st.write("บั๊กที่พบบ่อย")
         for issue in dashboard["top_bugs"]:
             st.markdown(f"- **{issue['title']}** ({issue['priority']}) x{issue['count']}")
 
-        st.write("Top UX Problems")
+        st.write("ปัญหาประสบการณ์ใช้งาน")
         for issue in dashboard["top_ux_problems"]:
             st.markdown(f"- **{issue['title']}** ({issue['priority']}) x{issue['count']}")
 
-        st.write("Feedback Trend")
+        st.write("แนวโน้มฟีดแบ็ก")
         st.json(dashboard["feedback_trend"]["daily_counts"])
 
-        st.write("Latest Feedback")
+        st.write("ฟีดแบ็กล่าสุด")
         for record in dashboard["latest_feedback"]:
             st.markdown(
                 f"- **{record.get('category', 'Other')} / {record.get('priority', 'Low')}**: "
                 f"{record.get('raw_message', '')}"
             )
+
+
+def _show_receipt_upload(profile: dict | None) -> None:
+    with st.expander("อัปโหลดบิล / สลิป", expanded=False):
+        uploaded_file = st.file_uploader(
+            "เลือกไฟล์บิลหรือสลิป",
+            type=["jpg", "jpeg", "png", "pdf"],
+            accept_multiple_files=False,
+            key="receipt_uploader",
+        )
+        if not uploaded_file:
+            st.caption("รองรับไฟล์ jpg, jpeg, png และ pdf")
+            return
+
+        if st.button("บันทึกไฟล์บิล", use_container_width=True):
+            metadata = save_uploaded_receipt(
+                uploaded_file,
+                store_name=(profile or {}).get("store_name"),
+            )
+            st.session_state["last_receipt_upload"] = metadata
+            st.success("รับไฟล์บิลแล้วครับ ตอนนี้ระบบบันทึกไฟล์ไว้ก่อน ขั้นถัดไปจะเพิ่ม OCR เพื่ออ่านยอดเงินจากบิล")
 
 
 def _show_chat_companion(
@@ -1209,8 +1434,35 @@ def _show_chat_companion(
 
     conversation_intent = detect_conversation_intent(user_message)
     conversation_mode = get_conversation_mode(conversation_intent)
+    workflow_detection = detect_workflow(user_message, is_product_feedback=is_product_feedback(user_message))
     state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
     chat_profile = _profile_with_conversation_memory(profile) or profile
+    active_workflow = state.get("current_workflow")
+    detected_workflow = workflow_detection.get("workflow")
+
+    if active_workflow == WORKFLOW_COST_CALCULATION and state.get("workflow_step") == "collecting_cost_inputs" and detected_workflow not in {
+        WORKFLOW_DASHBOARD_REQUEST,
+        WORKFLOW_RECEIPT_CAPTURE,
+        WORKFLOW_PRODUCT_FEEDBACK,
+    }:
+        response = _handle_cost_workflow(user_message, starting=False)
+        _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
+        return
+
+    if detected_workflow == WORKFLOW_COST_CALCULATION:
+        response = _handle_cost_workflow(user_message, starting=True)
+        _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
+        return
+
+    if detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
+        response = _handle_dashboard_workflow(user_message)
+        _append_workflow_reply(response["reply"], response["intent"], "แดชบอร์ดร้านค้า")
+        return
+
+    if detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
+        response = _handle_receipt_workflow(user_message)
+        _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
+        return
 
     simple_reply = None
     if conversation_intent == "GREETING":
@@ -1429,11 +1681,14 @@ if demo_mode and demo_profile:
 
 current_store_name = store_name.strip().lower()
 if current_store_name != st.session_state["active_store_name"]:
+    previous_store_name = st.session_state["active_store_name"]
     st.session_state["active_store_name"] = current_store_name
     st.session_state["generated_daily"] = None
     st.session_state["generated_calendar"] = None
     st.session_state["generated_revenue"] = None
     st.session_state["last_diagnosis_signature"] = ""
+    if previous_store_name and current_store_name:
+        _reset_chat_session()
 
 saved_profile = demo_profile or (get_store_profile(store_name) if store_name.strip() else None)
 recent_history = demo_history or (get_content_history(store_name) if store_name.strip() else [])
@@ -1692,6 +1947,7 @@ with dashboard_slot.container():
     _show_dashboard(companion, business_os_state)
 _show_daily_content()
 _show_calendar()
+_show_receipt_upload(active_profile)
 _show_business_insights(active_profile, recent_history)
 _show_recent_history(recent_history)
 saved_goal = _show_business_os(active_profile, business_os_state, active_goal, goal_status)

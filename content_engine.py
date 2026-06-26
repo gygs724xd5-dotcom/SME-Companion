@@ -85,40 +85,40 @@ def generate_content_plan(
 
     call_to_action = "ทักแชทตอนนี้เพื่อสอบถามรายละเอียด รับโปรวันนี้ หรือจองสินค้าไว้ก่อนได้เลย"
 
-    markdown = f"""## Today's Strategy
+    markdown = f"""## แผนวันนี้
 {strategy['strategy_name']}
 
-## Why this strategy
+## เหตุผล
 {strategy['strategy_reason']}
 
-## New content angle
+## แนวคอนเทนต์ใหม่
 {selected_angle}
 
-## Best posting time
+## เวลาที่เหมาะ
 {strategy['best_posting_time']}
 
-## Sales angle
+## มุมขาย
 {strategy['sales_angle']}
 
-## Promotion idea
+## ไอเดียโปรโมชัน
 {strategy['promotion_idea']}
 
-## Facebook caption
+## แคปชัน Facebook
 {facebook_caption}
 
-## LINE broadcast
+## ข้อความ LINE
 {line_broadcast}
 
-## TikTok caption
+## แคปชัน TikTok
 {tiktok_caption}
 
-## Hashtags
+## แฮชแท็ก
 {" ".join(hashtags)}
 
-## Image idea
+## ไอเดียภาพ
 {image_idea}
 
-## Call to action
+## คำกระตุ้นการซื้อ
 {call_to_action}
 """
 
@@ -185,10 +185,10 @@ def generate_sales_brief(
         [
             (
                 f"### {item['day']}: {item['campaign_theme']}\n"
-                f"- Sales objective: {item['sales_objective']}\n"
-                f"- Content angle: {item['content_angle']}\n"
-                f"- Best posting time: {item['best_posting_time']}\n"
-                f"- Call to action: {item['call_to_action']}\n"
+                f"- เป้าหมายขาย: {item['sales_objective']}\n"
+                f"- มุมคอนเทนต์: {item['content_angle']}\n"
+                f"- เวลาที่เหมาะ: {item['best_posting_time']}\n"
+                f"- คำกระตุ้นการซื้อ: {item['call_to_action']}\n"
             )
             for item in campaign
         ]
@@ -197,33 +197,33 @@ def generate_sales_brief(
         [f"- **{item['day']}**: {item['caption']}" for item in campaign]
     )
 
-    return f"""## AI Business Brief
+    return f"""## แผนธุรกิจจาก AI
 แผนเพิ่มยอดขายสำหรับ{clean_store_type}ที่ต้องการผลักดัน {clean_product} ไปยัง{clean_target_customer} ด้วยโทน{clean_tone}
 
-## Sales Goal
+## เป้าหมายยอดขาย
 {sales_strategy['sales_goal']}
 
-## Why this goal
+## เหตุผล
 {sales_strategy['sales_reason']}
 
-## Recommended Action
+## สิ่งที่ควรทำ
 {sales_strategy['recommended_action']}
 
-## Promotion Idea
+## ไอเดียโปรโมชัน
 **{promotion['promotion_name']}**
 
 {promotion['promotion_mechanic']}
 
-## Why it works
+## เหตุผลที่ใช้ได้ผล
 {promotion['why_it_works']}
 
 มุมราคา: {promotion['suggested_price_angle']}
 
-## 3-Day Sales Campaign
+## แผนขาย 3 วัน
 {campaign_rows}
-## Ready-to-post captions
+## แคปชันพร้อมโพสต์
 {ready_captions}
 
-## Final recommendation
+## คำแนะนำสุดท้าย
 เริ่มจากคอนเทนต์ตามกลยุทธ์ "{strategy['strategy_name']}" แล้วใช้โปร "{promotion['promotion_name']}" ต่อเนื่อง 3 วัน วัดผลจากจำนวนทักแชท ออเดอร์ และลูกค้าที่กลับมาซื้อซ้ำ
 """
