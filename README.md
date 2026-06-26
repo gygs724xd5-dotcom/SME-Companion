@@ -27,6 +27,18 @@ OPENAI_MODEL=gpt-4.1-mini
 
 The app can still run without provider keys by using deterministic fallback responses.
 
+## Product Feedback MVP
+
+Users can type product feedback directly in the chat in normal Thai, such as comments about the Dashboard, chat, AI answers, buttons, notifications, or feature requests.
+
+For this MVP, feedback is stored locally as JSONL at:
+
+```text
+data/feedback/feedback_log.jsonl
+```
+
+On Streamlit Cloud, local file persistence may be temporary. A future version should move feedback storage to a real database before using this as a production feedback system.
+
 ## Run Locally
 
 ```bash

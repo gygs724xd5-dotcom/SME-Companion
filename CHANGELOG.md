@@ -1,5 +1,12 @@
 # Changelog
 
+## V1.9.5 Product Learning Engine MVP
+
+- Added PRODUCT_FEEDBACK intent for natural Thai feedback inside chat.
+- Added local JSONL feedback storage at `data/feedback/feedback_log.jsonl`.
+- Added Thai feedback acknowledgement without calling the LLM.
+- Added simple developer feedback summary inside the Streamlit app.
+
 ## V1.7 Interactive Demo Experience
 
 - Added six demo stores for Thai SME scenarios: coffee shop, restaurant, clothing store, beauty store, construction materials, and online store.

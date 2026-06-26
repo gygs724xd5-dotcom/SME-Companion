@@ -31,6 +31,15 @@ from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
+from feedback.feedback_analyzer import summarize_feedback
+from feedback.feedback_engine import (
+    build_feedback_acknowledgement,
+    build_feedback_record,
+    detect_feedback_category,
+    detect_feedback_priority,
+    is_feedback_too_vague,
+)
+from feedback.feedback_storage import load_feedback, save_feedback
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
 from memory.store_memory import (
     get_content_history,
@@ -814,6 +823,82 @@ def _show_recent_history(history: list[dict]) -> None:
             _render_markdown(f"- **{topic}** ({created_at})  \n  {angle}")
 
 
+def _latest_chat_context(chat_history: list[dict]) -> tuple[str | None, str | None]:
+    previous_user_message = None
+    assistant_reply = None
+    for message in reversed(chat_history or []):
+        if message.get("role") == "assistant" and assistant_reply is None:
+            assistant_reply = message.get("content")
+        elif message.get("role") == "user" and previous_user_message is None:
+            previous_user_message = message.get("content")
+        if previous_user_message is not None and assistant_reply is not None:
+            break
+    return previous_user_message, assistant_reply
+
+
+def _handle_product_feedback(
+    user_message: str,
+    profile: dict,
+    previous_user_message: str | None,
+    assistant_reply: str | None,
+) -> dict:
+    needs_clarification = is_feedback_too_vague(user_message)
+    category = "general" if needs_clarification else detect_feedback_category(user_message)
+    priority = detect_feedback_priority(user_message)
+    if needs_clarification:
+        priority = "medium"
+
+    record = build_feedback_record(
+        message=user_message,
+        category=category,
+        priority=priority,
+        store_type=profile.get("store_type"),
+        store_name=profile.get("store_name"),
+        page="chat",
+        previous_user_message=previous_user_message,
+        assistant_reply=assistant_reply,
+        app_version="V1.9.5",
+    )
+    if st.session_state.get("selected_demo_store"):
+        record["selected_demo_store"] = st.session_state["selected_demo_store"]
+    save_feedback(record)
+    return {
+        "reply": build_feedback_acknowledgement(
+            category,
+            priority,
+            needs_clarification=needs_clarification,
+        ),
+        "intent": "PRODUCT_FEEDBACK",
+        "conversation_mode": "product_feedback",
+        "category": category,
+        "priority": priority,
+    }
+
+
+def _show_feedback_summary() -> None:
+    with st.expander("Product Feedback", expanded=False):
+        show_summary = st.checkbox("แสดงสรุป Feedback ภายใน", value=False)
+        if not show_summary:
+            st.caption("ส่วนนี้ใช้สำหรับทีมพัฒนาเท่านั้น")
+            return
+
+        records = load_feedback()
+        summary = summarize_feedback(records)
+        st.metric("จำนวน Feedback ทั้งหมด", summary["total_count"])
+        st.write("ตามหมวดหมู่")
+        st.json(summary["by_category"])
+        st.write("ตามความสำคัญ")
+        st.json(summary["by_priority"])
+        st.write(f"ควรโฟกัสถัดไป: {summary['recommended_focus'] or 'ยังไม่มีข้อมูล'}")
+        st.write("ข้อความล่าสุด 10 รายการ")
+        latest_records = load_feedback(limit=10)
+        for record in reversed(latest_records):
+            st.markdown(
+                f"- **{record.get('category', 'general')} / {record.get('priority', 'low')}**: "
+                f"{record.get('message', '')}"
+            )
+
+
 def _show_chat_companion(
     profile: dict | None,
     business_insight: dict | None,
@@ -845,12 +930,30 @@ def _show_chat_companion(
     if not user_message:
         return
 
+    previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
     st.session_state["chat_history"].append({"role": "user", "content": user_message})
     with st.chat_message("user"):
         _render_markdown(user_message)
 
     conversation_intent = detect_conversation_intent(user_message)
     conversation_mode = get_conversation_mode(conversation_intent)
+
+    if conversation_intent == "PRODUCT_FEEDBACK":
+        response = _handle_product_feedback(
+            user_message=user_message,
+            profile=profile,
+            previous_user_message=previous_user_message,
+            assistant_reply=assistant_reply,
+        )
+        assistant_message = {
+            "role": "assistant",
+            "content": response["reply"],
+        }
+        st.session_state["chat_history"].append(assistant_message)
+        with st.chat_message("assistant"):
+            _render_markdown(response["reply"])
+        return
+
     use_business_context = should_use_business_context(conversation_intent)
     show_business_insights = should_show_business_insights(conversation_intent, user_message)
     intent_analysis = (
@@ -1328,6 +1431,8 @@ if use_llm_companion:
     st.caption("ผู้ช่วย AI จะเรียบเรียงคำตอบให้อ่านง่าย โดยยังยึดเหตุผลจากระบบเดิม")
 elif not llm_available:
     st.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
+
+_show_feedback_summary()
 
 _show_chat_companion(
     active_profile,
