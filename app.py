@@ -194,12 +194,7 @@ st.markdown(
     }
 
     .sme-action-area {
-        background: var(--sme-surface);
-        border: 1px solid var(--sme-border);
-        border-radius: 24px;
-        box-shadow: var(--sme-shadow);
-        padding: 18px 18px 10px;
-        margin: 8px 0 16px;
+        display: none;
     }
 
     div[data-testid="stForm"] {
@@ -260,6 +255,82 @@ st.markdown(
         border-radius: 18px;
     }
 
+    .sme-command-welcome {
+        background: #ffffff;
+        border: 1px solid var(--sme-border);
+        border-radius: 8px;
+        box-shadow: var(--sme-shadow);
+        padding: 24px;
+        margin: 8px 0 18px;
+    }
+
+    .sme-command-welcome h2 {
+        font-size: 1.65rem;
+        line-height: 1.2;
+        margin: 6px 0 10px;
+        letter-spacing: 0;
+    }
+
+    .sme-command-welcome p {
+        color: var(--sme-text);
+        margin: 0 0 18px;
+        white-space: pre-line;
+    }
+
+    .sme-kicker {
+        color: var(--sme-primary-dark);
+        font-size: .8rem;
+        font-weight: 900;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+    }
+
+    .sme-brief-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .sme-brief-grid div {
+        background: var(--sme-surface-soft);
+        border: 1px solid var(--sme-border);
+        border-radius: 8px;
+        padding: 12px;
+        min-height: 112px;
+    }
+
+    .sme-brief-grid span {
+        display: block;
+        color: var(--sme-muted);
+        font-size: .78rem;
+        font-weight: 800;
+        margin-bottom: 8px;
+    }
+
+    .sme-brief-grid strong {
+        display: block;
+        color: var(--sme-text);
+        font-size: .96rem;
+        line-height: 1.35;
+    }
+
+    .sme-chat-prompts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 4px 0 12px;
+    }
+
+    .sme-chat-prompts span {
+        border: 1px solid var(--sme-border);
+        border-radius: 999px;
+        background: #ffffff;
+        color: var(--sme-text);
+        font-size: .86rem;
+        font-weight: 700;
+        padding: 7px 11px;
+    }
+
     @media (max-width: 640px) {
         .block-container {
             padding-left: 1rem;
@@ -270,6 +341,10 @@ st.markdown(
         .sme-hero {
             padding: 26px 22px;
             border-radius: 22px;
+        }
+
+        .sme-brief-grid {
+            grid-template-columns: 1fr;
         }
 
     }
@@ -1243,6 +1318,157 @@ def _show_recent_history(history: list[dict]) -> None:
             topic = item.get("topic", "ไม่ระบุหัวข้อ")
             angle = item.get("content_angle", "")
             _render_markdown(f"- **{topic}** ({created_at})  \n  {angle}")
+
+
+def _html_escape(value: object) -> str:
+    text = str(value or "")
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
+def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
+    st.subheader("AI Business Command Center")
+    if not companion:
+        st.info("Add your store details so SME Companion can brief you on health, priority, opportunity, and risk.")
+        return
+
+    score_value = (
+        os_state.get("business_health_score")
+        if os_state and os_state.get("business_health_score") is not None
+        else companion.get("confidence")
+    )
+    score = f"{score_value}%"
+    health = (os_state or {}).get("operating_status") or companion.get("companion_message")
+    today_action = (os_state or {}).get("today_action") or companion.get("priority_action")
+    opportunity = (os_state or {}).get("growth_opportunity") or companion.get("opportunity")
+    risk = (os_state or {}).get("current_risk") or companion.get("warning")
+    weekly_focus = (os_state or {}).get("weekly_focus") or today_action
+    trend = "Needs focus" if int(score_value or 0) < 70 else "Stable"
+    store_profile = (_get_application_state().get("store") or {}).get("profile") or {}
+    store_name = store_profile.get("store_name") or "business owner"
+
+    st.markdown(
+        f"""
+<section class="sme-command-welcome">
+    <div class="sme-kicker">AI Morning Brief</div>
+    <h2>Good morning, {_html_escape(store_name)}. I analyzed your business this morning.</h2>
+    <p>{_html_escape(companion.get("companion_message"))}</p>
+    <div class="sme-brief-grid">
+        <div><span>Business Health</span><strong>{_html_escape(score)}</strong></div>
+        <div><span>Today's Focus</span><strong>{_html_escape(today_action)}</strong></div>
+        <div><span>Biggest Risk</span><strong>{_html_escape(risk)}</strong></div>
+        <div><span>Best Opportunity</span><strong>{_html_escape(opportunity)}</strong></div>
+    </div>
+</section>
+""",
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True):
+        st.markdown("##### Today's Focus")
+        st.markdown(f"**Priority:** {today_action}")
+        st.markdown(f"**Reason:** {risk}")
+        st.markdown(f"**Suggested action:** {today_action}")
+        st.markdown(f"**Expected outcome:** {opportunity}")
+
+    with st.container(border=True):
+        st.markdown("##### Morning Brief")
+        cols = st.columns(3)
+        cols[0].metric("Health", score)
+        cols[1].metric("Trend", trend)
+        cols[2].metric("Confidence", f"{companion.get('confidence', 0)}%")
+        st.markdown(f"**Business health:** {health}")
+        st.markdown(f"**Opportunity:** {opportunity}")
+        st.markdown(f"**Risk:** {risk}")
+        st.markdown(f"**Weekly goal:** {weekly_focus}")
+
+
+def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None) -> tuple[bool, bool, bool]:
+    st.markdown("### Suggested Actions")
+    if not companion:
+        st.info("Create or select a store first. The AI will rank the next actions here.")
+        return False, False, False
+
+    confidence = int(companion.get("confidence") or 75)
+    risk = (os_state or {}).get("current_risk") or companion.get("warning") or "Customers need clearer reasons to buy."
+    opportunity = (os_state or {}).get("growth_opportunity") or companion.get("opportunity") or "Increase purchase confidence."
+    weekly_focus = (os_state or {}).get("weekly_focus") or "Keep execution consistent this week."
+
+    actions = [
+        ("Create Review Content", risk, "+12% purchase confidence", min(96, confidence + 4), "High", "Create Review Post"),
+        ("Build 7-Day Focus Plan", weekly_focus, "+7 days of execution clarity", max(70, confidence - 3), "Medium", "Create 7-Day Plan"),
+        ("Plan Sales Push", opportunity, "+1 focused sales campaign", max(68, confidence - 6), "Medium", "Plan Sales Growth"),
+    ]
+
+    cols = st.columns(3)
+    clicks = []
+    for index, (title, reason, impact, action_confidence, priority, button_label) in enumerate(actions):
+        with cols[index].container(border=True):
+            st.markdown(f"**{index + 1}. {title}**")
+            st.caption(f"Priority: {priority} | Confidence: {action_confidence}%")
+            st.markdown(f"**Reason:** {reason}")
+            st.markdown(f"**Expected impact:** {impact}")
+            clicks.append(st.button(button_label, key=f"ai_ranked_action_{index}", use_container_width=True))
+
+    return clicks[0], clicks[1], clicks[2]
+
+
+def _show_product_brain_card(profile: dict | None, business_insight: dict | None, diagnosis: dict | None) -> None:
+    if not profile:
+        return
+
+    insight = business_insight or {}
+    missing = insight.get("missing_content_types") or []
+    weakness = (diagnosis or {}).get("likely_problem") or (", ".join(missing[:2]) if missing else "Needs more operating data")
+    strength = insight.get("business_recommendation") or "Store profile and customer context are available"
+    confidence = 72 + min(20, int(insight.get("total_generated_content") or 0) * 4)
+
+    with st.container(border=True):
+        st.markdown("### Product Brain Learned")
+        cols = st.columns(2)
+        cols[0].markdown(f"**Main product:** {profile.get('product')}")
+        cols[1].markdown(f"**Customer type:** {profile.get('target_customer')}")
+        cols[0].markdown(f"**Weakness:** {weakness}")
+        cols[1].markdown(f"**Strength:** {strength}")
+        st.progress(min(100, confidence) / 100)
+        st.caption(f"Learning confidence: {min(100, confidence)}%")
+
+
+def _show_business_journey(profile: dict | None, active_goal: dict | None, business_os_state: dict | None) -> None:
+    receipt = ensure_receipt_state(_get_application_state().get("receipt"))
+    steps = [
+        ("Store Created", bool(profile)),
+        ("Strategy Generated", bool(business_os_state)),
+        ("Goals Defined", bool(active_goal)),
+        ("Receipt OCR", bool(receipt.get("receipt_uploaded"))),
+        ("Inventory", False),
+        ("Business Memory", bool(profile)),
+        ("Automation", False),
+    ]
+
+    with st.container(border=True):
+        st.markdown("### Business Journey")
+        cols = st.columns(len(steps))
+        for col, (label, done) in zip(cols, steps):
+            col.markdown(("**Done**  \n" if done else "**Next**  \n") + label)
+
+
+def _show_smart_chat_prompts() -> None:
+    prompts = [
+        "What should I do today?",
+        "Help increase sales",
+        "Analyze my business",
+        "Create content",
+        "Calculate costs",
+        "Read receipt",
+    ]
+    chips = "".join(f"<span>{_html_escape(prompt)}</span>" for prompt in prompts)
+    st.markdown(f'<div class="sme-chat-prompts">{chips}</div>', unsafe_allow_html=True)
 
 
 def _latest_chat_context(chat_history: list[dict]) -> tuple[str | None, str | None]:
@@ -2320,6 +2546,7 @@ def _show_chat_companion(
             if message["role"] == "assistant":
                 _render_assistant_footer(message)
 
+    _show_smart_chat_prompts()
     user_message = st.chat_input("ถามเรื่องโพสต์ โปร ยอดขาย หรือแผนคอนเทนต์")
     if not user_message:
         return
@@ -2688,6 +2915,9 @@ recent_history = demo_history or (get_content_history(store_name) if store_name.
 recent_topics = demo_topics or (get_recent_topics(store_name) if store_name.strip() else [])
 
 dashboard_slot = st.empty()
+action_slot = st.empty()
+brain_slot = st.empty()
+journey_slot = st.empty()
 
 _show_manual_store_storage_caption()
 _show_clear_manual_store_control()
@@ -2722,10 +2952,9 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
-action_col1, action_col2, action_col3 = st.columns(3)
-daily_submitted = action_col1.button("📝 สร้างโพสต์วันนี้", use_container_width=True)
-calendar_submitted = action_col2.button("📅 สร้างแผน 7 วัน", use_container_width=True)
-sales_submitted = action_col3.button("📈 วางแผนเพิ่มยอดขาย", use_container_width=True)
+daily_submitted = False
+calendar_submitted = False
+sales_submitted = False
 
 input_profile = _build_profile(store_name, store_type, product, target_customer, tone)
 active_profile = input_profile or saved_profile
@@ -2750,6 +2979,61 @@ _update_application_section(
         "recent_topics": recent_topics,
     },
 )
+companion = _build_companion(active_profile, recent_history)
+business_insight = analyze_business_insights(active_profile, recent_history) if active_profile else None
+diagnosis = (
+    st.session_state.get("business_diagnosis")
+    if demo_mode
+    else (
+        diagnose_business_status(
+            active_profile,
+            business_insight or {},
+            recent_topics,
+            st.session_state["chat_history"],
+        )
+        if active_profile
+        else None
+    )
+)
+demo_goals = st.session_state.get("business_goals") if demo_mode else None
+active_goal = (
+    (demo_goals or {}).get("active_goal")
+    if demo_mode
+    else (get_active_business_goal(active_profile["store_name"]) if active_profile else None)
+)
+goal_status = (
+    evaluate_business_goal(
+        active_profile["store_name"],
+        active_goal,
+        business_insight or {},
+        recent_topics,
+    )
+    if active_profile and active_goal
+    else None
+)
+business_os_state = (
+    st.session_state.get("business_os")
+    if demo_mode
+    else (
+        build_business_os_state(
+            active_profile,
+            business_insight or {},
+            diagnosis or {},
+            goal_status or {},
+            recent_topics,
+        )
+        if active_profile
+        else None
+    )
+)
+with dashboard_slot.container():
+    _show_dashboard(companion, business_os_state)
+with action_slot.container():
+    daily_submitted, calendar_submitted, sales_submitted = _show_ai_ranked_actions(companion, business_os_state)
+with brain_slot.container():
+    _show_product_brain_card(active_profile, business_insight, diagnosis)
+with journey_slot.container():
+    _show_business_journey(active_profile, active_goal, business_os_state)
 _update_application_section(
     "ui",
     {
