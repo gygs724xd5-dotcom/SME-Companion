@@ -48,6 +48,7 @@ from brain.goal_engine import (
 )
 from brain.llm_context_builder import build_llm_context
 from brain.promotion_engine import get_promotion_idea
+from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
@@ -71,6 +72,8 @@ from feedback.product_learning_engine import prepare_dashboard_data, record_prod
 from feedback.sprint_recommendation_engine import recommend_next_sprint
 from feedback.trend_engine import generate_trends
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
+from memory.application_state import application_state, ensure_application_state
+from memory.receipt_state import ensure_receipt_state, mark_receipt_uploaded
 from memory.receipt_storage import save_uploaded_receipt
 from memory.store_memory import (
     get_content_history,
@@ -406,16 +409,113 @@ def _new_conversation_state() -> dict:
     return state
 
 
+def _get_application_state() -> dict:
+    state = st.session_state.setdefault("application_state", application_state)
+    ensure_application_state(state)
+    return state
+
+
+def _sync_global_application_state() -> dict:
+    state = _get_application_state()
+    application_state.clear()
+    application_state.update(state)
+    return state
+
+
+def _update_application_section(section: str, values: dict | None) -> dict:
+    state = _get_application_state()
+    state.setdefault(section, {})
+    if values:
+        state[section].update(values)
+    return _sync_global_application_state()
+
+
+def _sync_chat_history_to_application_state() -> None:
+    _update_application_section(
+        "conversation",
+        {
+            "conversation_id": st.session_state.get("conversation_id"),
+            "chat_history": st.session_state.get("chat_history", []),
+        },
+    )
+
+
+def _sync_session_to_application_state() -> dict:
+    state = _get_application_state()
+    conversation_state = st.session_state.get("conversation_state") or _new_conversation_state()
+    workflow_state_v2 = conversation_state.get("workflow_state_v2") or {}
+    state["conversation"] = {
+        **(state.get("conversation") or {}),
+        **conversation_state,
+        "conversation_id": st.session_state.get("conversation_id"),
+        "chat_history": st.session_state.get("chat_history", []),
+        "pending_followup": st.session_state.get("pending_followup"),
+    }
+    state["workflow"] = {
+        **(state.get("workflow") or {}),
+        "current_workflow": conversation_state.get("current_workflow"),
+        "workflow_step": conversation_state.get("workflow_step"),
+        "workflow_data": conversation_state.get("workflow_data") or {},
+        "workflow_state_v2": workflow_state_v2,
+        "workflow": workflow_state_v2.get("workflow") or conversation_state.get("current_workflow"),
+        "step": workflow_state_v2.get("step") or conversation_state.get("workflow_step"),
+        "is_ready": bool(workflow_state_v2.get("is_ready")),
+        "last_workflow_message": conversation_state.get("last_workflow_message"),
+    }
+    state["receipt"] = ensure_receipt_state(state.get("receipt"))
+    state["ui"] = {
+        **(state.get("ui") or {}),
+        "demo_mode": bool(st.session_state.get("demo_mode")),
+        "llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only"),
+    }
+    state["developer"] = {
+        **(state.get("developer") or {}),
+        "developer_mode": bool(st.session_state.get("developer_mode")),
+        "use_llm_companion": bool(st.session_state.get("use_llm_companion")),
+        "llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only"),
+    }
+    return _sync_global_application_state()
+
+
+def _record_reasoning(user_message: str) -> dict:
+    state = _sync_session_to_application_state()
+    reasoning = build_reasoning(state, user_message)
+    st.session_state["last_reasoning"] = reasoning
+    _update_application_section(
+        "developer",
+        {
+            "reasoning_result": reasoning,
+            "current_action": reasoning.get("action"),
+            "llm_needed": bool(reasoning.get("llm_needed")),
+            "workflow_ready": bool(reasoning.get("workflow_ready")),
+        },
+    )
+    return reasoning
+
+
+# Future hooks. These are intentionally placeholders only.
+def _future_engine_hooks() -> dict:
+    return {
+        "ocr_engine": None,
+        "dashboard_generator": None,
+        "image_analyzer": None,
+        "autonomous_planner": None,
+        "business_memory": None,
+    }
+
+
 def _ensure_conversation_state() -> dict:
     state = st.session_state.setdefault("conversation_state", _new_conversation_state())
     for key, value in DEFAULT_CONVERSATION_STATE.items():
         state.setdefault(key, value)
+    _update_application_section("conversation", state)
     return state
 
 
 def _reset_conversation_memory() -> None:
     st.session_state["conversation_state"] = _new_conversation_state()
     st.session_state["pending_followup"] = None
+    _sync_session_to_application_state()
 
 
 def _reset_chat_session() -> None:
@@ -425,9 +525,12 @@ def _reset_chat_session() -> None:
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
     _reset_conversation_memory()
+    _sync_session_to_application_state()
 
 
 def _init_session_state() -> None:
+    st.session_state.setdefault("application_state", application_state)
+    ensure_application_state(st.session_state["application_state"])
     st.session_state.setdefault("demo_mode", False)
     st.session_state.setdefault("selected_demo_store", None)
     st.session_state.setdefault("demo_llm_tokens_used", 0)
@@ -449,7 +552,10 @@ def _init_session_state() -> None:
     st.session_state.setdefault("use_llm_companion", False)
     st.session_state.setdefault("llm_response_mode", "Workflow Only")
     st.session_state.setdefault("developer_mode", False)
+    _get_application_state()["receipt"] = ensure_receipt_state(_get_application_state().get("receipt"))
+    _get_application_state()["developer"].setdefault("future_hooks", _future_engine_hooks())
     _ensure_conversation_state()
+    _sync_session_to_application_state()
 
 
 def _legacy_reset_conversation_state_for_demo_switch() -> None:
@@ -493,6 +599,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
         "cached_business_context",
     ]:
         st.session_state.pop(key, None)
+    _sync_session_to_application_state()
 
 
 def _content_examples_to_history(content_examples: list[dict]) -> list[dict]:
@@ -572,6 +679,7 @@ def _start_demo_store(store_key: str) -> None:
             ),
         }
     ]
+    _sync_chat_history_to_application_state()
     st.session_state["chat_history"][0]["content"] = (
         "สวัสดีครับ ผมช่วยคิดเรื่องร้าน การขาย และคอนเทนต์ให้เป็นขั้นตอนสั้นๆ ได้ครับ\n"
         "วันนี้อยากให้ช่วยเรื่องไหนครับ?"
@@ -1206,6 +1314,18 @@ def _set_workflow_state(workflow: str, step: str, user_message: str, data: dict 
     state["workflow_data"] = data or state.get("workflow_data") or {}
     state["workflow_started_at"] = state.get("workflow_started_at") or datetime.now(timezone.utc).isoformat()
     state["last_workflow_message"] = user_message
+    _update_application_section(
+        "workflow",
+        {
+            "current_workflow": workflow,
+            "workflow": workflow,
+            "workflow_step": step,
+            "step": step,
+            "workflow_data": state["workflow_data"],
+            "workflow_started_at": state["workflow_started_at"],
+            "last_workflow_message": user_message,
+        },
+    )
 
 
 def _clear_workflow_state() -> None:
@@ -1215,6 +1335,20 @@ def _clear_workflow_state() -> None:
     state["workflow_data"] = {}
     state["workflow_started_at"] = None
     state["last_workflow_message"] = None
+    _update_application_section(
+        "workflow",
+        {
+            "current_workflow": None,
+            "workflow": None,
+            "workflow_step": None,
+            "step": None,
+            "workflow_data": {},
+            "workflow_state_v2": {},
+            "is_ready": False,
+            "workflow_started_at": None,
+            "last_workflow_message": None,
+        },
+    )
 
 
 def _cost_intro_reply() -> str:
@@ -1327,6 +1461,19 @@ def _sync_workflow_state_v2(workflow_state: dict) -> None:
     state["last_workflow_message"] = workflow_state.get("last_updated")
     if not state.get("workflow_started_at"):
         state["workflow_started_at"] = workflow_state.get("last_updated")
+    _update_application_section(
+        "workflow",
+        {
+            "workflow_state_v2": workflow_state,
+            "current_workflow": workflow_state.get("workflow"),
+            "workflow": workflow_state.get("workflow"),
+            "workflow_step": workflow_state.get("step"),
+            "step": workflow_state.get("step"),
+            "workflow_data": workflow_state.get("collected_fields") or {},
+            "is_ready": bool(workflow_state.get("is_ready")),
+            "last_workflow_message": workflow_state.get("last_updated"),
+        },
+    )
 
 
 def _clear_workflow_state_v2() -> None:
@@ -1547,9 +1694,39 @@ def _show_workflow_diagnostics() -> None:
         )
 
 
+def _show_shared_application_state_diagnostics() -> None:
+    if not st.session_state.get("developer_mode"):
+        return
+    state = _sync_session_to_application_state()
+    reasoning = st.session_state.get("last_reasoning") or (state.get("developer") or {}).get("reasoning_result") or {}
+    with st.expander("Shared Application State", expanded=False):
+        st.json(
+            {
+                "Conversation": state.get("conversation") or {},
+                "Workflow": state.get("workflow") or {},
+                "Receipt": state.get("receipt") or {},
+                "Dashboard": state.get("dashboard") or {},
+                "Store": state.get("store") or {},
+                "Developer": state.get("developer") or {},
+                "Reasoning Result": reasoning,
+                "Current Action": reasoning.get("action") or (state.get("developer") or {}).get("current_action"),
+                "LLM Needed": bool(reasoning.get("llm_needed") or (state.get("developer") or {}).get("llm_needed")),
+                "Workflow Ready": bool(reasoning.get("workflow_ready") or (state.get("developer") or {}).get("workflow_ready")),
+            }
+        )
+
+
 def _handle_dashboard_workflow(user_message: str) -> dict:
     record_product_feedback(user_message, conversation_id=st.session_state.get("conversation_id"))
     _clear_workflow_state_v2()
+    _update_application_section(
+        "dashboard",
+        {
+            "last_request": user_message,
+            "status": "available_basic_dashboard",
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        },
+    )
     return {
         "reply": """ตอนนี้ระบบมีแดชบอร์ดพื้นฐานให้แล้วครับ
 ถ้าต้องการแดชบอร์ดเฉพาะร้าน ผมบันทึกเป็นคำขอฟีเจอร์ให้ทีมพัฒนาแล้ว
@@ -1564,9 +1741,44 @@ def _handle_dashboard_workflow(user_message: str) -> dict:
     }
 
 
+def _receipt_uploaded_reply(action: str | None = None) -> str:
+    if action == "receipt_ocr_pending":
+        return (
+            "OCR ยังไม่เปิดใช้งาน\n\n"
+            "เมื่อพร้อมจะคำนวณให้อัตโนมัติ"
+        )
+    return (
+        "เห็นแล้วครับ\n\n"
+        "รับบิลเรียบร้อย\n\n"
+        "OCR กำลังรอการพัฒนา\n\n"
+        "เมื่อเปิดใช้งานแล้วจะสามารถอ่าน\n\n"
+        "• รายการสินค้า\n"
+        "• ราคาวัตถุดิบ\n"
+        "• ต้นทุน\n"
+        "• กำไร\n\n"
+        "ได้อัตโนมัติ"
+    )
+
+
 def _handle_receipt_workflow(user_message: str) -> dict:
     _set_workflow_state(WORKFLOW_RECEIPT_CAPTURE, "waiting_for_upload", user_message)
+    reasoning = build_reasoning(_sync_session_to_application_state(), user_message)
+    if reasoning.get("action") in {"receipt_uploaded_ack", "receipt_ocr_pending"}:
+        st.session_state["last_reasoning"] = reasoning
+        _update_application_section(
+            "developer",
+            {
+                "reasoning_result": reasoning,
+                "current_action": reasoning.get("action"),
+                "llm_needed": False,
+                "workflow_ready": False,
+            },
+        )
+        return {"reply": _receipt_uploaded_reply(reasoning.get("action")), "intent": WORKFLOW_RECEIPT_CAPTURE}
+
     normalized = str(user_message or "").strip().lower()
+    if any(term in normalized for term in ["เดี๋ยวส่งบิล", "เดี๋ยวส่ง", "จะส่งบิล", "ส่งบิลนะ"]):
+        return {"reply": "ได้ครับ รอรับบิล", "intent": WORKFLOW_RECEIPT_CAPTURE}
     if "อ่าน" in normalized:
         reply = "ตอนนี้บันทึกบิลได้แล้ว แต่ยังอ่านตัวเลขอัตโนมัติไม่ได้เต็มรูปแบบ ขั้นต่อไปคือเพิ่ม OCR"
     else:
@@ -1578,6 +1790,7 @@ def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) ->
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
     st.session_state["chat_history"].append(assistant_message)
+    _sync_chat_history_to_application_state()
     with st.chat_message("assistant"):
         _render_markdown(reply)
 
@@ -1840,6 +2053,26 @@ def _show_receipt_upload(profile: dict | None) -> None:
                 store_name=(profile or {}).get("store_name"),
             )
             st.session_state["last_receipt_upload"] = metadata
+            receipt_state = mark_receipt_uploaded(metadata, _get_application_state().get("receipt"))
+            _get_application_state()["receipt"] = receipt_state
+            _update_application_section(
+                "workflow",
+                {
+                    "current_workflow": WORKFLOW_RECEIPT_CAPTURE,
+                    "workflow": WORKFLOW_RECEIPT_CAPTURE,
+                    "workflow_step": "waiting_for_ocr",
+                    "step": "waiting_for_ocr",
+                    "is_ready": False,
+                },
+            )
+            _update_application_section(
+                "developer",
+                {
+                    "current_action": "receipt_uploaded",
+                    "llm_needed": False,
+                    "workflow_ready": False,
+                },
+            )
             st.success("รับไฟล์บิลแล้วครับ ตอนนี้ระบบบันทึกไฟล์ไว้ก่อน ขั้นถัดไปจะเพิ่ม OCR เพื่ออ่านยอดเงินจากบิล")
 
 
@@ -1864,6 +2097,7 @@ def _show_chat_companion(
         return
 
     _show_workflow_diagnostics()
+    _show_shared_application_state_diagnostics()
 
     if st.session_state.get("demo_mode") and not st.session_state["chat_history"]:
         _show_demo_chat_suggestions()
@@ -1884,6 +2118,7 @@ def _show_chat_companion(
         _update_conversation_state_after_assistant(reset_reply, "GREETING")
         st.session_state["chat_history"].append({"role": "user", "content": user_message})
         st.session_state["chat_history"].append({"role": "assistant", "content": reset_reply})
+        _sync_chat_history_to_application_state()
         with st.chat_message("user"):
             _render_markdown(user_message)
         with st.chat_message("assistant"):
@@ -1892,6 +2127,7 @@ def _show_chat_companion(
 
     previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
     st.session_state["chat_history"].append({"role": "user", "content": user_message})
+    _sync_chat_history_to_application_state()
     with st.chat_message("user"):
         _render_markdown(user_message)
 
@@ -1900,6 +2136,15 @@ def _show_chat_companion(
     workflow_detection = detect_workflow(user_message, is_product_feedback=is_product_feedback(user_message))
     state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
     chat_profile = _profile_with_conversation_memory(profile) or profile
+    reasoning = _record_reasoning(user_message)
+    if reasoning.get("action") in {"receipt_uploaded_ack", "receipt_ocr_pending"}:
+        _append_workflow_reply(
+            _receipt_uploaded_reply(reasoning.get("action")),
+            WORKFLOW_RECEIPT_CAPTURE,
+            "บิล / สลิป",
+        )
+        return
+
     active_workflow = state.get("current_workflow")
     detected_workflow = workflow_detection.get("workflow")
     llm_response_mode = st.session_state.get("llm_response_mode", "Workflow Only")
@@ -1989,6 +2234,7 @@ def _show_chat_companion(
             "show_business_insights": False,
         }
         st.session_state["chat_history"].append(assistant_message)
+        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_markdown(simple_reply)
         return
@@ -2007,6 +2253,7 @@ def _show_chat_companion(
         }
         _update_conversation_state_after_assistant(response["reply"], conversation_intent, "Product Feedback")
         st.session_state["chat_history"].append(assistant_message)
+        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_markdown(response["reply"])
         return
@@ -2150,6 +2397,7 @@ def _show_chat_companion(
         state.get("current_topic"),
     )
     st.session_state["chat_history"].append(assistant_message)
+    _sync_chat_history_to_application_state()
 
     with st.chat_message("assistant"):
         _render_markdown(response["reply"])
@@ -2240,6 +2488,23 @@ sales_submitted = action_col3.button("📈 วางแผนเพิ่มย�
 
 input_profile = _build_profile(store_name, store_type, product, target_customer, tone)
 active_profile = input_profile or saved_profile
+_update_application_section(
+    "store",
+    {
+        "active_store_name": current_store_name,
+        "profile": active_profile or {},
+        "recent_topics": recent_topics,
+    },
+)
+_update_application_section(
+    "ui",
+    {
+        "daily_button_clicked": bool(daily_submitted),
+        "calendar_button_clicked": bool(calendar_submitted),
+        "sales_button_clicked": bool(sales_submitted),
+        "demo_mode": bool(demo_mode),
+    },
+)
 
 if daily_submitted or calendar_submitted or sales_submitted:
     if not input_profile:
@@ -2423,6 +2688,16 @@ business_os_state = (
         else None
     )
 )
+_update_application_section(
+    "dashboard",
+    {
+        "companion": companion or {},
+        "business_os_state": business_os_state or {},
+        "business_insight": business_insight or {},
+        "diagnosis": diagnosis or {},
+        "goal_status": goal_status or {},
+    },
+)
 
 if active_profile and diagnosis:
     diagnosis_signature = "|".join(
@@ -2487,6 +2762,7 @@ developer_mode = st.sidebar.checkbox(
     value=bool(st.session_state.get("developer_mode")),
 )
 st.session_state["developer_mode"] = developer_mode
+_update_application_section("developer", {"developer_mode": bool(developer_mode)})
 if not developer_mode:
     st.session_state["llm_response_mode"] = "Workflow Only"
 
@@ -2514,10 +2790,29 @@ if developer_mode:
         disabled=(not llm_available) or llm_response_mode == "Workflow Only",
     )
     st.session_state["use_llm_companion"] = use_llm_companion
+    _update_application_section(
+        "developer",
+        {
+            "developer_mode": True,
+            "use_llm_companion": bool(use_llm_companion),
+            "llm_response_mode": llm_response_mode,
+        },
+    )
+    _update_application_section("ui", {"llm_response_mode": llm_response_mode})
     if use_llm_companion:
         st.caption("ผู้ช่วย AI จะเรียบเรียงคำตอบให้อ่านง่าย โดยยังยึดเหตุผลจากระบบเดิม")
     elif not llm_available:
         st.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
+
+_update_application_section(
+    "developer",
+    {
+        "developer_mode": bool(developer_mode),
+        "use_llm_companion": bool(use_llm_companion),
+        "llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only"),
+    },
+)
+_update_application_section("ui", {"llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only")})
 
 _show_feedback_summary()
 _show_developer_alert_center()
