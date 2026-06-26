@@ -1,6 +1,74 @@
-# SME Companion AI
+# SME Companion
 
-SME Companion AI is a Streamlit app for Thai small-business owners. It provides an interactive demo experience with sample stores, business diagnosis, content suggestions, chat guidance, and guarded LLM assistance.
+SME Companion is a Streamlit business companion for Thai small and medium-sized business owners. It helps owners describe their store, explore demo businesses, generate practical content ideas, receive business guidance, and capture product feedback from normal chat conversations.
+
+The project combines deterministic local business engines with an optional LLM layer. It can run without provider keys using fallback responses, while OpenAI or DeepSeek can be enabled for richer assistant replies.
+
+## Vision
+
+SME Companion is designed to become a lightweight business brain for SME owners: a system that remembers the business context, understands conversations, learns from product feedback, and eventually helps operators make better daily decisions.
+
+Read the long-term product vision in [VISION.md](VISION.md) and the delivery plan in [ROADMAP.md](ROADMAP.md).
+
+## Key Features
+
+| Area | Current capability |
+| --- | --- |
+| Interactive demo | Six demo store profiles for coffee, restaurant, clothing, beauty, construction materials, and online store scenarios. |
+| Business companion | Store profile setup, business diagnosis, insights, content suggestions, promotion ideas, sales strategy, and campaign planning. |
+| Conversation intelligence | Chat intent detection, business context handling, response cleaning, follow-up handling, and conversation memory within the session. |
+| Product learning | Natural-language product feedback detection, local feedback log, product backlog upsert, priority assignment, duplicate merging, trend summaries, and developer feedback summary. |
+| LLM routing | Provider selection for DeepSeek or OpenAI with deterministic fallback behavior. |
+| Cost guard | Daily and monthly LLM usage tracking for demo reliability and budget control. |
+| Local memory | JSON-based store memory, business memory, business goals, feedback logs, and backlog data. |
+
+## Architecture Overview
+
+SME Companion is organized around several cooperating layers:
+
+```text
+Streamlit UI (app.py)
+  |
+  +-- Business Brain
+  |     business diagnosis, insights, goals, content, campaigns, sales strategy
+  |
+  +-- Conversation Brain
+  |     intent detection, chat guidance, context updates, response cleanup
+  |
+  +-- Product Brain
+  |     product feedback classification, backlog, priority, trend summaries
+  |
+  +-- LLM Layer
+  |     provider router, DeepSeek client, OpenAI client, fallback behavior
+  |
+  +-- Memory Layer
+        local JSON store profiles, business events, goals, feedback, backlog
+```
+
+For a fuller technical description, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Folder Structure
+
+```text
+SMEContentAI/
+  app.py                         Streamlit application entry point
+  content_engine.py              Content plan and sales brief helpers
+  billing/                       LLM usage and budget guard
+  brain/                         Business, conversation, content, goal, and insight engines
+  data/                          Local JSON memory and goal data
+  demo/                          Demo store JSON files and demo loader
+  feedback/                      Product feedback, backlog, priority, and analysis modules
+  knowledge/                     Store-type playbooks and playbook router
+  llm/                           DeepSeek, OpenAI, and provider routing
+  memory/                        Store profile and generated content memory
+  README.md                      Project overview
+  CHANGELOG.md                   Semantic release history
+  ROADMAP.md                     Product phases and expected outcomes
+  VISION.md                      Long-term vision
+  ARCHITECTURE.md                Technical architecture
+  SPRINT_HISTORY.md              Chronological sprint record
+  CONTRIBUTING.md                Developer workflow
+```
 
 ## Local Setup
 
@@ -10,53 +78,92 @@ SME Companion AI is a Streamlit app for Thai small-business owners. It provides 
 pip install -r requirements.txt
 ```
 
-2. Create a local environment file from the example:
+2. Create a local environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Add provider keys to `.env` as needed:
+3. Add provider keys if LLM-backed responses are needed:
 
 ```bash
 DEEPSEEK_API_KEY=
 OPENAI_API_KEY=
-DEEPSEEK_MODEL=deepseek-v4-flash
-OPENAI_MODEL=gpt-4.1-mini
 ```
 
-The app can still run without provider keys by using deterministic fallback responses.
-
-## Product Feedback MVP
-
-Users can type product feedback directly in the chat in normal Thai, such as comments about the Dashboard, chat, AI answers, buttons, notifications, or feature requests.
-
-For this MVP, feedback is stored locally as JSONL at:
-
-```text
-data/feedback/feedback_log.jsonl
-```
-
-On Streamlit Cloud, local file persistence may be temporary. A future version should move feedback storage to a real database before using this as a production feedback system.
-
-## Run Locally
+4. Run the app:
 
 ```bash
 streamlit run app.py
 ```
 
-## Streamlit Cloud Secrets
+## Environment Variables
 
-Add these secrets in Streamlit Cloud before public demo testing:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `APP_ENV` | No | Marks the runtime environment, for example `development`. |
+| `LLM_PROVIDER` | No | Selects the default provider. Current example value: `deepseek`. |
+| `DEEPSEEK_API_KEY` | No | Enables DeepSeek-backed LLM responses. |
+| `DEEPSEEK_MODEL` | No | Overrides the DeepSeek model. Example: `deepseek-v4-flash`. |
+| `OPENAI_API_KEY` | No | Enables OpenAI-backed LLM responses. |
+| `OPENAI_MODEL` | No | Overrides the OpenAI model when configured. |
+
+The application is expected to continue operating with deterministic fallback responses when provider keys are absent or provider calls fail.
+
+## Streamlit Deployment
+
+1. Push the repository to the deployment branch.
+2. Configure the Streamlit app entry point as:
+
+```text
+app.py
+```
+
+3. Add required secrets in Streamlit Cloud:
 
 ```toml
 DEEPSEEK_API_KEY = "..."
 OPENAI_API_KEY = "..."
 ```
 
-Optional model overrides:
+4. Add optional model/provider settings if needed:
 
 ```toml
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 OPENAI_MODEL = "gpt-4.1-mini"
+LLM_PROVIDER = "deepseek"
+APP_ENV = "production"
 ```
+
+5. Smoke test demo store selection, chat, fallback behavior, product feedback capture, and developer feedback summary.
+
+## Screenshots
+
+Screenshots should be added as the UI stabilizes:
+
+| Screen | Placeholder |
+| --- | --- |
+| Demo store selector | `docs/screenshots/demo-store-selector.png` |
+| Business dashboard | `docs/screenshots/business-dashboard.png` |
+| Chat companion | `docs/screenshots/chat-companion.png` |
+| Developer feedback summary | `docs/screenshots/developer-feedback-summary.png` |
+
+## Development Workflow
+
+1. Create a focused branch for each sprint or fix.
+2. Keep runtime changes separate from documentation-only work.
+3. Run the Streamlit app locally before deployment.
+4. Check that demo stores still load.
+5. Check that chat works with and without provider keys.
+6. Review local JSON writes for memory, goals, feedback, and backlog behavior.
+7. Update [CHANGELOG.md](CHANGELOG.md), [ROADMAP.md](ROADMAP.md), or [SPRINT_HISTORY.md](SPRINT_HISTORY.md) when a sprint changes product behavior.
+
+## Current Version
+
+Current documented product version: **V2.0 Product Brain Foundation**.
+
+V2.0 represents the foundation for a product brain: product feedback can be detected from chat, classified, stored, prioritized, merged into a backlog, and summarized for developer review.
+
+## Future Roadmap
+
+The future roadmap is maintained in [ROADMAP.md](ROADMAP.md).
