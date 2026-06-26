@@ -4,6 +4,24 @@ All notable changes to SME Companion are documented here.
 
 This project uses semantic product milestones alongside release-candidate entries. Versions are ordered chronologically from the earliest documented milestone to the current foundation release.
 
+## [2.3.1] - Persistent Store Profile
+
+### Added
+
+- Local JSON persistence for the active manual store profile at `data/store_profile/active_store.json`.
+- Startup restore for manual store profile, business memory snapshot, goals, diagnosis, Business OS state, and knowledge-layer data.
+- Safe manual-store clear control with confirmation.
+- Thai save/restore captions for manual store persistence status.
+
+### Changed
+
+- Manual store fields now save as soon as a valid manual profile exists.
+- Demo stores remain isolated and do not overwrite the persisted manual store.
+
+### Impact
+
+- Manual store setup survives browser refreshes, Streamlit reruns, and app reloads without requiring login or database infrastructure.
+
 ## [2.0.0] - Product Brain Foundation
 
 ### Added

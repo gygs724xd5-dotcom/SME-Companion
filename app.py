@@ -77,12 +77,17 @@ from llm.prompt_context_builder import build_prompt_context
 from memory.application_state import application_state, ensure_application_state
 from memory.receipt_state import ensure_receipt_state, mark_receipt_uploaded
 from memory.receipt_storage import save_uploaded_receipt
+from memory.store_profile_storage import (
+    clear_store_profile as clear_persistent_store_profile,
+    load_store_profile as load_persistent_store_profile,
+    save_store_profile as save_persistent_store_profile,
+)
 from memory.store_memory import (
     get_content_history,
     get_recent_topics,
     get_store_profile,
     save_generated_content,
-    save_store_profile,
+    save_store_profile as save_store_memory_profile,
 )
 
 
@@ -544,10 +549,14 @@ def _init_session_state() -> None:
     st.session_state.setdefault("application_state", application_state)
     ensure_application_state(st.session_state["application_state"])
     st.session_state.setdefault("demo_mode", False)
+    st.session_state.setdefault("store_source", None)
     st.session_state.setdefault("selected_demo_store", None)
     st.session_state.setdefault("demo_llm_tokens_used", 0)
     st.session_state.setdefault("demo_first_ai_success_shown", False)
     st.session_state.setdefault("show_manual_store_setup", False)
+    st.session_state.setdefault("manual_store_restored", False)
+    st.session_state.setdefault("manual_store_storage_status", None)
+    st.session_state.setdefault("manual_store_created_at", None)
     st.session_state.setdefault("llm_usage_daily", {})
     st.session_state.setdefault("llm_usage_monthly", {})
     st.session_state.setdefault("generated_daily", None)
@@ -568,6 +577,170 @@ def _init_session_state() -> None:
     _get_application_state()["developer"].setdefault("future_hooks", _future_engine_hooks())
     _ensure_conversation_state()
     _sync_session_to_application_state()
+
+
+MANUAL_STORE_SESSION_KEYS = (
+    "store_profile",
+    "business_memory",
+    "business_goals",
+    "business_diagnosis",
+    "business_os",
+    "knowledge_layer",
+    "manual_store_created_at",
+    "manual_store_restored",
+    "manual_store_storage_status",
+)
+
+
+def _is_manual_store_active() -> bool:
+    return (
+        not bool(st.session_state.get("demo_mode"))
+        and st.session_state.get("store_source") == "manual"
+        and bool(st.session_state.get("store_profile"))
+    )
+
+
+def _manual_store_profile() -> dict | None:
+    if _is_manual_store_active():
+        return st.session_state.get("store_profile") or {}
+    return None
+
+
+def _restore_manual_store_profile() -> bool:
+    if st.session_state.get("demo_mode") or _is_manual_store_active():
+        return False
+
+    store_data = load_persistent_store_profile()
+    if not store_data:
+        return False
+
+    profile = store_data.get("store_profile") or {}
+    st.session_state["demo_mode"] = False
+    st.session_state["selected_demo_store"] = None
+    st.session_state["store_source"] = "manual"
+    st.session_state["store_profile"] = profile
+    st.session_state["business_memory"] = store_data.get("business_memory") or {}
+    st.session_state["business_goals"] = store_data.get("business_goals") or {}
+    st.session_state["business_diagnosis"] = store_data.get("business_diagnosis") or {}
+    st.session_state["business_os"] = store_data.get("business_os") or {}
+    st.session_state["knowledge_layer"] = store_data.get("knowledge_layer") or {}
+    st.session_state["manual_store_created_at"] = store_data.get("created_at")
+    st.session_state["manual_store_restored"] = True
+    st.session_state["manual_store_storage_status"] = "restored"
+    st.session_state["show_manual_store_setup"] = False
+    st.session_state["active_store_name"] = str(profile.get("store_name", "")).strip().lower()
+    _update_application_section(
+        "store",
+        {
+            "active_store_name": st.session_state["active_store_name"],
+            "profile": profile,
+            "store_source": "manual",
+        },
+    )
+    return True
+
+
+def _manual_store_payload(
+    profile: dict,
+    *,
+    business_memory: dict | None = None,
+    business_goals: dict | None = None,
+    business_diagnosis: dict | None = None,
+    business_os: dict | None = None,
+    knowledge_layer: dict | None = None,
+) -> dict:
+    existing = load_persistent_store_profile() or {}
+    return {
+        "store_source": "manual",
+        "store_profile": profile or {},
+        "business_memory": business_memory if business_memory is not None else st.session_state.get("business_memory", {}),
+        "business_goals": business_goals if business_goals is not None else st.session_state.get("business_goals", {}),
+        "business_diagnosis": business_diagnosis if business_diagnosis is not None else st.session_state.get("business_diagnosis", {}),
+        "business_os": business_os if business_os is not None else st.session_state.get("business_os", {}),
+        "knowledge_layer": knowledge_layer if knowledge_layer is not None else st.session_state.get("knowledge_layer", {}),
+        "created_at": st.session_state.get("manual_store_created_at") or existing.get("created_at"),
+    }
+
+
+def _save_manual_store_profile(
+    profile: dict | None = None,
+    *,
+    business_memory: dict | None = None,
+    business_goals: dict | None = None,
+    business_diagnosis: dict | None = None,
+    business_os: dict | None = None,
+    knowledge_layer: dict | None = None,
+) -> None:
+    if st.session_state.get("demo_mode"):
+        return
+    active_profile = profile or st.session_state.get("store_profile")
+    if not active_profile:
+        return
+
+    st.session_state["store_source"] = "manual"
+    st.session_state["store_profile"] = active_profile
+    if business_memory is not None:
+        st.session_state["business_memory"] = business_memory
+    if business_goals is not None:
+        st.session_state["business_goals"] = business_goals
+    if business_diagnosis is not None:
+        st.session_state["business_diagnosis"] = business_diagnosis
+    if business_os is not None:
+        st.session_state["business_os"] = business_os
+    if knowledge_layer is not None:
+        st.session_state["knowledge_layer"] = knowledge_layer
+
+    payload = _manual_store_payload(
+        active_profile,
+        business_memory=business_memory,
+        business_goals=business_goals,
+        business_diagnosis=business_diagnosis,
+        business_os=business_os,
+        knowledge_layer=knowledge_layer,
+    )
+    save_persistent_store_profile(payload)
+    saved_data = load_persistent_store_profile() or {}
+    st.session_state["manual_store_created_at"] = saved_data.get("created_at")
+    st.session_state["manual_store_storage_status"] = "saved"
+
+
+def _clear_manual_store_session() -> None:
+    for key in MANUAL_STORE_SESSION_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state["store_source"] = None
+    st.session_state["show_manual_store_setup"] = True
+    st.session_state["active_store_name"] = ""
+    st.session_state["generated_daily"] = None
+    st.session_state["generated_calendar"] = None
+    st.session_state["generated_revenue"] = None
+    st.session_state["last_diagnosis_signature"] = ""
+    _reset_chat_session()
+    app_state = _get_application_state()
+    app_state["store"] = {}
+    app_state["dashboard"] = {}
+    _sync_global_application_state()
+
+
+def _show_manual_store_storage_caption() -> None:
+    if st.session_state.get("demo_mode"):
+        return
+    status = st.session_state.get("manual_store_storage_status")
+    if status == "restored":
+        st.caption("โหลดข้อมูลร้านเดิมแล้ว")
+    elif status == "saved":
+        st.caption("บันทึกข้อมูลร้านไว้แล้ว")
+
+
+def _show_clear_manual_store_control() -> None:
+    if not _is_manual_store_active():
+        return
+
+    with st.expander("จัดการข้อมูลร้าน", expanded=False):
+        confirm_clear = st.checkbox("ยืนยันว่าต้องการล้างข้อมูลร้านนี้", key="confirm_clear_manual_store")
+        if st.button("ล้างข้อมูลร้านนี้", disabled=not confirm_clear, use_container_width=True):
+            clear_persistent_store_profile()
+            _clear_manual_store_session()
+            st.rerun()
 
 
 def _legacy_reset_conversation_state_for_demo_switch() -> None:
@@ -670,6 +843,7 @@ DEMO_STORE_CARDS = {
 def _start_demo_store(store_key: str) -> None:
     with st.status("SME Companion กำลังเตรียมร้านตัวอย่าง...", expanded=True) as status:
         demo_data = inject_demo_store_to_session(st, store_key)
+        st.session_state["store_source"] = "demo"
         st.write("✓ โหลดข้อมูลร้าน")
         time.sleep(0.2)
         st.write("✓ วิเคราะห์ธุรกิจ")
@@ -726,8 +900,13 @@ def _show_demo_entry() -> None:
         if st.button("เปลี่ยนร้านตัวอย่าง", use_container_width=True):
             _reset_conversation_state_for_demo_switch()
             st.session_state["demo_mode"] = False
+            st.session_state["store_source"] = None
             st.session_state["selected_demo_store"] = None
             st.rerun()
+        return
+
+    _restore_manual_store_profile()
+    if _is_manual_store_active():
         return
 
     if st.session_state.get("show_manual_store_setup"):
@@ -2425,6 +2604,16 @@ def _show_chat_companion(
             summary=user_message,
             metadata={"urgency_level": (diagnosis or {}).get("urgency_level")},
         )
+    if not st.session_state.get("demo_mode"):
+        persisted_goals = dict(st.session_state.get("business_goals") or {})
+        persisted_goals["goal_status"] = goal_status or persisted_goals.get("goal_status") or {}
+        _save_manual_store_profile(
+            profile,
+            business_memory=load_business_memory(profile["store_name"]),
+            business_goals=persisted_goals,
+            business_diagnosis=diagnosis or {},
+            business_os=business_os_state or {},
+        )
     response["reply"] = _clean_chat_reply(response["reply"])
     if response.get("suggested_action"):
         response["suggested_action"] = localize_internal_labels(response["suggested_action"])
@@ -2471,9 +2660,11 @@ demo_mode = bool(st.session_state.get("demo_mode"))
 demo_profile = st.session_state.get("store_profile") if demo_mode else None
 demo_history = _content_examples_to_history(st.session_state.get("content_examples", [])) if demo_mode else []
 demo_topics = [item["topic"] for item in demo_history if item.get("topic")]
+manual_profile = _manual_store_profile()
 
 store_name = (demo_profile or {}).get("store_name", "") if demo_mode else st.text_input(
     "ชื่อร้าน",
+    value=(manual_profile or {}).get("store_name", ""),
     placeholder="เช่น บ้านกาแฟสุขใจ",
 )
 
@@ -2491,11 +2682,15 @@ if current_store_name != st.session_state["active_store_name"]:
     if previous_store_name and current_store_name:
         _reset_chat_session()
 
-saved_profile = demo_profile or (get_store_profile(store_name) if store_name.strip() else None)
+legacy_saved_profile = get_store_profile(store_name) if store_name.strip() else None
+saved_profile = demo_profile or manual_profile or legacy_saved_profile
 recent_history = demo_history or (get_content_history(store_name) if store_name.strip() else [])
 recent_topics = demo_topics or (get_recent_topics(store_name) if store_name.strip() else [])
 
 dashboard_slot = st.empty()
+
+_show_manual_store_storage_caption()
+_show_clear_manual_store_control()
 
 with st.expander("ข้อมูลร้าน", expanded=not bool(saved_profile)):
     store_type = st.text_input(
@@ -2534,11 +2729,24 @@ sales_submitted = action_col3.button("📈 วางแผนเพิ่มย�
 
 input_profile = _build_profile(store_name, store_type, product, target_customer, tone)
 active_profile = input_profile or saved_profile
+if input_profile and not demo_mode:
+    if st.session_state.get("store_profile") != input_profile or st.session_state.get("store_source") != "manual":
+        save_store_memory_profile(
+            store_name=store_name,
+            store_type=store_type,
+            product=product,
+            target_customer=target_customer,
+            tone=tone,
+        )
+        st.session_state["show_manual_store_setup"] = False
+        _save_manual_store_profile(input_profile)
+    active_profile = input_profile
 _update_application_section(
     "store",
     {
         "active_store_name": current_store_name,
         "profile": active_profile or {},
+        "store_source": "demo" if demo_mode else ("manual" if active_profile else None),
         "recent_topics": recent_topics,
     },
 )
@@ -2556,7 +2764,7 @@ if daily_submitted or calendar_submitted or sales_submitted:
     if not input_profile:
         st.warning("กรุณากรอกชื่อร้าน ประเภทร้านค้า สินค้า และกลุ่มลูกค้าเป้าหมายให้ครบ")
     else:
-        active_profile = save_store_profile(
+        active_profile = save_store_memory_profile(
             store_name=store_name,
             store_type=store_type,
             product=product,
@@ -2744,6 +2952,20 @@ _update_application_section(
         "goal_status": goal_status or {},
     },
 )
+if active_profile and not demo_mode:
+    manual_business_memory = load_business_memory(active_profile["store_name"])
+    manual_business_goals = {
+        "active_goal": active_goal or {},
+        "goal_status": goal_status or {},
+    }
+    _save_manual_store_profile(
+        active_profile,
+        business_memory=manual_business_memory,
+        business_goals=manual_business_goals,
+        business_diagnosis=diagnosis or {},
+        business_os=business_os_state or {},
+        knowledge_layer=st.session_state.get("knowledge_layer", {}),
+    )
 
 if active_profile and diagnosis:
     diagnosis_signature = "|".join(
@@ -2770,6 +2992,13 @@ if (
         },
     )
     st.session_state["last_diagnosis_signature"] = diagnosis_signature
+    _save_manual_store_profile(
+        active_profile,
+        business_memory=load_business_memory(active_profile["store_name"]),
+        business_goals={"active_goal": active_goal or {}, "goal_status": goal_status or {}},
+        business_diagnosis=diagnosis or {},
+        business_os=business_os_state or {},
+    )
 
 with dashboard_slot.container():
     _show_dashboard(companion, business_os_state)
@@ -2800,6 +3029,14 @@ if saved_goal:
         goal_status or {},
         recent_topics,
     )
+    if not demo_mode:
+        _save_manual_store_profile(
+            active_profile,
+            business_memory=load_business_memory(active_profile["store_name"]),
+            business_goals={"active_goal": active_goal or {}, "goal_status": goal_status or {}},
+            business_diagnosis=diagnosis or {},
+            business_os=business_os_state or {},
+        )
     st.success("บันทึกเป้าหมายร้านแล้ว")
 _show_revenue_engine()
 

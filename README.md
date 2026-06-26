@@ -110,6 +110,18 @@ streamlit run app.py
 
 The application is expected to continue operating with deterministic fallback responses when provider keys are absent or provider calls fail.
 
+## Persistent Store Profile
+
+Manual store profiles are saved locally as UTF-8 JSON at:
+
+```text
+data/store_profile/active_store.json
+```
+
+This persistence is intentionally simple for V2.3.1. It keeps the active manual store profile, business memory snapshot, goals, diagnosis, Business OS state, and knowledge-layer data available across browser refreshes, Streamlit reruns, and app reloads. Demo stores are isolated and are not written to this file.
+
+The local JSON file does not store API keys. Streamlit Cloud local filesystem storage may not be permanent across redeploys, restarts, or environment changes. A production version should move this profile persistence to a database with user authentication and account-level ownership.
+
 ## Streamlit Deployment
 
 1. Push the repository to the deployment branch.
