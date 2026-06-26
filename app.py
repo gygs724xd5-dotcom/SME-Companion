@@ -97,7 +97,7 @@ from memory.store_memory import (
 
 
 st.set_page_config(
-    page_title="SME Companion",
+    page_title="ผู้ช่วยธุรกิจของคุณ",
     page_icon="🏪",
     layout="centered",
 )
@@ -922,14 +922,14 @@ DEMO_STORE_CARDS = {
 
 
 def _start_demo_store(store_key: str) -> None:
-    with st.status("SME Companion กำลังเตรียมร้านตัวอย่าง...", expanded=True) as status:
+    with st.status("ผู้ช่วย AI กำลังเตรียมร้านตัวอย่าง...", expanded=True) as status:
         demo_data = inject_demo_store_to_session(st, store_key)
         st.session_state["store_source"] = "demo"
         st.write("✓ โหลดข้อมูลร้าน")
         time.sleep(0.2)
         st.write("✓ วิเคราะห์ธุรกิจ")
         time.sleep(0.2)
-        st.write("✓ เตรียม AI Companion")
+        st.write("✓ เตรียมผู้ช่วย AI")
         time.sleep(0.2)
         st.write("✓ พร้อมใช้งาน")
         status.update(label="พร้อมใช้งาน", state="complete", expanded=True)
@@ -941,7 +941,7 @@ def _start_demo_store(store_key: str) -> None:
         {
             "role": "assistant",
             "content": (
-                "สวัสดีครับ ผมคือ SME Companion AI ตอนนี้ผมโหลดข้อมูลร้านตัวอย่างเรียบร้อยแล้ว "
+                "สวัสดีครับ ผมคือผู้ช่วยธุรกิจ ตอนนี้ผมโหลดข้อมูลร้านตัวอย่างเรียบร้อยแล้ว "
                 "ลองถามผมได้เลย เช่น วันนี้ควรโพสต์อะไร หรือควรเพิ่มยอดขายยังไง"
             ),
         }
@@ -993,7 +993,7 @@ def _show_demo_entry() -> None:
     if st.session_state.get("show_manual_store_setup"):
         return
 
-    st.title("SME Companion AI")
+    st.title("ผู้ช่วยธุรกิจของคุณ")
     st.subheader("ผู้ช่วยเจ้าของร้านไทย")
     st.write("ทดลองให้ AI วิเคราะห์ร้าน วางแผนธุรกิจ และช่วยคิดคอนเทนต์ได้ทันที")
     st.caption("ทดลองใช้ฟรี • ไม่ต้องสมัคร • ใช้ได้ทันที")
@@ -1042,7 +1042,7 @@ def _show_demo_entry() -> None:
 def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
     st.subheader("ภาพรวมธุรกิจ")
     if not companion:
-        st.info("กรอกข้อมูลร้านเพื่อให้ SME Companion วิเคราะห์คำแนะนำวันนี้ โอกาส และสิ่งที่ควรทำ")
+        st.info("กรอกข้อมูลร้านเพื่อให้ผู้ช่วย AI วิเคราะห์คำแนะนำวันนี้ โอกาส และสิ่งที่ควรทำ")
         return
 
     score = (
@@ -1338,9 +1338,9 @@ def _html_escape(value: object) -> str:
 
 
 def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
-    st.subheader("AI Business Command Center")
+    st.subheader("ผู้ช่วยธุรกิจของคุณ")
     if not companion:
-        st.info("Add your store details so SME Companion can brief you on health, priority, opportunity, and risk.")
+        st.info("กรอกข้อมูลร้านก่อนครับ แล้วผมจะสรุปสุขภาพร้าน สิ่งที่ควรทำ โอกาส และสิ่งที่ต้องระวังให้")
         return
 
     score_value = (
@@ -1354,21 +1354,28 @@ def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
     opportunity = (os_state or {}).get("growth_opportunity") or companion.get("opportunity")
     risk = (os_state or {}).get("current_risk") or companion.get("warning")
     weekly_focus = (os_state or {}).get("weekly_focus") or today_action
-    trend = "Needs focus" if int(score_value or 0) < 70 else "Stable"
+    trend = "ควรดูแลเป็นพิเศษ" if int(score_value or 0) < 70 else "ไปได้ดี"
     store_profile = (_get_application_state().get("store") or {}).get("profile") or {}
-    store_name = store_profile.get("store_name") or "business owner"
+    store_name = store_profile.get("store_name") or "เจ้าของร้าน"
+    hero_message = (
+        f"สวัสดีครับ {store_name}\n"
+        "วันนี้ผมตรวจข้อมูลร้านของคุณแล้ว\n\n"
+        "ตอนนี้ร้านยังมีโอกาสเติบโตได้อีกมาก\n"
+        "สิ่งที่ควรเริ่มก่อนคือการเพิ่มรีวิวและคอนเทนต์ที่ช่วยสร้างความน่าเชื่อถือให้ลูกค้า"
+    )
+    hero_message_html = _html_escape(hero_message).replace("\n", "<br>")
 
     st.markdown(
         f"""
 <section class="sme-command-welcome">
-    <div class="sme-kicker">AI Morning Brief</div>
-    <h2>Good morning, {_html_escape(store_name)}. I analyzed your business this morning.</h2>
+    <div class="sme-kicker">สรุปธุรกิจเช้านี้</div>
+    <h2>{hero_message_html}</h2>
     <p>{_html_escape(companion.get("companion_message"))}</p>
     <div class="sme-brief-grid">
-        <div><span>Business Health</span><strong>{_html_escape(score)}</strong></div>
-        <div><span>Today's Focus</span><strong>{_html_escape(today_action)}</strong></div>
-        <div><span>Biggest Risk</span><strong>{_html_escape(risk)}</strong></div>
-        <div><span>Best Opportunity</span><strong>{_html_escape(opportunity)}</strong></div>
+        <div><span>สุขภาพธุรกิจ</span><strong>{_html_escape(score)}</strong></div>
+        <div><span>สิ่งที่ควรโฟกัสวันนี้</span><strong>{_html_escape(today_action)}</strong></div>
+        <div><span>สิ่งที่ต้องระวัง</span><strong>{_html_escape(risk)}</strong></div>
+        <div><span>โอกาสที่น่าลอง</span><strong>{_html_escape(opportunity)}</strong></div>
     </div>
 </section>
 """,
@@ -1376,39 +1383,39 @@ def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
     )
 
     with st.container(border=True):
-        st.markdown("##### Today's Focus")
-        st.markdown(f"**Priority:** {today_action}")
-        st.markdown(f"**Reason:** {risk}")
-        st.markdown(f"**Suggested action:** {today_action}")
-        st.markdown(f"**Expected outcome:** {opportunity}")
+        st.markdown("##### สิ่งที่ควรโฟกัสวันนี้")
+        st.markdown(f"**สิ่งที่ควรทำ:** {today_action}")
+        st.markdown(f"**ทำไมควรทำ:** {risk}")
+        st.markdown(f"**สิ่งที่ AI แนะนำให้ทำ:** {today_action}")
+        st.markdown(f"**ผลลัพธ์ที่คาดว่าจะได้:** {opportunity}")
 
     with st.container(border=True):
-        st.markdown("##### Morning Brief")
+        st.markdown("##### สรุปวันนี้")
         cols = st.columns(3)
-        cols[0].metric("Health", score)
-        cols[1].metric("Trend", trend)
-        cols[2].metric("Confidence", f"{companion.get('confidence', 0)}%")
-        st.markdown(f"**Business health:** {health}")
-        st.markdown(f"**Opportunity:** {opportunity}")
-        st.markdown(f"**Risk:** {risk}")
-        st.markdown(f"**Weekly goal:** {weekly_focus}")
+        cols[0].metric("สุขภาพธุรกิจ", score)
+        cols[1].metric("ทิศทางร้าน", trend)
+        cols[2].metric("ความมั่นใจของ AI", f"{companion.get('confidence', 0)}%")
+        st.markdown(f"**สุขภาพธุรกิจ:** {health}")
+        st.markdown(f"**โอกาสที่น่าลอง:** {opportunity}")
+        st.markdown(f"**สิ่งที่ต้องระวัง:** {risk}")
+        st.markdown(f"**เป้าหมายสัปดาห์นี้:** {weekly_focus}")
 
 
 def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None) -> tuple[bool, bool, bool]:
-    st.markdown("### Suggested Actions")
+    st.markdown("### สิ่งที่ AI แนะนำให้ทำ")
     if not companion:
-        st.info("Create or select a store first. The AI will rank the next actions here.")
+        st.info("สร้างหรือเลือกร้านก่อนครับ แล้วผมจะเรียงสิ่งที่ควรทำถัดไปให้")
         return False, False, False
 
     confidence = int(companion.get("confidence") or 75)
-    risk = (os_state or {}).get("current_risk") or companion.get("warning") or "Customers need clearer reasons to buy."
-    opportunity = (os_state or {}).get("growth_opportunity") or companion.get("opportunity") or "Increase purchase confidence."
-    weekly_focus = (os_state or {}).get("weekly_focus") or "Keep execution consistent this week."
+    risk = (os_state or {}).get("current_risk") or companion.get("warning") or "ลูกค้าใหม่ยังไม่มีรีวิวให้อ่านก่อนตัดสินใจซื้อ"
+    opportunity = (os_state or {}).get("growth_opportunity") or companion.get("opportunity") or "ช่วยให้ลูกค้ามั่นใจและตัดสินใจซื้อง่ายขึ้น"
+    weekly_focus = (os_state or {}).get("weekly_focus") or "ทำงานให้ต่อเนื่องตลอดสัปดาห์นี้"
 
     actions = [
-        ("Create Review Content", risk, "+12% purchase confidence", min(96, confidence + 4), "High", "Create Review Post"),
-        ("Build 7-Day Focus Plan", weekly_focus, "+7 days of execution clarity", max(70, confidence - 3), "Medium", "Create 7-Day Plan"),
-        ("Plan Sales Push", opportunity, "+1 focused sales campaign", max(68, confidence - 6), "Medium", "Plan Sales Growth"),
+        ("สร้างโพสต์รีวิวลูกค้า", risk, "ช่วยเพิ่มความน่าเชื่อถือ และทำให้ลูกค้าตัดสินใจง่ายขึ้น", min(96, confidence + 4), "สูง", "สร้างโพสต์รีวิว"),
+        ("วางแผนโฟกัส 7 วัน", weekly_focus, "ช่วยให้รู้ว่าควรทำอะไรก่อนหลังในแต่ละวัน", max(70, confidence - 3), "กลาง", "สร้างแผน 7 วัน"),
+        ("วางแผนเพิ่มยอดขาย", opportunity, "ช่วยให้มีแคมเปญขายที่ชัดเจนและทำตามได้ทันที", max(68, confidence - 6), "กลาง", "วางแผนเพิ่มยอดขาย"),
     ]
 
     cols = st.columns(3)
@@ -1416,9 +1423,9 @@ def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None) -> tu
     for index, (title, reason, impact, action_confidence, priority, button_label) in enumerate(actions):
         with cols[index].container(border=True):
             st.markdown(f"**{index + 1}. {title}**")
-            st.caption(f"Priority: {priority} | Confidence: {action_confidence}%")
-            st.markdown(f"**Reason:** {reason}")
-            st.markdown(f"**Expected impact:** {impact}")
+            st.caption(f"ความสำคัญ: {priority} | ความมั่นใจของ AI: {action_confidence}%")
+            st.markdown(f"**ทำไมควรทำ:** {reason}")
+            st.markdown(f"**ผลลัพธ์ที่คาดว่าจะได้:** {impact}")
             clicks.append(st.button(button_label, key=f"ai_ranked_action_{index}", use_container_width=True))
 
     return clicks[0], clicks[1], clicks[2]
@@ -1430,48 +1437,49 @@ def _show_product_brain_card(profile: dict | None, business_insight: dict | None
 
     insight = business_insight or {}
     missing = insight.get("missing_content_types") or []
-    weakness = (diagnosis or {}).get("likely_problem") or (", ".join(missing[:2]) if missing else "Needs more operating data")
-    strength = insight.get("business_recommendation") or "Store profile and customer context are available"
+    weakness = (diagnosis or {}).get("likely_problem") or (", ".join(missing[:2]) if missing else "ยังมีข้อมูลร้านไม่มากพอ")
+    strength = insight.get("business_recommendation") or "มีข้อมูลสินค้าและกลุ่มลูกค้าพอให้เริ่มแนะนำได้"
     confidence = 72 + min(20, int(insight.get("total_generated_content") or 0) * 4)
 
     with st.container(border=True):
-        st.markdown("### Product Brain Learned")
+        st.markdown("### สิ่งที่ AI เข้าใจเกี่ยวกับร้านคุณ")
         cols = st.columns(2)
-        cols[0].markdown(f"**Main product:** {profile.get('product')}")
-        cols[1].markdown(f"**Customer type:** {profile.get('target_customer')}")
-        cols[0].markdown(f"**Weakness:** {weakness}")
-        cols[1].markdown(f"**Strength:** {strength}")
+        cols[0].markdown(f"**สินค้าหลัก:** {profile.get('product')}")
+        cols[1].markdown(f"**กลุ่มลูกค้า:** {profile.get('target_customer')}")
+        cols[0].markdown(f"**จุดที่ควรปรับ:** {weakness}")
+        cols[1].markdown(f"**จุดที่นำไปต่อยอดได้:** {strength}")
         st.progress(min(100, confidence) / 100)
-        st.caption(f"Learning confidence: {min(100, confidence)}%")
+        st.caption(f"ความมั่นใจของ AI: {min(100, confidence)}%")
 
 
 def _show_business_journey(profile: dict | None, active_goal: dict | None, business_os_state: dict | None) -> None:
     receipt = ensure_receipt_state(_get_application_state().get("receipt"))
     steps = [
-        ("Store Created", bool(profile)),
-        ("Strategy Generated", bool(business_os_state)),
-        ("Goals Defined", bool(active_goal)),
-        ("Receipt OCR", bool(receipt.get("receipt_uploaded"))),
-        ("Inventory", False),
-        ("Business Memory", bool(profile)),
-        ("Automation", False),
+        ("สร้างข้อมูลร้านแล้ว", bool(profile)),
+        ("วางกลยุทธ์แล้ว", bool(business_os_state)),
+        ("ตั้งเป้าหมายแล้ว", bool(active_goal)),
+        ("อ่านบิล / ใบเสร็จ", bool(receipt.get("receipt_uploaded"))),
+        ("จัดการสต็อก", False),
+        ("ความจำธุรกิจ", bool(profile)),
+        ("ระบบช่วยทำงานอัตโนมัติ", False),
     ]
 
     with st.container(border=True):
-        st.markdown("### Business Journey")
+        st.markdown("### เส้นทางการพัฒนาร้าน")
         cols = st.columns(len(steps))
         for col, (label, done) in zip(cols, steps):
-            col.markdown(("**Done**  \n" if done else "**Next**  \n") + label)
+            status = "เสร็จแล้ว" if done else "ขั้นถัดไป"
+            col.markdown(f"**{status}**  \n{label}")
 
 
 def _show_smart_chat_prompts() -> None:
     prompts = [
-        "What should I do today?",
-        "Help increase sales",
-        "Analyze my business",
-        "Create content",
-        "Calculate costs",
-        "Read receipt",
+        "วันนี้ควรทำอะไร",
+        "ช่วยเพิ่มยอดขาย",
+        "วิเคราะห์ร้านของฉัน",
+        "สร้างโพสต์",
+        "คำนวณต้นทุน",
+        "อ่านบิล / ใบเสร็จ",
     ]
     chips = "".join(f"<span>{_html_escape(prompt)}</span>" for prompt in prompts)
     st.markdown(f'<div class="sme-chat-prompts">{chips}</div>', unsafe_allow_html=True)
@@ -2187,14 +2195,14 @@ def _handle_dashboard_workflow(user_message: str) -> dict:
 def _receipt_uploaded_reply(action: str | None = None) -> str:
     if action == "receipt_ocr_pending":
         return (
-            "OCR ยังไม่เปิดใช้งาน\n\n"
+            "ระบบอ่านบิลอัตโนมัติยังไม่เปิดใช้งาน\n\n"
             "เมื่อพร้อมจะคำนวณให้อัตโนมัติ"
         )
     return (
         "เห็นแล้วครับ\n\n"
         "รับบิลเรียบร้อย\n\n"
-        "OCR กำลังรอการพัฒนา\n\n"
-        "เมื่อเปิดใช้งานแล้วจะสามารถอ่าน\n\n"
+        "ระบบอ่านบิลอัตโนมัติกำลังรอการพัฒนา\n\n"
+        "เมื่อเปิดใช้งานแล้วจะช่วยอ่าน\n\n"
         "• รายการสินค้า\n"
         "• ราคาวัตถุดิบ\n"
         "• ต้นทุน\n"
@@ -2223,9 +2231,9 @@ def _handle_receipt_workflow(user_message: str) -> dict:
     if any(term in normalized for term in ["เดี๋ยวส่งบิล", "เดี๋ยวส่ง", "จะส่งบิล", "ส่งบิลนะ"]):
         return {"reply": "ได้ครับ รอรับบิล", "intent": WORKFLOW_RECEIPT_CAPTURE}
     if "อ่าน" in normalized:
-        reply = "ตอนนี้บันทึกบิลได้แล้ว แต่ยังอ่านตัวเลขอัตโนมัติไม่ได้เต็มรูปแบบ ขั้นต่อไปคือเพิ่ม OCR"
+        reply = "ตอนนี้บันทึกบิลได้แล้ว แต่ยังอ่านตัวเลขอัตโนมัติไม่ได้เต็มรูปแบบ ขั้นต่อไปคือเพิ่มระบบอ่านบิล"
     else:
-        reply = "ส่งไฟล์ที่ช่องอัปโหลดบิล / สลิปได้ครับ ตอนนี้ระบบจะบันทึกไฟล์ไว้ก่อน และขั้นถัดไปจะเพิ่ม OCR เพื่ออ่านยอดเงินจากบิล"
+        reply = "ส่งไฟล์ที่ช่องอัปโหลดบิล / สลิปได้ครับ ตอนนี้ระบบจะบันทึกไฟล์ไว้ก่อน และขั้นถัดไปจะเพิ่มระบบอ่านบิลเพื่อดึงยอดเงินให้อัตโนมัติ"
     return {"reply": reply, "intent": WORKFLOW_RECEIPT_CAPTURE}
 
 
@@ -2516,7 +2524,7 @@ def _show_receipt_upload(profile: dict | None) -> None:
                     "workflow_ready": False,
                 },
             )
-            st.success("รับไฟล์บิลแล้วครับ ตอนนี้ระบบบันทึกไฟล์ไว้ก่อน ขั้นถัดไปจะเพิ่ม OCR เพื่ออ่านยอดเงินจากบิล")
+            st.success("รับไฟล์บิลแล้วครับ ตอนนี้ระบบบันทึกไฟล์ไว้ก่อน ขั้นถัดไปจะเพิ่มระบบอ่านบิลเพื่อดึงยอดเงินให้อัตโนมัติ")
 
 
 def _show_chat_companion(
@@ -2528,7 +2536,7 @@ def _show_chat_companion(
     business_os_state: dict | None,
     use_llm_companion: bool,
 ) -> None:
-    st.markdown("### คุยกับ SME Companion")
+    st.markdown("### คุยกับผู้ช่วยธุรกิจ")
     _sync_conversation_business_context(profile, goal_status, business_os_state)
 
     if st.button("เริ่มบทสนทนาใหม่", use_container_width=True):
@@ -2915,7 +2923,7 @@ _show_demo_entry()
 st.markdown(
     """
 <section class="sme-hero">
-    <h1>SME Companion</h1>
+    <h1>ผู้ช่วยธุรกิจของคุณ</h1>
     <div class="subtitle">ผู้ช่วย AI สำหรับร้านค้าไทย</div>
     <p class="promise">วันนี้ควรโพสต์อะไร ควรขายอะไร และควรแก้ปัญหาอะไร</p>
 </section>
@@ -3365,7 +3373,7 @@ if saved_goal:
 _show_revenue_engine()
 
 developer_mode = st.sidebar.checkbox(
-    "Developer Mode",
+    "โหมดทีมพัฒนา",
     value=bool(st.session_state.get("developer_mode")),
 )
 st.session_state["developer_mode"] = developer_mode
