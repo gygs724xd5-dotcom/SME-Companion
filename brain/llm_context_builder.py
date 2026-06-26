@@ -36,13 +36,31 @@ def build_llm_context(
     business_os,
     recent_topics,
     intent_analysis=None,
+    conversation_intent=None,
+    conversation_mode=None,
+    include_business_context=True,
+    show_business_insights=False,
 ) -> dict:
     """Build compact context for the LLM communication layer.
 
     Business reasoning must already be done by deterministic engines. The LLM
     receives only summarized facts and recommendations to explain in Thai.
     """
-    return {
+    base_context = {
+        "conversation": {
+            "intent": conversation_intent,
+            "mode": conversation_mode,
+            "include_business_context": bool(include_business_context),
+            "show_business_insights": bool(show_business_insights),
+            "response_instruction": "ตอบให้กระชับ เหมาะกับหน้าจอมือถือ ถ้าผู้ใช้ไม่ได้ขอรายละเอียด ให้ตอบไม่เกิน 5-8 บรรทัด",
+        }
+    }
+
+    if not include_business_context:
+        return base_context
+
+    context = {
+        **base_context,
         "store_profile": _compact_dict(
             store_profile,
             ["store_name", "store_type", "product", "target_customer", "tone"],
@@ -97,3 +115,11 @@ def build_llm_context(
         ),
         "recent_topics": [str(topic).strip() for topic in (recent_topics or []) if str(topic).strip()][:8],
     }
+
+    if not show_business_insights:
+        context.pop("business_diagnosis", None)
+        context.pop("goal_status", None)
+        context.pop("business_os", None)
+        context.pop("business_memory", None)
+
+    return context

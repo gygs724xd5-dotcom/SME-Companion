@@ -11,6 +11,12 @@ from brain.business_os_engine import build_business_os_state
 from brain.campaign_engine import generate_sales_campaign
 from brain.chat_companion_engine import generate_chat_response
 from brain.chat_intelligence_engine import analyze_chat_intent
+from brain.conversation_intent_engine import (
+    detect_conversation_intent,
+    get_conversation_mode,
+    should_show_business_insights,
+    should_use_business_context,
+)
 from brain.content_calendar_engine import generate_content_calendar
 from brain.content_strategy_engine import get_content_strategy
 from brain.goal_engine import (
@@ -20,6 +26,7 @@ from brain.goal_engine import (
 )
 from brain.llm_context_builder import build_llm_context
 from brain.promotion_engine import get_promotion_idea
+from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from content_engine import generate_content_plan, generate_sales_brief
@@ -330,9 +337,30 @@ def _init_session_state() -> None:
     st.session_state.setdefault("generated_calendar", None)
     st.session_state.setdefault("generated_revenue", None)
     st.session_state.setdefault("chat_history", [])
+    st.session_state.setdefault("last_reasoning", None)
+    st.session_state.setdefault("cached_prompt", None)
+    st.session_state.setdefault("last_ai_state", None)
+    st.session_state.setdefault("pending_followup", None)
     st.session_state.setdefault("active_store_name", "")
     st.session_state.setdefault("last_diagnosis_signature", "")
     st.session_state.setdefault("use_llm_companion", False)
+
+
+def _reset_conversation_state_for_demo_switch() -> None:
+    st.session_state["chat_history"] = []
+    st.session_state["last_reasoning"] = None
+    st.session_state["cached_prompt"] = None
+    st.session_state["last_ai_state"] = None
+    st.session_state["pending_followup"] = None
+    st.session_state["demo_first_ai_success_shown"] = False
+    st.session_state["demo_llm_tokens_used"] = 0
+    for key in [
+        "llm_context_cache",
+        "business_context_cache",
+        "cached_llm_context",
+        "cached_business_context",
+    ]:
+        st.session_state.pop(key, None)
 
 
 def _content_examples_to_history(content_examples: list[dict]) -> list[dict]:
@@ -401,6 +429,7 @@ def _start_demo_store(store_key: str) -> None:
         status.update(label="พร้อมใช้งาน", state="complete", expanded=True)
 
     store_name = (demo_data.get("store_profile") or {}).get("store_name", "")
+    _reset_conversation_state_for_demo_switch()
     st.session_state["active_store_name"] = store_name.strip().lower()
     st.session_state["chat_history"] = [
         {
@@ -434,10 +463,9 @@ def _show_demo_entry() -> None:
         store_name = profile.get("store_name", "ร้านตัวอย่าง")
         st.info(f"กำลังทดลองร้านตัวอย่าง: {store_name}")
         if st.button("เปลี่ยนร้านตัวอย่าง", use_container_width=True):
+            _reset_conversation_state_for_demo_switch()
             st.session_state["demo_mode"] = False
             st.session_state["selected_demo_store"] = None
-            st.session_state["demo_llm_tokens_used"] = 0
-            st.session_state["demo_first_ai_success_shown"] = False
             st.rerun()
         return
 
@@ -780,12 +808,12 @@ def _show_chat_companion(
 
     for message in st.session_state["chat_history"]:
         with st.chat_message(message["role"]):
-            _render_markdown(message["content"])
+            _render_markdown(clean_response(message["content"]))
             if message["role"] == "assistant":
                 if message.get("suggested_action"):
-                    st.caption(f"สิ่งที่แนะนำ: {message['suggested_action']}")
+                    st.caption(f"สิ่งที่แนะนำ: {localize_internal_labels(message['suggested_action'])}")
                 if message.get("related_feature"):
-                    st.caption(f"ฟีเจอร์ที่เกี่ยวข้อง: {message['related_feature']}")
+                    st.caption(f"ฟีเจอร์ที่เกี่ยวข้อง: {localize_internal_labels(message['related_feature'])}")
 
     user_message = st.chat_input("ถามเรื่องโพสต์ โปร ยอดขาย หรือแผนคอนเทนต์")
     if not user_message:
@@ -795,11 +823,26 @@ def _show_chat_companion(
     with st.chat_message("user"):
         _render_markdown(user_message)
 
-    intent_analysis = analyze_chat_intent(
-        user_message,
-        profile,
-        business_insight or {},
-        recent_topics,
+    conversation_intent = detect_conversation_intent(user_message)
+    conversation_mode = get_conversation_mode(conversation_intent)
+    use_business_context = should_use_business_context(conversation_intent)
+    show_business_insights = should_show_business_insights(conversation_intent, user_message)
+    intent_analysis = (
+        analyze_chat_intent(
+            user_message,
+            profile,
+            business_insight or {},
+            recent_topics,
+        )
+        if use_business_context
+        else {
+            "intent": conversation_intent,
+            "confidence": 0.85,
+            "reasoning": "No current store context needed for this message",
+            "suggested_action": None,
+            "related_module": None,
+            "category": conversation_mode,
+        }
     )
     deterministic_response = generate_chat_response(
         user_message=user_message,
@@ -810,11 +853,15 @@ def _show_chat_companion(
         diagnosis=diagnosis or {},
         goal_status=goal_status or {},
         business_os_state=business_os_state or {},
+        conversation_intent=conversation_intent,
+        conversation_mode=conversation_mode,
+        show_business_insights=show_business_insights,
     )
     response = deterministic_response
     demo_ai_success = False
     demo_mode = bool(st.session_state.get("demo_mode"))
-    if use_llm_companion:
+    llm_allowed_for_intent = conversation_intent not in {"GREETING", "FOLLOW_UP", "START_BUSINESS"}
+    if use_llm_companion and llm_allowed_for_intent:
         llm_context = build_llm_context(
             store_profile=profile,
             business_diagnosis=diagnosis or {},
@@ -827,6 +874,10 @@ def _show_chat_companion(
             business_os=business_os_state or {},
             recent_topics=recent_topics,
             intent_analysis=intent_analysis,
+            conversation_intent=conversation_intent,
+            conversation_mode=conversation_mode,
+            include_business_context=use_business_context,
+            show_business_insights=show_business_insights,
         )
         llm_reply = None
         llm_attempted = False
@@ -839,7 +890,8 @@ def _show_chat_companion(
             else:
                 st.info("วันนี้ระบบ AI ใช้งานครบโควต้าทดลองแล้ว แต่ยังสามารถดูภาพรวมธุรกิจและข้อมูลร้านตัวอย่างได้ตามปกติ")
         elif not demo_mode or _allow_demo_llm_call(user_message, llm_context):
-            with st.spinner("AI กำลังวิเคราะห์ข้อมูลร้าน..."):
+            spinner_text = "AI กำลังตอบ..." if not use_business_context else "AI กำลังวิเคราะห์ข้อมูลร้าน..."
+            with st.spinner(spinner_text):
                 llm_attempted = True
                 llm_reply = generate_llm_response(
                     user_message,
@@ -863,12 +915,15 @@ def _show_chat_companion(
             print(f"Fallback reason: {fallback_reason}")
             st.caption("ระบบใช้คำตอบพื้นฐานแทนผู้ช่วย AI ชั่วคราว")
         if llm_reply:
+            llm_reply = clean_response(llm_reply)
             response = {
                 **deterministic_response,
                 "reply": llm_reply,
-                "related_feature": "ผู้ช่วย AI",
-                "related_module": "ผู้ช่วย AI",
+                "related_feature": "ผู้ช่วย AI" if show_business_insights else None,
+                "related_module": "ผู้ช่วย AI" if show_business_insights else None,
             }
+    elif use_llm_companion and not llm_allowed_for_intent:
+        pass
     elif not provider_has_api_key(demo_mode=demo_mode):
         print("Fallback reason: missing key")
 
@@ -878,17 +933,24 @@ def _show_chat_companion(
         summary=user_message,
         metadata={
             "intent": response.get("intent"),
+            "business_intent": response.get("business_intent"),
+            "conversation_mode": response.get("conversation_mode"),
             "llm_enabled": bool(use_llm_companion),
             "llm_used": response.get("related_feature") == "ผู้ช่วย AI",
         },
     )
-    if response.get("intent") == "ask_sales_drop":
+    if response.get("business_intent") == "ask_sales_drop":
         save_business_event(
             store_name=profile["store_name"],
             event_type="sales_problem",
             summary=user_message,
             metadata={"urgency_level": (diagnosis or {}).get("urgency_level")},
         )
+    response["reply"] = clean_response(response["reply"])
+    if response.get("suggested_action"):
+        response["suggested_action"] = localize_internal_labels(response["suggested_action"])
+    if response.get("related_feature"):
+        response["related_feature"] = localize_internal_labels(response["related_feature"])
     assistant_message = {
         "role": "assistant",
         "content": response["reply"],

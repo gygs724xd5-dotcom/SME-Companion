@@ -3,7 +3,7 @@ from knowledge.knowledge_router import get_playbook
 
 CONTENT_INTENTS = {
     "ask_daily_post": {
-        "keywords": ["โพสต์วันนี้", "คอนเทนต์วันนี้", "ลงอะไรดี", "วันนี้ลง", "today", "daily post"],
+        "keywords": ["โพสต์วันนี้", "โพสต์อะไร", "ควรโพสต์", "คอนเทนต์วันนี้", "ลงอะไรดี", "วันนี้ลง", "today", "daily post"],
         "suggested_action": "สร้างคอนเทนต์วันนี้จากมุมที่เหมาะกับร้าน",
         "related_module": "Daily Content",
     },

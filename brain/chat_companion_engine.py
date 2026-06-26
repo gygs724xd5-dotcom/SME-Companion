@@ -1,4 +1,15 @@
 from brain.chat_intelligence_engine import analyze_chat_intent
+from brain.conversation_intent_engine import (
+    FOLLOW_UP,
+    GENERAL_CHAT,
+    GREETING,
+    OTHER,
+    START_BUSINESS,
+    detect_conversation_intent,
+    get_conversation_mode,
+    should_show_business_insights,
+)
+from brain.response_cleaner import clean_response, localize_internal_labels
 from knowledge.knowledge_router import get_playbook
 
 
@@ -203,13 +214,21 @@ def _intent_answer(intent: str, ctx: dict) -> tuple[str, str]:
     )
 
 
-def _format_reply(direct_answer: str, why: str, suggested_action: str, related_module: str) -> str:
-    return (
+def _format_reply(
+    direct_answer: str,
+    why: str,
+    suggested_action: str,
+    related_module: str,
+    include_feature_block: bool = True,
+) -> str:
+    reply = (
         f"{direct_answer}\n\n"
         f"ทำไม:\n{why}\n\n"
-        f"แนะนำ:\n{suggested_action}\n\n"
-        f"ฟีเจอร์ที่เกี่ยวข้อง:\n{related_module}"
+        f"แนะนำ:\n{suggested_action}"
     )
+    if include_feature_block:
+        reply = f"{reply}\n\nฟีเจอร์ที่เกี่ยวข้อง:\n{related_module}"
+    return localize_internal_labels(reply)
 
 
 def _needs_os_answer(message: str, intent: str) -> bool:
@@ -277,6 +296,36 @@ def _format_os_reply(
     )
 
 
+def _startup_advisor_reply(user_message: str) -> str:
+    product_hint = "ธุรกิจ"
+    message = _clean(user_message)
+    for marker in ["เปิดร้าน", "เริ่มร้าน", "เริ่มธุรกิจ", "จะขาย", "อยากขาย", "เริ่มขาย"]:
+        if marker in message:
+            product_hint = message.split(marker, 1)[-1].strip() or product_hint
+            break
+    for phrase in ["ต้องเริ่มยังไง", "เริ่มยังไง", "ยังไง", "อย่างไร", "ดีไหม", "ดีมั้ย"]:
+        product_hint = product_hint.replace(phrase, "").strip()
+    product_hint = product_hint or "ธุรกิจ"
+
+    return (
+        f"ถ้าจะเริ่ม{product_hint} ให้เริ่มจาก 5 เรื่องนี้ก่อนครับ:\n"
+        "1. เลือกกลุ่มลูกค้าที่ชัดเจน\n"
+        "2. เลือกแนวสินค้าหรือบริการที่จะแก้ปัญหาเขา\n"
+        "3. คำนวณต้นทุน ราคาขาย และกำไรต่อชิ้น\n"
+        "4. เตรียมช่องทางขายหลัก เช่น หน้าร้าน เพจ หรือไลน์\n"
+        "5. ทดลองขายล็อตเล็กก่อน แล้วดูว่าลูกค้าถามหรือซื้อเพราะอะไร\n\n"
+        "ตอนนี้คุณอยากขายแนวไหนครับ?"
+    )
+
+
+def _casual_reply(intent: str) -> str:
+    if intent == GREETING:
+        return "สวัสดีครับ ผมช่วยคิดเรื่องร้าน การขาย คอนเทนต์ หรือการเริ่มธุรกิจได้ครับ\nวันนี้อยากให้ช่วยเรื่องไหน?"
+    if intent == FOLLOW_UP:
+        return "ขอโทษครับ ผมอาจตีความผิด\nคุณหมายถึงเรื่องไหนครับ?"
+    return "ได้ครับ เล่าเพิ่มอีกนิดว่าต้องการให้ช่วยเรื่องอะไร\nถ้าเป็นเรื่องร้าน ผมจะช่วยคิดให้เป็นขั้นตอนสั้นๆ ครับ"
+
+
 def generate_chat_response(
     user_message,
     store_profile,
@@ -286,17 +335,50 @@ def generate_chat_response(
     diagnosis=None,
     goal_status=None,
     business_os_state=None,
+    conversation_intent=None,
+    conversation_mode=None,
+    show_business_insights=None,
 ):
     """Return local Thai business-coach advice for SME store owners."""
     profile = store_profile or {}
     insight = business_insight or {}
     topics = recent_topics or []
+    broad_intent = conversation_intent or detect_conversation_intent(user_message)
+    mode = conversation_mode or get_conversation_mode(broad_intent)
+
+    if broad_intent == START_BUSINESS:
+        reply = clean_response(_startup_advisor_reply(user_message))
+        return {
+            "reply": reply,
+            "suggested_action": None,
+            "related_feature": None,
+            "intent": broad_intent,
+            "conversation_mode": mode,
+            "confidence": 0.9,
+            "reasoning": "startup advisor mode without current store context",
+            "related_module": None,
+        }
+
+    if broad_intent in {GREETING, GENERAL_CHAT, FOLLOW_UP, OTHER}:
+        reply = clean_response(_casual_reply(broad_intent))
+        return {
+            "reply": reply,
+            "suggested_action": None,
+            "related_feature": None,
+            "intent": broad_intent,
+            "conversation_mode": mode,
+            "confidence": 0.85,
+            "reasoning": "casual conversation without current store context",
+            "related_module": None,
+        }
+
     intent_analysis = analyze_chat_intent(user_message, profile, insight, topics)
     ctx = _context(profile, insight, topics)
     message = _clean(user_message).lower()
+    show_os = should_show_business_insights(broad_intent, user_message) if show_business_insights is None else show_business_insights
 
     direct_answer, why = _intent_answer(intent_analysis["intent"], ctx)
-    if _needs_os_answer(message, intent_analysis["intent"]) and (diagnosis or business_os_state or goal_status):
+    if show_os and _needs_os_answer(message, intent_analysis["intent"]) and (diagnosis or business_os_state or goal_status):
         reply = _format_os_reply(
             ctx=ctx,
             diagnosis=diagnosis or {},
@@ -304,21 +386,24 @@ def generate_chat_response(
             business_os_state=business_os_state or {},
             fallback_action=intent_analysis["suggested_action"],
         )
-        related_feature = "Business Operating System Dashboard"
+        related_feature = "แผนงานธุรกิจ"
     else:
         reply = _format_reply(
             direct_answer=direct_answer,
             why=why,
             suggested_action=intent_analysis["suggested_action"],
             related_module=intent_analysis["related_module"],
+            include_feature_block=show_os,
         )
-        related_feature = intent_analysis["related_module"]
+        related_feature = localize_internal_labels(intent_analysis["related_module"]) if show_os else None
 
     return {
-        "reply": reply,
+        "reply": clean_response(reply),
         "suggested_action": intent_analysis["suggested_action"],
         "related_feature": related_feature,
-        "intent": intent_analysis["intent"],
+        "intent": broad_intent,
+        "business_intent": intent_analysis["intent"],
+        "conversation_mode": mode,
         "confidence": intent_analysis["confidence"],
         "reasoning": intent_analysis["reasoning"],
         "related_module": related_feature,
