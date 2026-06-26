@@ -21,6 +21,11 @@ from brain.conversation_intent_engine import (
     should_show_business_insights,
     should_use_business_context,
 )
+from brain.conversation_understanding_engine import (
+    build_direct_reply as build_understanding_direct_reply,
+    should_answer_directly,
+    understand_conversation,
+)
 from brain.conversation_workflow_engine import (
     WORKFLOW_COST_CALCULATION,
     WORKFLOW_DASHBOARD_REQUEST,
@@ -575,6 +580,7 @@ def _record_reasoning(user_message: str) -> dict:
             "reasoning_mode": task_route.get("reasoning_mode"),
             "capability_available": bool(task_route.get("capability_available")),
             "reasoning_result": reasoning,
+            "conversation_understanding": task_route.get("conversation_understanding"),
             "current_action": reasoning.get("action"),
             "llm_needed": bool(reasoning.get("llm_needed")),
             "workflow_ready": bool(reasoning.get("workflow_ready")),
@@ -2570,9 +2576,17 @@ def _show_chat_companion(
     with st.chat_message("user"):
         _render_markdown(user_message)
 
-    conversation_intent = detect_conversation_intent(user_message)
+    understanding_state = _sync_session_to_application_state()
+    conversation_understanding = understand_conversation(user_message, understanding_state)
+    conversation_state = _ensure_conversation_state()
+    conversation_state["understanding"] = conversation_understanding
+    conversation_state["last_understanding"] = conversation_understanding
+    _update_application_section("conversation", {"understanding": conversation_understanding, "last_understanding": conversation_understanding})
+
+    conversation_intent = conversation_understanding.get("legacy_intent") or detect_conversation_intent(user_message)
     conversation_mode = get_conversation_mode(conversation_intent)
-    workflow_detection = detect_workflow(user_message, is_product_feedback=is_product_feedback(user_message))
+    planner_message = conversation_understanding.get("planner_message") or user_message
+    workflow_detection = detect_workflow(planner_message, is_product_feedback=is_product_feedback(user_message))
     state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
     chat_profile = _profile_with_conversation_memory(profile) or profile
     reasoning = _record_reasoning(user_message)
@@ -2590,7 +2604,9 @@ def _show_chat_companion(
     active_workflow_v2_state = state.get("workflow_state_v2") or {}
     active_workflow_v2 = active_workflow_v2_state.get("workflow")
     active_workflow_step_v2 = active_workflow_v2_state.get("step")
-    detected_workflow_v2 = detect_workflow_intent(user_message, is_product_feedback=is_product_feedback(user_message))
+    detected_workflow_v2 = detect_workflow_intent(planner_message, is_product_feedback=is_product_feedback(user_message))
+    if conversation_understanding.get("detected_intent") == "continue_previous_workflow" and active_workflow_v2:
+        detected_workflow_v2 = active_workflow_v2
     if (
         not detected_workflow_v2
         and active_workflow_v2
@@ -2598,6 +2614,30 @@ def _show_chat_companion(
         and detected_workflow not in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE, WORKFLOW_PRODUCT_FEEDBACK}
     ):
         detected_workflow_v2 = active_workflow_v2
+
+    direct_reply = None
+    if should_answer_directly(conversation_understanding):
+        direct_reply = build_understanding_direct_reply(
+            conversation_understanding,
+            profile=chat_profile,
+            diagnosis=diagnosis or {},
+            goal_status=goal_status or {},
+            business_os_state=business_os_state or {},
+        )
+    if direct_reply:
+        direct_reply = _clean_chat_reply(direct_reply, preserve_greeting=False)
+        topic = state.get("current_topic")
+        _update_conversation_state_after_assistant(direct_reply, conversation_intent, topic)
+        assistant_message = {
+            "role": "assistant",
+            "content": direct_reply,
+            "show_business_insights": conversation_understanding.get("detected_intent") in {"store_summary", "business_status"},
+        }
+        st.session_state["chat_history"].append(assistant_message)
+        _sync_chat_history_to_application_state()
+        with st.chat_message("assistant"):
+            _render_markdown(direct_reply)
+        return
 
     if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)

@@ -122,7 +122,33 @@ def _future_capability_from_message(message: str) -> tuple[str, str] | None:
     return None
 
 
+def _conversation_understanding(application_state: dict) -> dict:
+    return (
+        (application_state or {}).get("conversation_understanding")
+        or ((application_state or {}).get("conversation") or {}).get("understanding")
+        or {}
+    )
+
+
 def _select_task(application_state: dict, user_message: str) -> tuple[str, str, str | None, list[str], str]:
+    understanding = _conversation_understanding(application_state)
+    understood_intent = understanding.get("detected_intent")
+    active_workflow = ((application_state.get("workflow") or {}).get("workflow_state_v2") or {}).get("workflow")
+
+    if understood_intent == "continue_previous_workflow" and active_workflow:
+        workflow = active_workflow
+        if workflow in WORKFLOW_TO_TASK:
+            task_type, capability_key, skill_name = WORKFLOW_TO_TASK[workflow]
+            return task_type, capability_key, workflow, [skill_name], "workflow"
+    if understood_intent in {"store_summary", "business_status"}:
+        return "Dashboard Request", "dashboard_request", WORKFLOW_DASHBOARD_REQUEST, ["dashboard_builder"], "workflow"
+    if understood_intent in {"receipt_reference", "image_reference"}:
+        return "Receipt Upload", "receipt_upload", WORKFLOW_RECEIPT_CAPTURE, ["receipt_capture"], "workflow"
+    if understood_intent == "cost_question":
+        return "Cost Calculation", "cost_calculation", WORKFLOW_COST_CALCULATION, ["cost_calculation"], "workflow"
+    if understood_intent == "pricing_question":
+        return "Sales Plan", "sales_plan", WORKFLOW_SALES_PLAN_7_DAY, ["sales_planning"], "workflow"
+
     workflow = detect_workflow_intent(user_message, is_product_feedback=is_product_feedback(user_message))
     lowered = str(user_message or "").strip().lower()
     future = _future_capability_from_message(user_message)
@@ -135,7 +161,6 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
             if any(keyword in lowered for keyword in keywords):
                 workflow = candidate_workflow
                 break
-    active_workflow = ((application_state.get("workflow") or {}).get("workflow_state_v2") or {}).get("workflow")
     if not workflow and active_workflow:
         workflow = active_workflow
 
@@ -179,6 +204,7 @@ def build_execution_plan(application_state, user_message) -> dict:
 
     return {
         "goal": str(user_message or "").strip(),
+        "conversation_understanding": _conversation_understanding(state),
         "task_type": task_type,
         "required_skills": required_skills,
         "required_information": required_information,

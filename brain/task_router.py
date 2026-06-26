@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 
 from brain.capability_registry import get_capability, is_capability_available
+from brain.conversation_understanding_engine import understand_conversation
 from brain.planner_engine import build_execution_plan
 from brain.reasoning_engine import build_reasoning
 from brain.skill_loader import load_skills
@@ -51,14 +52,23 @@ def _reasoning_mode(plan: dict, reasoning: dict) -> str:
 
 
 def build_task_route(application_state, user_message) -> dict:
-    plan = build_execution_plan(application_state, user_message)
+    interpretation = understand_conversation(user_message, application_state or {})
+    enriched_state = dict(application_state or {})
+    enriched_state["conversation_understanding"] = interpretation
+    enriched_state["conversation"] = {
+        **((application_state or {}).get("conversation") or {}),
+        "understanding": interpretation,
+        "last_understanding": interpretation,
+    }
+    planner_message = interpretation.get("planner_message") or user_message
+    plan = build_execution_plan(enriched_state, planner_message)
     capability_name = TASK_CAPABILITY_NAMES.get(plan.get("task_type"), plan.get("task_type"))
     capability = get_capability(capability_name)
     capability_available = is_capability_available(capability_name)
     loaded_skills = load_skills(plan.get("required_skills") or [])
-    reasoning = build_reasoning(application_state, user_message)
+    reasoning = build_reasoning(enriched_state, planner_message)
 
-    workflow_state = (application_state or {}).get("workflow") or {}
+    workflow_state = (enriched_state or {}).get("workflow") or {}
     workflow_ready = bool(
         workflow_state.get("is_ready")
         or (workflow_state.get("workflow_state_v2") or {}).get("is_ready")
@@ -68,6 +78,7 @@ def build_task_route(application_state, user_message) -> dict:
 
     return {
         "planner_output": plan,
+        "conversation_understanding": interpretation,
         "task_type": plan.get("task_type"),
         "selected_capability": capability,
         "loaded_skills": [_serialize_skill(skill) for skill in loaded_skills],
@@ -87,6 +98,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
 
     return {
         "Planner Output": route.get("planner_output") or {},
+        "Conversation Understanding": route.get("conversation_understanding") or {},
         "Task Type": route.get("task_type"),
         "Selected Capability": (route.get("selected_capability") or {}).get("name"),
         "Loaded Skill": loaded_skill_names,
