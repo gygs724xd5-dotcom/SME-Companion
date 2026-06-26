@@ -28,6 +28,17 @@ from brain.conversation_workflow_engine import (
     WORKFLOW_RECEIPT_CAPTURE,
     detect_workflow,
 )
+from brain.workflow_state_machine import (
+    detect_workflow_intent,
+    update_workflow_state,
+)
+from brain.workflow_readiness import (
+    WORKFLOW_CONTENT_PLAN as V2_WORKFLOW_CONTENT_PLAN,
+    WORKFLOW_COST_CALCULATION as V2_WORKFLOW_COST_CALCULATION,
+    WORKFLOW_DASHBOARD_REQUEST as V2_WORKFLOW_DASHBOARD_REQUEST,
+    WORKFLOW_RECEIPT_CAPTURE as V2_WORKFLOW_RECEIPT_CAPTURE,
+    WORKFLOW_SALES_PLAN_7_DAY as V2_WORKFLOW_SALES_PLAN_7_DAY,
+)
 from brain.content_calendar_engine import generate_content_calendar
 from brain.content_strategy_engine import get_content_strategy
 from brain.goal_engine import (
@@ -382,11 +393,17 @@ DEFAULT_CONVERSATION_STATE = {
     "workflow_data": {},
     "workflow_started_at": None,
     "last_workflow_message": None,
+    "workflow_state_v2": {},
+    "workflow_blocked_phrases": {},
 }
 
 
 def _new_conversation_state() -> dict:
-    return dict(DEFAULT_CONVERSATION_STATE)
+    state = dict(DEFAULT_CONVERSATION_STATE)
+    state["workflow_data"] = {}
+    state["workflow_state_v2"] = {}
+    state["workflow_blocked_phrases"] = {}
+    return state
 
 
 def _ensure_conversation_state() -> dict:
@@ -430,6 +447,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("active_store_name", "")
     st.session_state.setdefault("last_diagnosis_signature", "")
     st.session_state.setdefault("use_llm_companion", False)
+    st.session_state.setdefault("llm_response_mode", "Workflow Only")
     st.session_state.setdefault("developer_mode", False)
     _ensure_conversation_state()
 
@@ -1296,9 +1314,242 @@ def _handle_cost_workflow(user_message: str, starting: bool = False) -> dict:
     return {"reply": reply, "intent": WORKFLOW_COST_CALCULATION, "done": done}
 
 
+def _format_workflow_value(value) -> str:
+    return _format_number(value)
+
+
+def _sync_workflow_state_v2(workflow_state: dict) -> None:
+    state = _ensure_conversation_state()
+    state["workflow_state_v2"] = workflow_state
+    state["current_workflow"] = workflow_state.get("workflow")
+    state["workflow_step"] = workflow_state.get("step")
+    state["workflow_data"] = workflow_state.get("collected_fields") or {}
+    state["last_workflow_message"] = workflow_state.get("last_updated")
+    if not state.get("workflow_started_at"):
+        state["workflow_started_at"] = workflow_state.get("last_updated")
+
+
+def _clear_workflow_state_v2() -> None:
+    state = _ensure_conversation_state()
+    state["workflow_state_v2"] = {}
+    state["workflow_blocked_phrases"] = {}
+    _clear_workflow_state()
+
+
+def _workflow_missing_reply(workflow_state: dict) -> str:
+    workflow = workflow_state.get("workflow")
+    missing = workflow_state.get("missing_fields") or []
+
+    if workflow == V2_WORKFLOW_SALES_PLAN_7_DAY:
+        if len(missing) >= 3:
+            return (
+                "ได้ครับ ผมช่วยทำแผนขาย 7 วันให้ได้\n\n"
+                "ขอข้อมูลสั้น ๆ 3 อย่างครับ:\n"
+                "1. ขายสินค้าอะไร\n"
+                "2. ทำได้วันละกี่ชิ้น\n"
+                "3. ขายช่วงเวลาไหน หรือขายช่องทางไหน"
+            )
+        if "product" in missing:
+            return "ขอชื่อสินค้าที่ต้องการทำแผนขายครับ"
+        if "daily_capacity_or_available_quantity" in missing:
+            return "สินค้านี้ทำได้วันละกี่ชิ้น หรือมีพร้อมขายกี่ชิ้นครับ"
+        if "selling_window_or_sales_channel" in missing:
+            return "ขายช่วงเวลาไหน หรือขายผ่านช่องทางไหนครับ"
+
+    if workflow == V2_WORKFLOW_COST_CALCULATION:
+        if "ingredients_costs" in missing and "total_units" in missing:
+            return (
+                "ได้ครับ ผมช่วยคำนวณต้นทุนต่อชิ้นให้ได้\n\n"
+                "ส่งข้อมูล 3 อย่างนี้มาครับ:\n"
+                "1. วัตถุดิบแต่ละอย่าง + ราคา\n"
+                "2. ทำได้ทั้งหมดกี่ชิ้น\n"
+                "3. ราคาขายต่อชิ้น ถ้ามี"
+            )
+        if "ingredients_costs" in missing:
+            return "ขอราคาวัตถุดิบแต่ละอย่างครับ เช่น แป้ง 40 ไข่ 30 น้ำตาล 20"
+        if "total_units" in missing:
+            return "รวมแล้วทำได้ทั้งหมดกี่ชิ้นครับ"
+
+    if workflow == V2_WORKFLOW_CONTENT_PLAN:
+        return "อยากทำคอนเทนต์ให้สินค้าอะไร หรือธุรกิจประเภทไหนครับ"
+
+    return "ขอข้อมูลที่ขาดอีกนิดเดียวครับ"
+
+
+def _generate_sales_plan_7_day(workflow_state: dict) -> str:
+    fields = workflow_state.get("collected_fields") or {}
+    product = fields.get("product") or "สินค้า"
+    capacity = fields.get("daily_capacity") or fields.get("available_quantity")
+    window = fields.get("selling_window") or fields.get("sales_channel") or "ช่องทางหลัก"
+    capacity_line = f"จำนวนจำกัด {_format_workflow_value(capacity)} ชิ้น" if capacity else "จำนวนจำกัด"
+    return (
+        f"แผนขาย 7 วันสำหรับ{product}\n\n"
+        f"Day 1:\nเป้าหมาย: ขายให้คนรู้จักและลูกค้าใกล้ตัว\nทำวันนี้: โพสต์รูปสินค้า + ราคา + {capacity_line}\n\n"
+        f"Day 2:\nเป้าหมาย: เก็บออเดอร์ช่วง {window}\nทำวันนี้: เปิดรับจองล่วงหน้า และแจ้งเวลารับสินค้าให้ชัด\n\n"
+        "Day 3:\nเป้าหมาย: เพิ่มความน่าเชื่อถือ\nทำวันนี้: ลงรีวิวหรือรูปตอนทำจริง พร้อมบอกจำนวนที่ทำได้ต่อวัน\n\n"
+        "Day 4:\nเป้าหมาย: ดันยอดจากลูกค้าเดิม\nทำวันนี้: ทักลูกค้าที่เคยซื้อและเสนอให้จองรอบถัดไป\n\n"
+        "Day 5:\nเป้าหมาย: เพิ่มออเดอร์แบบกลุ่ม\nทำวันนี้: เสนอชุดซื้อหลายชิ้นสำหรับออฟฟิศ เพื่อนบ้าน หรือครอบครัว\n\n"
+        "Day 6:\nเป้าหมาย: ปิดยอดก่อนหมดรอบขาย\nทำวันนี้: แจ้งจำนวนคงเหลือและเวลาปิดรับออเดอร์\n\n"
+        "Day 7:\nเป้าหมาย: สรุปยอดและทำซ้ำสิ่งที่ได้ผล\nทำวันนี้: ดูว่าวันไหนขายดีที่สุด แล้วใช้ข้อความและช่องทางนั้นต่อ"
+    )
+
+
+def _generate_cost_calculation(workflow_state: dict) -> str:
+    fields = workflow_state.get("collected_fields") or {}
+    ingredients = fields.get("ingredients_costs") or []
+    total_units = float(fields.get("total_units") or 0)
+    selling_price = fields.get("selling_price")
+    total_cost = sum(float(item.get("cost") or 0) for item in ingredients)
+    cost_per_unit = total_cost / total_units if total_units else 0
+    lines = [
+        "คำนวณต้นทุนต่อชิ้น",
+        "",
+        f"ต้นทุนรวม: {_format_number(total_cost)} บาท",
+        f"จำนวนที่ทำได้: {_format_number(total_units)} ชิ้น",
+        f"ต้นทุนต่อชิ้น: {_format_number(cost_per_unit)} บาท",
+    ]
+    if selling_price:
+        selling_price = float(selling_price)
+        gross_profit = selling_price - cost_per_unit
+        gross_margin = (gross_profit / selling_price) * 100 if selling_price else 0
+        lines.extend(
+            [
+                f"ราคาขายต่อชิ้น: {_format_number(selling_price)} บาท",
+                f"กำไรขั้นต้นต่อชิ้น: {_format_number(gross_profit)} บาท",
+                f"Gross margin: {_format_number(gross_margin)}%",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _generate_content_plan(workflow_state: dict) -> str:
+    fields = workflow_state.get("collected_fields") or {}
+    product = fields.get("product") or fields.get("business_type") or "สินค้า"
+    return (
+        f"แผนคอนเทนต์สั้นสำหรับ{product}\n\n"
+        "1. โพสต์สินค้าเด่น: รูปชัด + ราคา + วิธีสั่งซื้อ\n"
+        "2. โพสต์เบื้องหลัง: ขั้นตอนทำหรือคัดสินค้า\n"
+        "3. โพสต์รีวิว: ความเห็นลูกค้าหรือผลลัพธ์หลังใช้\n"
+        "4. โพสต์ปิดการขาย: จำนวนจำกัดหรือรอบส่งถัดไป"
+    )
+
+
+def _generate_workflow_reply(workflow_state: dict) -> str:
+    workflow = workflow_state.get("workflow")
+    if workflow == V2_WORKFLOW_SALES_PLAN_7_DAY:
+        return _generate_sales_plan_7_day(workflow_state)
+    if workflow == V2_WORKFLOW_COST_CALCULATION:
+        return _generate_cost_calculation(workflow_state)
+    if workflow == V2_WORKFLOW_CONTENT_PLAN:
+        return _generate_content_plan(workflow_state)
+    return _workflow_missing_reply(workflow_state)
+
+
+def _workflow_llm_context(workflow_state: dict, profile: dict | None, user_message: str) -> dict:
+    return {
+        "current_workflow": workflow_state.get("workflow"),
+        "collected_fields": workflow_state.get("collected_fields") or {},
+        "missing_fields": workflow_state.get("missing_fields") or [],
+        "store_profile": profile or {},
+        "user_message": user_message,
+        "instruction": [
+            "Do not ask for information that is already present.",
+            "Do not switch topic.",
+            "Do not suggest promotion/content unless workflow is content or sales.",
+            "Keep Thai reply short.",
+        ],
+    }
+
+
+def _maybe_improve_workflow_reply_with_llm(
+    base_reply: str,
+    workflow_state: dict,
+    profile: dict | None,
+    user_message: str,
+) -> tuple[str, bool]:
+    mode = st.session_state.get("llm_response_mode", "Workflow Only")
+    if mode != "Workflow + LLM":
+        return base_reply, False
+
+    demo_mode = bool(st.session_state.get("demo_mode"))
+    context = _workflow_llm_context(workflow_state, profile, user_message)
+    context["deterministic_reply"] = base_reply
+    if not can_call_llm(st):
+        print("Fallback reason: budget guard")
+        return base_reply, False
+    if demo_mode and not _allow_demo_llm_call(user_message, context):
+        print("Fallback reason: demo token guard")
+        return base_reply, False
+    with st.spinner("AI กำลังเรียบเรียงคำตอบ..."):
+        llm_reply = generate_llm_response(
+            user_message,
+            context=context,
+            demo_mode=demo_mode,
+        )
+    if not llm_reply:
+        print("Fallback reason: workflow provider error")
+        return base_reply, True
+    record_llm_call(st, 0.002 if demo_mode else 0.01)
+    return clean_response(llm_reply), True
+
+
+def _handle_state_machine_workflow(
+    user_message: str,
+    detected_workflow: str,
+    profile: dict | None,
+) -> dict:
+    state = _ensure_conversation_state()
+    workflow_state, extracted_fields = update_workflow_state(
+        state.get("workflow_state_v2") or {},
+        user_message,
+        detected_workflow=detected_workflow,
+    )
+    _sync_workflow_state_v2(workflow_state)
+
+    if workflow_state.get("is_ready"):
+        reply = _generate_workflow_reply(workflow_state)
+        reply, llm_attempted = _maybe_improve_workflow_reply_with_llm(reply, workflow_state, profile, user_message)
+        workflow_state["next_action"] = "completed"
+        workflow_state["step"] = "completed"
+        _sync_workflow_state_v2(workflow_state)
+        return {
+            "reply": reply,
+            "intent": workflow_state.get("workflow"),
+            "done": True,
+            "llm_attempted": llm_attempted,
+            "extracted_fields": extracted_fields,
+        }
+
+    reply = _workflow_missing_reply(workflow_state)
+    return {
+        "reply": reply,
+        "intent": workflow_state.get("workflow"),
+        "done": False,
+        "llm_attempted": False,
+        "extracted_fields": extracted_fields,
+    }
+
+
+def _show_workflow_diagnostics() -> None:
+    if not st.session_state.get("developer_mode"):
+        return
+    workflow_state = (_ensure_conversation_state().get("workflow_state_v2") or {})
+    with st.expander("Workflow Diagnostics", expanded=False):
+        st.json(
+            {
+                "Current Workflow": workflow_state.get("workflow"),
+                "Workflow Step": workflow_state.get("step"),
+                "Collected Fields": workflow_state.get("collected_fields") or {},
+                "Missing Fields": workflow_state.get("missing_fields") or [],
+                "Ready?": bool(workflow_state.get("is_ready")),
+                "LLM Response Mode": st.session_state.get("llm_response_mode", "Workflow Only"),
+            }
+        )
+
+
 def _handle_dashboard_workflow(user_message: str) -> dict:
     record_product_feedback(user_message, conversation_id=st.session_state.get("conversation_id"))
-    _clear_workflow_state()
+    _clear_workflow_state_v2()
     return {
         "reply": """ตอนนี้ระบบมีแดชบอร์ดพื้นฐานให้แล้วครับ
 ถ้าต้องการแดชบอร์ดเฉพาะร้าน ผมบันทึกเป็นคำขอฟีเจอร์ให้ทีมพัฒนาแล้ว
@@ -1612,6 +1863,8 @@ def _show_chat_companion(
         st.info("กรอกข้อมูลร้านก่อน เพื่อให้แชทตอบโดยใช้บริบทของร้านได้")
         return
 
+    _show_workflow_diagnostics()
+
     if st.session_state.get("demo_mode") and not st.session_state["chat_history"]:
         _show_demo_chat_suggestions()
 
@@ -1649,8 +1902,52 @@ def _show_chat_companion(
     chat_profile = _profile_with_conversation_memory(profile) or profile
     active_workflow = state.get("current_workflow")
     detected_workflow = workflow_detection.get("workflow")
+    llm_response_mode = st.session_state.get("llm_response_mode", "Workflow Only")
+    active_workflow_v2_state = state.get("workflow_state_v2") or {}
+    active_workflow_v2 = active_workflow_v2_state.get("workflow")
+    active_workflow_step_v2 = active_workflow_v2_state.get("step")
+    detected_workflow_v2 = detect_workflow_intent(user_message, is_product_feedback=is_product_feedback(user_message))
+    if (
+        not detected_workflow_v2
+        and active_workflow_v2
+        and active_workflow_step_v2 not in {"completed", "route_to_product_brain"}
+        and detected_workflow not in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE, WORKFLOW_PRODUCT_FEEDBACK}
+    ):
+        detected_workflow_v2 = active_workflow_v2
 
-    if active_workflow == WORKFLOW_COST_CALCULATION and state.get("workflow_step") == "collecting_cost_inputs" and detected_workflow not in {
+    if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
+        response = _handle_dashboard_workflow(user_message)
+        _append_workflow_reply(response["reply"], response["intent"], "à¹à¸”à¸Šà¸šà¸­à¸£à¹Œà¸”à¸£à¹‰à¸²à¸™à¸„à¹‰à¸²")
+        return
+
+    if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_RECEIPT_CAPTURE:
+        response = _handle_receipt_workflow(user_message)
+        _append_workflow_reply(response["reply"], response["intent"], "à¸šà¸´à¸¥ / à¸ªà¸¥à¸´à¸›")
+        return
+
+    if llm_response_mode != "LLM Only" and detected_workflow_v2 in {
+        V2_WORKFLOW_SALES_PLAN_7_DAY,
+        V2_WORKFLOW_COST_CALCULATION,
+        V2_WORKFLOW_CONTENT_PLAN,
+    }:
+        response = _handle_state_machine_workflow(
+            user_message=user_message,
+            detected_workflow=detected_workflow_v2,
+            profile=chat_profile,
+        )
+        topic_labels = {
+            V2_WORKFLOW_SALES_PLAN_7_DAY: "แผนขาย 7 วัน",
+            V2_WORKFLOW_COST_CALCULATION: "คำนวณต้นทุน",
+            V2_WORKFLOW_CONTENT_PLAN: "แผนคอนเทนต์",
+        }
+        _append_workflow_reply(
+            response["reply"],
+            response["intent"],
+            topic_labels.get(response["intent"]),
+        )
+        return
+
+    if llm_response_mode != "LLM Only" and active_workflow == WORKFLOW_COST_CALCULATION and state.get("workflow_step") == "collecting_cost_inputs" and detected_workflow not in {
         WORKFLOW_DASHBOARD_REQUEST,
         WORKFLOW_RECEIPT_CAPTURE,
         WORKFLOW_PRODUCT_FEEDBACK,
@@ -1659,17 +1956,17 @@ def _show_chat_companion(
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
-    if detected_workflow == WORKFLOW_COST_CALCULATION:
+    if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_COST_CALCULATION:
         response = _handle_cost_workflow(user_message, starting=True)
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
-    if detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
+    if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
         _append_workflow_reply(response["reply"], response["intent"], "แดชบอร์ดร้านค้า")
         return
 
-    if detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
+    if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
         response = _handle_receipt_workflow(user_message)
         _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
         return
@@ -2190,15 +2487,31 @@ developer_mode = st.sidebar.checkbox(
     value=bool(st.session_state.get("developer_mode")),
 )
 st.session_state["developer_mode"] = developer_mode
+if not developer_mode:
+    st.session_state["llm_response_mode"] = "Workflow Only"
 
 llm_available = is_llm_available(demo_mode=demo_mode)
 use_llm_companion = bool(st.session_state.get("use_llm_companion")) if developer_mode else False
 if developer_mode:
+    llm_response_options = ["Workflow Only", "Workflow + LLM", "LLM Only"]
+    current_llm_response_mode = st.session_state.get("llm_response_mode", "Workflow Only")
+    if current_llm_response_mode not in llm_response_options:
+        current_llm_response_mode = "Workflow Only"
+    llm_response_mode = st.sidebar.selectbox(
+        "LLM Response Mode",
+        llm_response_options,
+        index=llm_response_options.index(current_llm_response_mode),
+    )
+    st.session_state["llm_response_mode"] = llm_response_mode
     llm_default = llm_available if demo_mode else st.session_state["use_llm_companion"]
+    if llm_response_mode == "Workflow Only":
+        llm_default = False
+    elif llm_response_mode == "LLM Only":
+        llm_default = llm_available
     use_llm_companion = st.checkbox(
         "ใช้ผู้ช่วย AI เรียบเรียงคำตอบ",
         value=llm_default,
-        disabled=not llm_available,
+        disabled=(not llm_available) or llm_response_mode == "Workflow Only",
     )
     st.session_state["use_llm_companion"] = use_llm_companion
     if use_llm_companion:
