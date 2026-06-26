@@ -52,6 +52,7 @@ from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
+from brain.task_router import build_task_route, developer_diagnostics
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
 from feedback.chatgpt_export_builder import (
@@ -72,6 +73,7 @@ from feedback.product_learning_engine import prepare_dashboard_data, record_prod
 from feedback.sprint_recommendation_engine import recommend_next_sprint
 from feedback.trend_engine import generate_trends
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
+from llm.prompt_context_builder import build_prompt_context
 from memory.application_state import application_state, ensure_application_state
 from memory.receipt_state import ensure_receipt_state, mark_receipt_uploaded
 from memory.receipt_storage import save_uploaded_receipt
@@ -479,11 +481,19 @@ def _sync_session_to_application_state() -> dict:
 
 def _record_reasoning(user_message: str) -> dict:
     state = _sync_session_to_application_state()
-    reasoning = build_reasoning(state, user_message)
+    task_route = build_task_route(state, user_message)
+    reasoning = task_route.get("reasoning") or build_reasoning(state, user_message)
+    st.session_state["last_task_route"] = task_route
     st.session_state["last_reasoning"] = reasoning
     _update_application_section(
         "developer",
         {
+            "task_route": task_route,
+            "planner_output": task_route.get("planner_output"),
+            "selected_capability": task_route.get("selected_capability"),
+            "loaded_skills": task_route.get("loaded_skills"),
+            "reasoning_mode": task_route.get("reasoning_mode"),
+            "capability_available": bool(task_route.get("capability_available")),
             "reasoning_result": reasoning,
             "current_action": reasoning.get("action"),
             "llm_needed": bool(reasoning.get("llm_needed")),
@@ -497,10 +507,12 @@ def _record_reasoning(user_message: str) -> dict:
 def _future_engine_hooks() -> dict:
     return {
         "ocr_engine": None,
-        "dashboard_generator": None,
-        "image_analyzer": None,
-        "autonomous_planner": None,
+        "inventory_engine": None,
+        "sales_forecast_engine": None,
         "business_memory": None,
+        "marketing_agent": None,
+        "financial_agent": None,
+        "inventory_agent": None,
     }
 
 
@@ -1621,6 +1633,17 @@ def _maybe_improve_workflow_reply_with_llm(
     demo_mode = bool(st.session_state.get("demo_mode"))
     context = _workflow_llm_context(workflow_state, profile, user_message)
     context["deterministic_reply"] = base_reply
+    route = st.session_state.get("last_task_route") or {}
+    context = build_prompt_context(
+        application_state=_sync_session_to_application_state(),
+        planner=route.get("planner_output"),
+        capability=route.get("selected_capability"),
+        loaded_skill=route.get("loaded_skills"),
+        reasoning=route.get("reasoning"),
+        workflow_state=context,
+        store_profile=profile,
+        developer_mode=bool(st.session_state.get("developer_mode")),
+    )
     if not can_call_llm(st):
         print("Fallback reason: budget guard")
         return base_reply, False
@@ -1714,6 +1737,15 @@ def _show_shared_application_state_diagnostics() -> None:
                 "Workflow Ready": bool(reasoning.get("workflow_ready") or (state.get("developer") or {}).get("workflow_ready")),
             }
         )
+
+
+def _show_platform_diagnostics() -> None:
+    if not st.session_state.get("developer_mode"):
+        return
+    state = _sync_session_to_application_state()
+    route = st.session_state.get("last_task_route") or (state.get("developer") or {}).get("task_route") or {}
+    with st.expander("Platform Planner Diagnostics", expanded=False):
+        st.json(developer_diagnostics(route))
 
 
 def _handle_dashboard_workflow(user_message: str) -> dict:
@@ -2098,6 +2130,7 @@ def _show_chat_companion(
 
     _show_workflow_diagnostics()
     _show_shared_application_state_diagnostics()
+    _show_platform_diagnostics()
 
     if st.session_state.get("demo_mode") and not st.session_state["chat_history"]:
         _show_demo_chat_suggestions()
@@ -2311,6 +2344,19 @@ def _show_chat_companion(
             conversation_mode=conversation_mode,
             include_business_context=use_business_context,
             show_business_insights=show_business_insights,
+        )
+        route = st.session_state.get("last_task_route") or {}
+        llm_context = build_prompt_context(
+            application_state=_sync_session_to_application_state(),
+            planner=route.get("planner_output"),
+            capability=route.get("selected_capability"),
+            loaded_skill=route.get("loaded_skills"),
+            reasoning=route.get("reasoning"),
+            conversation_memory=(application_state.get("conversation") or {}),
+            workflow_state=(application_state.get("workflow") or {}),
+            store_profile=chat_profile,
+            product_brain=llm_context,
+            developer_mode=bool(st.session_state.get("developer_mode")),
         )
         llm_reply = None
         llm_attempted = False
