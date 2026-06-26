@@ -1,5 +1,6 @@
 import re
 import time
+from uuid import uuid4
 
 import streamlit as st
 
@@ -31,15 +32,7 @@ from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
-from feedback.feedback_analyzer import summarize_feedback
-from feedback.feedback_engine import (
-    build_feedback_acknowledgement,
-    build_feedback_record,
-    detect_feedback_category,
-    detect_feedback_priority,
-    is_feedback_too_vague,
-)
-from feedback.feedback_storage import load_feedback, save_feedback
+from feedback.product_learning_engine import prepare_dashboard_data, record_product_feedback
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
 from memory.store_memory import (
     get_content_history,
@@ -367,6 +360,7 @@ def _reset_conversation_memory() -> None:
 
 def _reset_chat_session() -> None:
     st.session_state["chat_history"] = []
+    st.session_state["conversation_id"] = str(uuid4())
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -384,6 +378,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("generated_daily", None)
     st.session_state.setdefault("generated_calendar", None)
     st.session_state.setdefault("generated_revenue", None)
+    st.session_state.setdefault("conversation_id", str(uuid4()))
     st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("last_reasoning", None)
     st.session_state.setdefault("cached_prompt", None)
@@ -398,6 +393,7 @@ def _init_session_state() -> None:
 
 def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
+    st.session_state["conversation_id"] = str(uuid4())
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -421,6 +417,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
 
 def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
+    st.session_state["conversation_id"] = str(uuid4())
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -1085,34 +1082,29 @@ def _handle_product_feedback(
     previous_user_message: str | None,
     assistant_reply: str | None,
 ) -> dict:
-    needs_clarification = is_feedback_too_vague(user_message)
-    category = "general" if needs_clarification else detect_feedback_category(user_message)
-    priority = detect_feedback_priority(user_message)
-    if needs_clarification:
-        priority = "medium"
-
-    record = build_feedback_record(
-        message=user_message,
-        category=category,
-        priority=priority,
-        store_type=profile.get("store_type"),
-        store_name=profile.get("store_name"),
-        page="chat",
-        previous_user_message=previous_user_message,
-        assistant_reply=assistant_reply,
-        app_version="V1.9.6",
-    )
-    if st.session_state.get("selected_demo_store"):
-        record["selected_demo_store"] = st.session_state["selected_demo_store"]
-    save_feedback(record)
+    del profile, previous_user_message, assistant_reply
+    conversation_id = st.session_state.get("conversation_id")
+    result = record_product_feedback(user_message, conversation_id=conversation_id)
+    record = result["record"]
+    category = record["category"]
+    priority = record["priority"]
+    if category == "Feature Request":
+        reply = "✅ บันทึกเป็น Feature Request แล้ว\n\nความสำคัญ:\n\n" + priority
+    elif category == "Bug":
+        reply = "✅ บันทึกเป็น Bug Report แล้ว\n\nความสำคัญ:\n\n" + priority
+    else:
+        reply = (
+            "✅ รับข้อเสนอแล้วครับ\n\n"
+            "หมวด:\n\n"
+            f"{category}\n\n"
+            "ความสำคัญ:\n\n"
+            f"{priority}\n\n"
+            "ถูกเพิ่มเข้า Product Backlog แล้ว"
+        )
     return {
-        "reply": build_feedback_acknowledgement(
-            category,
-            priority,
-            needs_clarification=needs_clarification,
-        ),
+        "reply": reply,
         "intent": "PRODUCT_FEEDBACK",
-        "conversation_mode": "product_feedback",
+        "conversation_mode": "developer_feedback",
         "category": category,
         "priority": priority,
     }
@@ -1122,26 +1114,46 @@ def _show_feedback_summary() -> None:
     if not st.session_state.get("developer_mode"):
         return
 
-    with st.expander("Product Feedback", expanded=False):
-        show_summary = st.checkbox("แสดงสรุป Feedback ภายใน", value=False)
+    with st.expander("Product Intelligence", expanded=False):
+        show_summary = st.checkbox("แสดง Developer Dashboard", value=False)
         if not show_summary:
             st.caption("ส่วนนี้ใช้สำหรับทีมพัฒนาเท่านั้น")
             return
 
-        records = load_feedback()
-        summary = summarize_feedback(records)
-        st.metric("จำนวน Feedback ทั้งหมด", summary["total_count"])
-        st.write("ตามหมวดหมู่")
-        st.json(summary["by_category"])
-        st.write("ตามความสำคัญ")
-        st.json(summary["by_priority"])
-        st.write(f"ควรโฟกัสถัดไป: {summary['recommended_focus'] or 'ยังไม่มีข้อมูล'}")
-        st.write("ข้อความล่าสุด 10 รายการ")
-        latest_records = load_feedback(limit=10)
-        for record in reversed(latest_records):
+        dashboard = prepare_dashboard_data()
+        counts = dashboard["counts"]
+        st.metric("Feedback ทั้งหมด", counts["total_count"])
+        st.metric("Backlog เปิดอยู่", counts["backlog_open"])
+
+        st.write("Counts")
+        st.json(
+            {
+                "category": counts["by_category"],
+                "priority": counts["by_priority"],
+                "severity": counts["by_severity"],
+            }
+        )
+
+        st.write("Top Requested Features")
+        for issue in dashboard["top_requested_features"]:
+            st.markdown(f"- **{issue['title']}** ({issue['priority']}) x{issue['count']}")
+
+        st.write("Top Bugs")
+        for issue in dashboard["top_bugs"]:
+            st.markdown(f"- **{issue['title']}** ({issue['priority']}) x{issue['count']}")
+
+        st.write("Top UX Problems")
+        for issue in dashboard["top_ux_problems"]:
+            st.markdown(f"- **{issue['title']}** ({issue['priority']}) x{issue['count']}")
+
+        st.write("Feedback Trend")
+        st.json(dashboard["feedback_trend"]["daily_counts"])
+
+        st.write("Latest Feedback")
+        for record in dashboard["latest_feedback"]:
             st.markdown(
-                f"- **{record.get('category', 'general')} / {record.get('priority', 'low')}**: "
-                f"{record.get('message', '')}"
+                f"- **{record.get('category', 'Other')} / {record.get('priority', 'Low')}**: "
+                f"{record.get('raw_message', '')}"
             )
 
 

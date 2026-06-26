@@ -80,7 +80,7 @@ def get_conversation_mode(intent: str) -> str:
     if intent == BUSINESS_ANALYSIS:
         return "business_analysis"
     if intent == PRODUCT_FEEDBACK:
-        return "product_feedback"
+        return "developer_feedback"
     return "casual"
 
 
@@ -113,8 +113,16 @@ _THAI_PRODUCT_FEEDBACK_KEYWORDS = [
     "อ่านยาก",
     "ใช้ยาก",
     "หายาก",
+    "โหลดช้า",
+    "ช้า",
+    "มือถือ",
+    "ปุ่มเล็ก",
+    "สีไม่สวย",
+    "font เล็ก",
+    "ฟอนต์เล็ก",
     "ตอบยาว",
     "ตอบสั้น",
+    "ยาวไป",
     "ไม่เข้าใจ",
     "อยากได้",
     "ถ้ามี",
@@ -130,12 +138,21 @@ _PRODUCT_CONTEXT_KEYWORDS = [
     "ภาพรวม",
     "ui",
     "ปุ่ม",
+    "สี",
+    "font",
+    "ฟอนต์",
+    "มือถือ",
+    "โหลด",
     "เมนู",
     "ฟีเจอร์",
     "feature",
     "แจ้งเตือน",
     "notification",
     "line",
+    "export",
+    "pos",
+    "sync",
+    "ซิงก์",
     "chat",
     "แชท",
     "ai",
@@ -174,7 +191,20 @@ def is_product_feedback(user_message: str) -> bool:
     if has_product_context:
         return True
 
-    return message in {"ตรงนี้งง", "ใช้ยาก", "ปรับหน่อย", "แก้หน่อย", "อ่านยาก"}
+    return message in {
+        "ตรงนี้งง",
+        "ใช้ยาก",
+        "ปรับหน่อย",
+        "แก้หน่อย",
+        "อ่านยาก",
+        "โหลดช้า",
+        "มือถือใช้ยาก",
+        "สีไม่สวย",
+        "font เล็ก",
+        "ฟอนต์เล็ก",
+        "chat ยาวไป",
+        "แชทยาวไป",
+    }
 
 
 def detect_conversation_intent(user_message: str) -> str:
