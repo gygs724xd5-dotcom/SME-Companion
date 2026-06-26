@@ -1,3 +1,4 @@
+import json
 import re
 import time
 from datetime import datetime, timezone
@@ -41,7 +42,23 @@ from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
+from feedback.chatgpt_export_builder import (
+    JSON_EXPORT_PATH,
+    MARKDOWN_EXPORT_PATH,
+    build_chatgpt_markdown_report,
+    build_product_report_data,
+    save_json_report,
+    save_markdown_report,
+)
+from feedback.conversation_replay import build_problem_conversation_replay
+from feedback.developer_alert_engine import (
+    build_smart_warnings,
+    build_system_health,
+    collect_developer_alerts,
+)
 from feedback.product_learning_engine import prepare_dashboard_data, record_product_feedback
+from feedback.sprint_recommendation_engine import recommend_next_sprint
+from feedback.trend_engine import generate_trends
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
 from memory.receipt_storage import save_uploaded_receipt
 from memory.store_memory import (
@@ -1361,6 +1378,199 @@ def _show_feedback_summary() -> None:
             )
 
 
+def _count_feedback_keywords(records: list[dict], keywords: list[str]) -> int:
+    total = 0
+    for record in records:
+        text = str(record.get("raw_message") or record.get("summary") or "").lower()
+        if any(keyword in text for keyword in keywords):
+            total += 1
+    return total
+
+
+def _render_alert_list(alerts: list[dict], limit: int = 8) -> None:
+    if not alerts:
+        st.caption("No alerts detected.")
+        return
+    for alert in alerts[:limit]:
+        st.markdown(
+            f"- **{alert.get('priority')} / {alert.get('category')}**: "
+            f"{alert.get('title')} x{alert.get('count')}"
+        )
+        if alert.get("recommended_action"):
+            st.caption(alert["recommended_action"])
+
+
+def _show_developer_alert_center() -> None:
+    if not st.session_state.get("developer_mode"):
+        return
+
+    chat_history = st.session_state.get("chat_history", [])
+    alerts = collect_developer_alerts(
+        chat_history=chat_history,
+        conversation_id=st.session_state.get("conversation_id"),
+    )
+    health = build_system_health(alerts, chat_history)
+    trends = generate_trends(chat_history)
+    replay = build_problem_conversation_replay(chat_history, limit=20)
+    recommendations = recommend_next_sprint(chat_history)
+    product_dashboard = prepare_dashboard_data()
+    feedback_records = product_dashboard.get("latest_feedback", [])
+    counts = product_dashboard.get("counts", {})
+    category_counts = counts.get("by_category", {})
+    warnings = build_smart_warnings(alerts)
+
+    with st.expander("Developer Alert Center", expanded=False):
+        for warning in warnings:
+            st.warning(warning)
+
+        st.markdown("### Product Intelligence Dashboard")
+        metric_rows = [
+            st.columns(4),
+            st.columns(4),
+            st.columns(4),
+        ]
+        metric_rows[0][0].metric("Total Conversations", health["total_conversations"])
+        metric_rows[0][1].metric("Feedback", counts.get("total_count", 0))
+        metric_rows[0][2].metric("Conversation Failure Rate", f"{health['conversation_failure_rate']}%")
+        metric_rows[0][3].metric("Silent Signal Rate", f"{health['silent_signal_rate']}%")
+        metric_rows[1][0].metric("AI Success Rate", f"{health['ai_success_rate']}%")
+        metric_rows[1][1].metric("Workflow Completion Rate", f"{health['workflow_completion_rate']}%")
+        metric_rows[1][2].metric("Receipt Requests", _count_feedback_keywords(feedback_records, ["บิล", "สลิป", "receipt", "ocr"]))
+        metric_rows[1][3].metric("Dashboard Requests", _count_feedback_keywords(feedback_records, ["dashboard", "แดชบอร์ด"]))
+        metric_rows[2][0].metric("Feature Requests", category_counts.get("Feature Request", 0))
+        metric_rows[2][1].metric("Bug Reports", category_counts.get("Bug", 0))
+        metric_rows[2][2].metric("UX Issues", category_counts.get("UX", 0) + category_counts.get("UI", 0))
+        metric_rows[2][3].metric("High Alerts", len([alert for alert in alerts if alert.get("priority") == "High"]))
+
+        st.markdown("### System Health")
+        system_cols = st.columns(4)
+        system_cols[0].metric("System Health", "Watch" if alerts else "Stable")
+        system_cols[1].metric("Conversation Health", f"{health['ai_success_rate']}%")
+        system_cols[2].metric("Product Health", counts.get("backlog_open", 0))
+        system_cols[3].metric("Workflow Health", f"{health['workflow_completion_rate']}%")
+
+        high_count = len([alert for alert in alerts if alert.get("priority") == "High"])
+        medium_count = len([alert for alert in alerts if alert.get("priority") == "Medium"])
+        low_count = len([alert for alert in alerts if alert.get("priority") == "Low"])
+        st.markdown("### Alert Summary")
+        alert_cols = st.columns(3)
+        alert_cols[0].metric("High", high_count)
+        alert_cols[1].metric("Medium", medium_count)
+        alert_cols[2].metric("Low", low_count)
+
+        tabs = st.tabs(
+            [
+                "Latest Alerts",
+                "Conversation",
+                "Product",
+                "Replay",
+                "Sprint",
+                "ChatGPT Export",
+            ]
+        )
+
+        with tabs[0]:
+            st.markdown("#### Latest Alerts")
+            _render_alert_list(alerts, limit=10)
+            st.markdown("#### 7-Day Trend")
+            st.json(trends.get("seven_day_trend", {}))
+            st.markdown("#### 30-Day Trend")
+            st.json(trends.get("thirty_day_trend", {}))
+            st.markdown("#### Category Growth")
+            st.json(trends.get("category_growth", {}))
+
+        with tabs[1]:
+            st.markdown("#### Top Conversation Failures")
+            ai_problems = trends.get("most_repeated_ai_problems", {})
+            if ai_problems:
+                for issue, count in ai_problems.items():
+                    st.markdown(f"- **{issue}** x{count}")
+            else:
+                st.caption("No conversation failures detected in the active session.")
+            st.markdown("#### Top AI Issues")
+            ai_alerts = [alert for alert in alerts if alert.get("category") in {"Conversation Failure", "Silent Signals"}]
+            _render_alert_list(ai_alerts, limit=8)
+            st.markdown("#### Latest Conversations With Problems")
+            for item in replay[:5]:
+                st.markdown(f"- **{item['detected_issue']}**: {item['conversation'][:140]}")
+
+        with tabs[2]:
+            st.markdown("#### Top Feature Requests")
+            for issue in product_dashboard.get("top_requested_features", []):
+                st.markdown(f"- **{issue.get('title')}** ({issue.get('priority')}) x{issue.get('count')}")
+            st.markdown("#### Top Bugs")
+            for issue in product_dashboard.get("top_bugs", []):
+                st.markdown(f"- **{issue.get('title')}** ({issue.get('priority')}) x{issue.get('count')}")
+            st.markdown("#### Top UX Issues")
+            for issue in product_dashboard.get("top_ux_problems", []):
+                st.markdown(f"- **{issue.get('title')}** ({issue.get('priority')}) x{issue.get('count')}")
+            st.markdown("#### Issue Frequency")
+            st.json(trends.get("issue_frequency", {}))
+
+        with tabs[3]:
+            st.markdown("#### Conversation Replay")
+            if not replay:
+                st.caption("No problem conversations detected.")
+            for index, item in enumerate(replay, start=1):
+                with st.container(border=True):
+                    st.markdown(f"**{index}. Detected Issue:** {item['detected_issue']}")
+                    st.markdown("**Conversation**")
+                    st.write(item["conversation"])
+                    st.markdown("**Assistant**")
+                    st.write(item["assistant"])
+                    st.markdown("**User Reaction**")
+                    st.write(item["user_reaction"] or "No later user reply")
+                    st.markdown("**Suggested Fix**")
+                    st.write(item["suggested_fix"])
+
+        with tabs[4]:
+            st.markdown("#### Top 5 Next Sprint Priorities")
+            for item in recommendations:
+                with st.container(border=True):
+                    st.markdown(f"**{item['rank']}. {item['priority']}**")
+                    st.write(f"Impact: {item['impact']}")
+                    st.write(f"Expected User Impact: {item['expected_user_impact']}")
+                    st.write(item["reason"])
+                    st.markdown("Evidence")
+                    for evidence in item.get("evidence", []):
+                        st.markdown(f"- {evidence}")
+                    st.markdown("Recommended files/modules")
+                    for module in item.get("recommended_files_modules", []):
+                        st.markdown(f"- `{module}`")
+
+        with tabs[5]:
+            report_markdown = build_chatgpt_markdown_report(chat_history)
+            report_data = build_product_report_data(chat_history)
+            col1, col2, col3 = st.columns(3)
+            if col1.button("Copy Report", use_container_width=True):
+                st.session_state["show_chatgpt_report_copy"] = True
+            if col2.button("Save Markdown", use_container_width=True):
+                saved_path = save_markdown_report(report_markdown)
+                st.success(f"Saved Markdown: {saved_path}")
+            if col3.button("Export JSON", use_container_width=True):
+                saved_path = save_json_report(report_data)
+                st.success(f"Saved JSON: {saved_path}")
+
+            st.caption(f"Markdown path: {MARKDOWN_EXPORT_PATH}")
+            st.caption(f"JSON path: {JSON_EXPORT_PATH}")
+            if st.session_state.get("show_chatgpt_report_copy"):
+                st.text_area("ChatGPT Report", value=report_markdown, height=360)
+            st.download_button(
+                "Download Markdown",
+                data=report_markdown,
+                file_name="chatgpt_feedback_report.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+            st.download_button(
+                "Download JSON",
+                data=json.dumps(report_data, ensure_ascii=False, indent=2),
+                file_name="product_report.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+
+
 def _show_receipt_upload(profile: dict | None) -> None:
     with st.expander("อัปโหลดบิล / สลิป", expanded=False):
         uploaded_file = st.file_uploader(
@@ -1997,6 +2207,7 @@ if developer_mode:
         st.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
 
 _show_feedback_summary()
+_show_developer_alert_center()
 
 _show_chat_companion(
     active_profile,
