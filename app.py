@@ -81,7 +81,7 @@ from feedback.trend_engine import generate_trends
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
 from llm.prompt_context_builder import build_prompt_context
 from memory.application_state import application_state, ensure_application_state
-from memory.auth import authenticate, session_for_owner
+from memory.auth import authenticate, create_user, has_users, normalize_owner_id, session_for_owner, update_user_profile
 from memory.receipt_state import ensure_receipt_state, mark_receipt_uploaded
 from memory.receipt_storage import save_uploaded_receipt
 from memory.store_profile_storage import (
@@ -914,6 +914,82 @@ def _set_authenticated_session(auth_result: dict) -> None:
     st.session_state["current_store_name"] = auth_session["store_name"]
 
 
+def _show_first_run_setup() -> None:
+    st.markdown("### ตั้งค่าร้านแรก")
+    st.caption("สร้างบัญชีเจ้าของร้านแรกเพื่อเริ่มใช้งาน SME Companion")
+
+    store_name = st.text_input("ชื่อร้าน")
+    username = st.text_input("ชื่อผู้ใช้")
+    password = st.text_input("รหัสผ่าน", type="password")
+    confirm_password = st.text_input("ยืนยันรหัสผ่าน", type="password")
+
+    if not st.button("สร้างร้านและเข้าสู่ระบบ", use_container_width=True):
+        st.stop()
+
+    clean_store_name = str(store_name or "").strip()
+    clean_username = str(username or "").strip()
+    normalized_username = normalize_owner_id(clean_username)
+
+    if not clean_store_name or not clean_username or not password or not confirm_password:
+        st.error("กรุณากรอกข้อมูลให้ครบทุกช่อง")
+        st.stop()
+    if clean_username != normalized_username:
+        st.error("ชื่อผู้ใช้ต้องใช้ตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง หรือขีดล่างเท่านั้น และต้องเป็นตัวพิมพ์เล็ก")
+        st.stop()
+    if password != confirm_password:
+        st.error("รหัสผ่านและยืนยันรหัสผ่านไม่ตรงกัน")
+        st.stop()
+
+    created = create_user(normalized_username, password)
+    if not created.get("ok"):
+        st.error("ไม่สามารถสร้างบัญชีแรกได้ กรุณาตรวจสอบชื่อผู้ใช้และรหัสผ่าน")
+        st.stop()
+
+    owner_id = created["owner_id"]
+    store_id = owner_id
+    updated = update_user_profile(owner_id, store_id=store_id, store_name=clean_store_name, username=owner_id)
+    if not updated.get("ok"):
+        st.error("สร้างบัญชีแล้ว แต่ไม่สามารถบันทึกข้อมูลร้านได้")
+        st.stop()
+
+    profile = {"store_name": clean_store_name}
+    save_persistent_store_profile(
+        {
+            "store_source": "manual",
+            "store_profile": profile,
+        },
+        owner_id=owner_id,
+        store_id=store_id,
+    )
+
+    _set_authenticated_session(
+        {
+            "owner_id": owner_id,
+            "username": owner_id,
+            "store_id": store_id,
+            "store_name": clean_store_name,
+        }
+    )
+    st.session_state["demo_mode"] = False
+    st.session_state["selected_demo_store"] = None
+    st.session_state["store_source"] = "manual"
+    st.session_state["store_profile"] = profile
+    st.session_state["active_store_name"] = clean_store_name.strip().lower()
+    st.session_state["manual_store_storage_status"] = "saved"
+    saved_data = load_persistent_store_profile(owner_id, store_id) or {}
+    st.session_state["manual_store_created_at"] = saved_data.get("created_at")
+    st.session_state["manual_store_restored"] = True
+    _update_application_section(
+        "store",
+        {
+            "active_store_name": st.session_state["active_store_name"],
+            "profile": profile,
+            "store_source": "manual",
+        },
+    )
+    st.rerun()
+
+
 def _show_auth_gate() -> None:
     if _is_authenticated():
         return
@@ -922,6 +998,9 @@ def _show_auth_gate() -> None:
     st.session_state["demo_mode"] = False
     st.session_state["developer_mode"] = False
     _clear_authenticated_store_session()
+
+    if not has_users():
+        _show_first_run_setup()
 
     st.markdown("### เข้าสู่ระบบ SME Companion")
     st.caption("กรุณาเข้าสู่ระบบก่อนใช้งานข้อมูลร้านจริง")

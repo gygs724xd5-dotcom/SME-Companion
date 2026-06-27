@@ -46,6 +46,10 @@ def has_users() -> bool:
     return bool(_load_users().get("users"))
 
 
+def normalize_owner_id(value: str | None) -> str:
+    return _normalize_owner_id(value)
+
+
 def create_user(owner_id: str, password: str) -> dict:
     owner = _normalize_owner_id(owner_id)
     if not owner or not password:
@@ -61,6 +65,30 @@ def create_user(owner_id: str, password: str) -> dict:
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
+    _save_users(data)
+    return {"ok": True, "owner_id": owner}
+
+
+def update_user_profile(owner_id: str, store_id: str | None = None, store_name: str | None = None, username: str | None = None) -> dict:
+    owner = _normalize_owner_id(owner_id)
+    data = _load_users()
+    user = (data.get("users") or {}).get(owner)
+    if not owner or not user:
+        return {"ok": False, "error": "user_not_found"}
+
+    if store_id is not None:
+        normalized_store_id = _normalize_owner_id(store_id)
+        if normalized_store_id:
+            user["store_id"] = normalized_store_id
+    if store_name is not None:
+        clean_store_name = str(store_name or "").strip()
+        if clean_store_name:
+            user["store_name"] = clean_store_name
+    if username is not None:
+        normalized_username = _normalize_owner_id(username)
+        if normalized_username:
+            user["username"] = normalized_username
+    user["updated_at"] = _now_iso()
     _save_users(data)
     return {"ok": True, "owner_id": owner}
 
