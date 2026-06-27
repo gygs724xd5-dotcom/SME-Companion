@@ -90,8 +90,23 @@ def _extract_cost_fields(message: str) -> dict:
     ingredients = []
     total_units = None
     selling_price = None
+    text = str(message or "")
 
-    for raw_line in re.split(r"[\n,]+", str(message or "")):
+    unit_match = re.search(
+        r"(?:\u0e02\u0e32\u0e22\u0e27\u0e31\u0e19\u0e25\u0e30|\u0e27\u0e31\u0e19\u0e25\u0e30)\s*("
+        + _NUMBER_PATTERN
+        + r")\s*(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|\u0e01\u0e25\u0e48\u0e2d\u0e07|\u0e41\u0e01\u0e49\u0e27)?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if unit_match:
+        total_units = _to_number(unit_match.group(1))
+
+    cost_match = re.search(r"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\s*(" + _NUMBER_PATTERN + r")", text, flags=re.IGNORECASE)
+    if cost_match:
+        ingredients.append({"name": "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "cost": _to_number(cost_match.group(1))})
+
+    for raw_line in re.split(r"[\n,]+", text):
         line = raw_line.strip()
         if not line:
             continue
@@ -99,12 +114,28 @@ def _extract_cost_fields(message: str) -> dict:
         if not numbers:
             continue
         lowered = line.lower()
+        if any(daily_term in lowered for daily_term in ["ขายวันละ", "วันละ"]):
+            line_without_daily = re.sub(
+                r"(?:\u0e02\u0e32\u0e22\u0e27\u0e31\u0e19\u0e25\u0e30|\u0e27\u0e31\u0e19\u0e25\u0e30)\s*"
+                + _NUMBER_PATTERN
+                + r"\s*(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|\u0e01\u0e25\u0e48\u0e2d\u0e07|\u0e41\u0e01\u0e49\u0e27)?",
+                "",
+                line,
+                flags=re.IGNORECASE,
+            ).strip()
+            if not re.findall(_NUMBER_PATTERN, line_without_daily):
+                continue
+            line = line_without_daily
+            lowered = line.lower()
+            numbers = re.findall(_NUMBER_PATTERN, line)
         amount = _to_number(numbers[-1])
         if any(keyword in lowered for keyword in ["ทำได้", "ได้", "จำนวน", "ผลิตได้"]):
             if any(unit in lowered for unit in ["ชิ้น", "ลูก", "อัน", "กล่อง", "แก้ว"]):
                 total_units = amount
                 continue
-        if any(keyword in lowered for keyword in ["ขาย", "ราคาขาย", "ชิ้นละ", "ลูกละ"]):
+        if any(keyword in lowered for keyword in ["ขาย", "ราคาขาย", "ชิ้นละ", "ลูกละ"]) and not any(
+            daily_term in lowered for daily_term in ["ขายวันละ", "วันละ"]
+        ):
             selling_price = amount
             continue
         name = re.sub(_NUMBER_PATTERN, "", line)

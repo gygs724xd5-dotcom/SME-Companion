@@ -267,6 +267,7 @@ def build_execution_plan(application_state, user_message) -> dict:
         "business_context": _business_context(state),
         "intent_resolution": _intent_resolution(state),
         "task_type": task_type,
+        "workflow": workflow,
         "required_skills": required_skills,
         "required_information": required_information,
         "known_information": known_information,

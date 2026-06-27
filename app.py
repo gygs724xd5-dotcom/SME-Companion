@@ -55,6 +55,7 @@ from brain.llm_context_builder import build_llm_context
 from brain.promotion_engine import get_promotion_idea
 from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
+from brain.response_intelligence_engine import guard_response, select_planner_first_response
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from brain.task_router import build_task_route, developer_diagnostics
@@ -80,6 +81,7 @@ from feedback.trend_engine import generate_trends
 from llm.llm_router import generate_llm_response, is_llm_available, provider_has_api_key
 from llm.prompt_context_builder import build_prompt_context
 from memory.application_state import application_state, ensure_application_state
+from memory.auth import authenticate, session_for_owner
 from memory.receipt_state import ensure_receipt_state, mark_receipt_uploaded
 from memory.receipt_storage import save_uploaded_receipt
 from memory.store_profile_storage import (
@@ -90,7 +92,6 @@ from memory.store_profile_storage import (
 from memory.store_memory import (
     get_content_history,
     get_recent_topics,
-    get_store_profile,
     save_generated_content,
     save_store_profile as save_store_memory_profile,
 )
@@ -250,10 +251,44 @@ st.markdown(
     }
 
     div[data-testid="stChatMessage"] {
-        background: rgba(255, 255, 255, 0.86);
-        border: 1px solid var(--sme-border);
-        border-radius: 18px;
-        padding: 8px 10px;
+        background: transparent;
+        border: 0;
+        border-radius: 8px;
+        padding: 4px 0;
+        margin: 10px 0;
+    }
+
+    div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"] {
+        background: #111111;
+        color: #111111;
+        width: 22px;
+        height: 22px;
+        min-width: 22px;
+        border-radius: 50%;
+        box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.06);
+    }
+
+    div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"]:has(svg),
+    div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"] svg {
+        display: none;
+    }
+
+    div[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+        line-height: 1.62;
+    }
+
+    .sme-thinking-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #111111;
+        animation: sme-pulse 1.1s ease-in-out infinite;
+    }
+
+    @keyframes sme-pulse {
+        0%, 100% { opacity: .35; transform: scale(.86); }
+        50% { opacity: 1; transform: scale(1); }
     }
 
     [data-testid="stChatInput"] {
@@ -371,6 +406,20 @@ def _render_markdown(content: str) -> None:
         st.markdown(content, unsafe_allow_html=True)
     else:
         st.markdown(content)
+
+
+def _stream_text(content: str):
+    for token in re.split(r"(\s+)", str(content or "")):
+        if token:
+            yield token
+            time.sleep(0.006)
+
+
+def _render_assistant_response(content: str, stream: bool = True) -> None:
+    if stream and not HTML_FRAGMENT_RE.search(str(content or "")):
+        st.write_stream(_stream_text(content))
+    else:
+        _render_markdown(content)
 
 
 def _format_baht(value) -> str:
@@ -496,6 +545,10 @@ def _new_conversation_state() -> dict:
     return state
 
 
+def _chat_avatar(role: str) -> str | None:
+    return "\u25cf" if role == "assistant" else None
+
+
 def _get_application_state() -> dict:
     state = st.session_state.setdefault("application_state", application_state)
     ensure_application_state(state)
@@ -587,6 +640,32 @@ def _record_reasoning(user_message: str) -> dict:
         },
     )
     return reasoning
+
+
+def _sync_route_intelligence_to_session(route: dict | None) -> None:
+    route = route or {}
+    conversation_state = _ensure_conversation_state()
+    business_context = route.get("business_context") or {}
+    memory_context = route.get("conversation_memory") or {}
+    intent_resolution = route.get("intent_resolution") or {}
+    if business_context.get("business_type"):
+        conversation_state["business_type"] = business_context.get("business_type")
+    if business_context.get("current_discussion_topic"):
+        conversation_state["current_topic"] = business_context.get("current_discussion_topic")
+    if intent_resolution.get("resolved_intent"):
+        conversation_state["previous_intent"] = conversation_state.get("last_intent")
+        conversation_state["last_intent"] = intent_resolution.get("resolved_intent")
+    _update_application_section(
+        "conversation",
+        {
+            **conversation_state,
+            "conversation_memory": memory_context,
+            "business_context": business_context,
+            "intent_resolution": intent_resolution,
+            "conversation_intelligence": route.get("conversation_intelligence") or {},
+        },
+    )
+    _update_application_section("business_context", business_context)
 
 
 def _loaded_skill_names(route: dict | None) -> list[str]:
@@ -752,6 +831,13 @@ def _init_session_state() -> None:
     st.session_state.setdefault("use_llm_companion", False)
     st.session_state.setdefault("llm_response_mode", "Workflow Only")
     st.session_state.setdefault("developer_mode", False)
+    st.session_state.setdefault("auth_session", {})
+    st.session_state.setdefault("auth_owner_id", None)
+    st.session_state.setdefault("authenticated", False)
+    st.session_state.setdefault("current_user", None)
+    st.session_state.setdefault("current_owner_id", None)
+    st.session_state.setdefault("current_store_id", None)
+    st.session_state.setdefault("current_store_name", None)
     _get_application_state()["receipt"] = ensure_receipt_state(_get_application_state().get("receipt"))
     _get_application_state()["developer"].setdefault("future_hooks", _future_engine_hooks())
     _ensure_conversation_state()
@@ -779,6 +865,98 @@ def _is_manual_store_active() -> bool:
     )
 
 
+def _current_owner_id() -> str | None:
+    if not st.session_state.get("authenticated"):
+        return None
+    return st.session_state.get("current_owner_id")
+
+
+def _current_store_id() -> str | None:
+    if not st.session_state.get("authenticated"):
+        return None
+    return st.session_state.get("current_store_id")
+
+
+def _is_authenticated() -> bool:
+    return bool(st.session_state.get("authenticated") and _current_owner_id() and _current_store_id())
+
+
+def _clear_authenticated_store_session() -> None:
+    for key in MANUAL_STORE_SESSION_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state["store_source"] = None
+    st.session_state["store_profile"] = None
+    st.session_state["active_store_name"] = ""
+    st.session_state["generated_daily"] = None
+    st.session_state["generated_calendar"] = None
+    st.session_state["generated_revenue"] = None
+    st.session_state["last_diagnosis_signature"] = ""
+    _reset_chat_session()
+    app_state = _get_application_state()
+    app_state["store"] = {}
+    app_state["dashboard"] = {}
+    _sync_global_application_state()
+
+
+def _set_authenticated_session(auth_result: dict) -> None:
+    auth_session = session_for_owner(
+        auth_result["owner_id"],
+        store_id=auth_result.get("store_id"),
+        store_name=auth_result.get("store_name"),
+        username=auth_result.get("username"),
+    )
+    st.session_state["auth_session"] = auth_session
+    st.session_state["auth_owner_id"] = auth_session["owner_id"]
+    st.session_state["authenticated"] = True
+    st.session_state["current_user"] = auth_session["username"]
+    st.session_state["current_owner_id"] = auth_session["owner_id"]
+    st.session_state["current_store_id"] = auth_session["store_id"]
+    st.session_state["current_store_name"] = auth_session["store_name"]
+
+
+def _show_auth_gate() -> None:
+    if _is_authenticated():
+        return
+
+    st.session_state["authenticated"] = False
+    st.session_state["demo_mode"] = False
+    st.session_state["developer_mode"] = False
+    _clear_authenticated_store_session()
+
+    st.markdown("### เข้าสู่ระบบ SME Companion")
+    st.caption("กรุณาเข้าสู่ระบบก่อนใช้งานข้อมูลร้านจริง")
+    username = st.text_input("ชื่อผู้ใช้")
+    password = st.text_input("รหัสผ่าน", type="password")
+
+    if st.button("เข้าสู่ระบบ", use_container_width=True):
+        result = authenticate(username, password)
+        if result.get("ok"):
+            _set_authenticated_session(result)
+            st.rerun()
+        else:
+            st.error("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+    st.stop()
+
+
+def _show_logout_control() -> None:
+    owner_id = _current_owner_id()
+    if not owner_id:
+        return
+    st.sidebar.caption(f"Signed in: {owner_id}")
+    if st.sidebar.button("Logout", use_container_width=True):
+        st.session_state["auth_session"] = {}
+        st.session_state["auth_owner_id"] = None
+        st.session_state["authenticated"] = False
+        st.session_state["current_user"] = None
+        st.session_state["current_owner_id"] = None
+        st.session_state["current_store_id"] = None
+        st.session_state["current_store_name"] = None
+        st.session_state["demo_mode"] = False
+        st.session_state["developer_mode"] = False
+        _clear_authenticated_store_session()
+        st.rerun()
+
+
 def _manual_store_profile() -> dict | None:
     if _is_manual_store_active():
         return st.session_state.get("store_profile") or {}
@@ -786,10 +964,10 @@ def _manual_store_profile() -> dict | None:
 
 
 def _restore_manual_store_profile() -> bool:
-    if st.session_state.get("demo_mode") or _is_manual_store_active():
+    if st.session_state.get("demo_mode") or _is_manual_store_active() or not _is_authenticated():
         return False
 
-    store_data = load_persistent_store_profile()
+    store_data = load_persistent_store_profile(_current_owner_id(), _current_store_id())
     if not store_data:
         return False
 
@@ -808,6 +986,7 @@ def _restore_manual_store_profile() -> bool:
     st.session_state["manual_store_storage_status"] = "restored"
     st.session_state["show_manual_store_setup"] = False
     st.session_state["active_store_name"] = str(profile.get("store_name", "")).strip().lower()
+    st.session_state["current_store_name"] = profile.get("store_name") or st.session_state.get("current_store_name")
     _update_application_section(
         "store",
         {
@@ -828,7 +1007,7 @@ def _manual_store_payload(
     business_os: dict | None = None,
     knowledge_layer: dict | None = None,
 ) -> dict:
-    existing = load_persistent_store_profile() or {}
+    existing = load_persistent_store_profile(_current_owner_id(), _current_store_id()) or {}
     return {
         "store_source": "manual",
         "store_profile": profile or {},
@@ -852,12 +1031,15 @@ def _save_manual_store_profile(
 ) -> None:
     if st.session_state.get("demo_mode"):
         return
+    if not _is_authenticated():
+        return
     active_profile = profile or st.session_state.get("store_profile")
     if not active_profile:
         return
 
     st.session_state["store_source"] = "manual"
     st.session_state["store_profile"] = active_profile
+    st.session_state["current_store_name"] = active_profile.get("store_name") or st.session_state.get("current_store_name")
     if business_memory is not None:
         st.session_state["business_memory"] = business_memory
     if business_goals is not None:
@@ -877,8 +1059,8 @@ def _save_manual_store_profile(
         business_os=business_os,
         knowledge_layer=knowledge_layer,
     )
-    save_persistent_store_profile(payload)
-    saved_data = load_persistent_store_profile() or {}
+    save_persistent_store_profile(payload, owner_id=_current_owner_id(), store_id=_current_store_id())
+    saved_data = load_persistent_store_profile(_current_owner_id(), _current_store_id()) or {}
     st.session_state["manual_store_created_at"] = saved_data.get("created_at")
     st.session_state["manual_store_storage_status"] = "saved"
 
@@ -917,7 +1099,7 @@ def _show_clear_manual_store_control() -> None:
     with st.expander("จัดการข้อมูลร้าน", expanded=False):
         confirm_clear = st.checkbox("ยืนยันว่าต้องการล้างข้อมูลร้านนี้", key="confirm_clear_manual_store")
         if st.button("ล้างข้อมูลร้านนี้", disabled=not confirm_clear, use_container_width=True):
-            clear_persistent_store_profile()
+            clear_persistent_store_profile(_current_owner_id(), _current_store_id())
             _clear_manual_store_session()
             st.rerun()
 
@@ -2351,8 +2533,8 @@ def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) ->
     _update_conversation_state_after_assistant(reply, intent, topic)
     st.session_state["chat_history"].append(assistant_message)
     _sync_chat_history_to_application_state()
-    with st.chat_message("assistant"):
-        _render_markdown(reply)
+    with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
+        _render_assistant_response(reply)
 
 
 def _show_feedback_summary() -> None:
@@ -2665,7 +2847,7 @@ def _show_chat_companion(
         _show_demo_chat_suggestions()
 
     for message in st.session_state["chat_history"]:
-        with st.chat_message(message["role"]):
+        with st.chat_message(message["role"], avatar=_chat_avatar(message["role"])):
             _render_markdown(clean_response(message["content"]))
             if message["role"] == "assistant":
                 _render_assistant_footer(message)
@@ -2682,16 +2864,16 @@ def _show_chat_companion(
         st.session_state["chat_history"].append({"role": "user", "content": user_message})
         st.session_state["chat_history"].append({"role": "assistant", "content": reset_reply})
         _sync_chat_history_to_application_state()
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar=_chat_avatar("user")):
             _render_markdown(user_message)
-        with st.chat_message("assistant"):
-            _render_markdown(reset_reply)
+        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
+            _render_assistant_response(reset_reply)
         return
 
     previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
     st.session_state["chat_history"].append({"role": "user", "content": user_message})
     _sync_chat_history_to_application_state()
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=_chat_avatar("user")):
         _render_markdown(user_message)
 
     understanding_state = _sync_session_to_application_state()
@@ -2709,7 +2891,9 @@ def _show_chat_companion(
     state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
     chat_profile = _profile_with_conversation_memory(profile) or profile
     reasoning = _record_reasoning(user_message)
-    _update_ai_pipeline_debug_trace_from_route(debug_trace, st.session_state.get("last_task_route") or {})
+    task_route = st.session_state.get("last_task_route") or {}
+    _sync_route_intelligence_to_session(task_route)
+    _update_ai_pipeline_debug_trace_from_route(debug_trace, task_route)
 
     def finalize_debug(response_source: str, final_reply: str | None, workflow_extra: dict | None = None) -> None:
         _finalize_ai_pipeline_debug_trace(debug_trace, response_source, final_reply, workflow_extra)
@@ -2721,6 +2905,17 @@ def _show_chat_companion(
             reply,
             WORKFLOW_RECEIPT_CAPTURE,
             "บิล / สลิป",
+        )
+        return
+
+    planner_first = select_planner_first_response(task_route, st.session_state["chat_history"])
+    if planner_first.get("handled"):
+        reply = _clean_chat_reply(planner_first["reply"])
+        finalize_debug("planner_first_response", reply, {"response_guard": "planner_first"})
+        _append_workflow_reply(
+            reply,
+            planner_first.get("intent") or conversation_intent,
+            planner_first.get("topic") or state.get("current_topic"),
         )
         return
 
@@ -2771,8 +2966,8 @@ def _show_chat_companion(
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
         finalize_debug("direct_conversation_response", direct_reply)
-        with st.chat_message("assistant"):
-            _render_markdown(direct_reply)
+        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
+            _render_assistant_response(direct_reply)
         return
 
     if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
@@ -2863,8 +3058,8 @@ def _show_chat_companion(
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
         finalize_debug("direct_conversation_response", simple_reply)
-        with st.chat_message("assistant"):
-            _render_markdown(simple_reply)
+        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
+            _render_assistant_response(simple_reply)
         return
 
     if conversation_intent == "PRODUCT_FEEDBACK":
@@ -2883,8 +3078,8 @@ def _show_chat_companion(
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
         finalize_debug("planner_response", response["reply"], {"workflow_handler": "product_feedback"})
-        with st.chat_message("assistant"):
-            _render_markdown(response["reply"])
+        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
+            _render_assistant_response(response["reply"])
         return
 
     use_business_context = should_use_business_context(conversation_intent)
@@ -3034,6 +3229,11 @@ def _show_chat_companion(
             business_os=business_os_state or {},
         )
     response["reply"] = _clean_chat_reply(response["reply"])
+    guarded_response = guard_response(response["reply"], task_route, st.session_state["chat_history"])
+    if guarded_response.get("changed"):
+        response["reply"] = _clean_chat_reply(guarded_response["reply"])
+        response["intent"] = guarded_response.get("intent") or response.get("intent")
+        response_source = "response_guard"
     if response.get("suggested_action"):
         response["suggested_action"] = localize_internal_labels(response["suggested_action"])
     if response.get("related_feature"):
@@ -3047,15 +3247,15 @@ def _show_chat_companion(
     }
     _update_conversation_state_after_assistant(
         response["reply"],
-        conversation_intent,
+        response.get("intent") or conversation_intent,
         state.get("current_topic"),
     )
     st.session_state["chat_history"].append(assistant_message)
     _sync_chat_history_to_application_state()
     finalize_debug(response_source, response["reply"])
 
-    with st.chat_message("assistant"):
-        _render_markdown(response["reply"])
+    with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
+        _render_assistant_response(response["reply"])
         _render_assistant_footer(assistant_message)
     if demo_ai_success:
         st.success("✨ คุณได้ทดลองใช้ AI แล้ว ลองดูภาพรวมธุรกิจ แผนงานวันนี้ หรือกดสร้างโพสต์ต่อได้เลย")
@@ -3063,6 +3263,8 @@ def _show_chat_companion(
 
 _init_session_state()
 
+_show_auth_gate()
+_show_logout_control()
 _show_demo_entry()
 
 st.markdown(
@@ -3102,8 +3304,7 @@ if current_store_name != st.session_state["active_store_name"]:
     if previous_store_name and current_store_name:
         _reset_chat_session()
 
-legacy_saved_profile = get_store_profile(store_name) if store_name.strip() else None
-saved_profile = demo_profile or manual_profile or legacy_saved_profile
+saved_profile = demo_profile or manual_profile
 recent_history = demo_history or (get_content_history(store_name) if store_name.strip() else [])
 recent_topics = demo_topics or (get_recent_topics(store_name) if store_name.strip() else [])
 
@@ -3115,7 +3316,8 @@ journey_slot = st.empty()
 _show_manual_store_storage_caption()
 _show_clear_manual_store_control()
 
-with st.expander("ข้อมูลร้าน", expanded=not bool(saved_profile)):
+store_info_expander = st.sidebar.expander("Store Information", expanded=not bool(saved_profile)) if saved_profile else st.expander("ข้อมูลร้าน", expanded=True)
+with store_info_expander:
     store_type = st.text_input(
         "ประเภทร้านค้า",
         value=saved_profile["store_type"] if saved_profile else "",
@@ -3481,10 +3683,11 @@ with dashboard_slot.container():
     _show_dashboard(companion, business_os_state)
 _show_daily_content()
 _show_calendar()
-_show_receipt_upload(active_profile)
-_show_business_insights(active_profile, recent_history)
-_show_recent_history(recent_history)
-saved_goal = _show_business_os(active_profile, business_os_state, active_goal, goal_status)
+with st.sidebar:
+    _show_receipt_upload(active_profile)
+    _show_business_insights(active_profile, recent_history)
+    _show_recent_history(recent_history)
+    saved_goal = _show_business_os(active_profile, business_os_state, active_goal, goal_status)
 if saved_goal:
     save_business_event(
         store_name=active_profile["store_name"],
@@ -3515,6 +3718,8 @@ if saved_goal:
             business_os=business_os_state or {},
         )
     st.success("บันทึกเป้าหมายร้านแล้ว")
+with st.sidebar:
+    st.caption("Production account and store controls.")
 _show_revenue_engine()
 
 developer_mode = st.sidebar.checkbox(

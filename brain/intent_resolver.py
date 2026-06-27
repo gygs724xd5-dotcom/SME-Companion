@@ -30,6 +30,7 @@ TRANSLATE_TERMS = ["แปล", "translate", "ภาษาอังกฤษ", "
 PROFESSIONAL_TERMS = ["มืออาชีพ", "professional", "ทางการ"]
 REFERENCE_TERMS = ["อันนี้", "ตัวนี้", "แบบเดิม", "อันบน", "ข้างบน", "อันนั้น"]
 CONTEXT_UPDATE_TERMS = ["ร้านขายชา", "ร้านชา", "ชานม", "ชาไทย", "ร้านกาแฟ", "ร้านอาหาร", "ร้านขนม", "เบเกอรี่"]
+EXTRA_CONTEXT_UPDATE_TERMS = ["\u0e23\u0e49\u0e32\u0e19\u0e02\u0e32\u0e22\u0e04\u0e23\u0e35\u0e21", "\u0e23\u0e49\u0e32\u0e19\u0e04\u0e23\u0e35\u0e21", "\u0e04\u0e23\u0e35\u0e21", "cosmetic store", "beauty shop"]
 PRICE_TERMS = ["ราคาเท่าไร", "เท่าไร", "กี่บาท", "ขายเท่าไร", "ตั้งราคา"]
 TODAY_TERMS = ["วันนี้ควรทำอะไร", "วันนี้ทำอะไร", "ทำอะไรดีวันนี้", "ควรทำอะไร"]
 CONTENT_TERMS = ["โพสต์", "คอนเทนต์", "แคปชั่น", "caption", "content"]
@@ -115,7 +116,7 @@ def resolve_intent(
         _add(scores, "business_planning", 28)
         _add(scores, "content_planning", 18)
         _add(scores, "marketing_strategy", 14)
-        if _contains_any(message, CONTEXT_UPDATE_TERMS) and not any(
+        if _contains_any(message, CONTEXT_UPDATE_TERMS + EXTRA_CONTEXT_UPDATE_TERMS) and not any(
             _contains_any(message, terms)
             for terms in [
                 TODAY_TERMS,

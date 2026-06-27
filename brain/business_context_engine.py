@@ -17,6 +17,11 @@ BUSINESS_TYPE_ALIASES = {
     "เบเกอรี่": "bakery",
     "เสื้อผ้า": "fashion_shop",
     "ร้านเสื้อผ้า": "fashion_shop",
+    "\u0e23\u0e49\u0e32\u0e19\u0e02\u0e32\u0e22\u0e04\u0e23\u0e35\u0e21": "cosmetic_store",
+    "\u0e23\u0e49\u0e32\u0e19\u0e04\u0e23\u0e35\u0e21": "cosmetic_store",
+    "\u0e04\u0e23\u0e35\u0e21": "cosmetic_store",
+    "cosmetic store": "cosmetic_store",
+    "beauty shop": "cosmetic_store",
 }
 
 PRODUCT_ALIASES = {
@@ -25,6 +30,7 @@ PRODUCT_ALIASES = {
     "ชาไทย": "thai_tea",
     "กาแฟ": "coffee",
     "ขนม": "bakery",
+    "\u0e04\u0e23\u0e35\u0e21": "cream",
 }
 
 GOAL_KEYWORDS = {
