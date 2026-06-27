@@ -130,10 +130,68 @@ def _conversation_understanding(application_state: dict) -> dict:
     )
 
 
+def _conversation_intelligence(application_state: dict) -> dict:
+    return (
+        (application_state or {}).get("conversation_intelligence")
+        or ((application_state or {}).get("conversation") or {}).get("conversation_intelligence")
+        or {}
+    )
+
+
+def _intent_resolution(application_state: dict) -> dict:
+    intelligence = _conversation_intelligence(application_state)
+    return (
+        intelligence.get("intent_resolution")
+        or (application_state or {}).get("intent_resolution")
+        or ((application_state or {}).get("conversation") or {}).get("intent_resolution")
+        or {}
+    )
+
+
+def _business_context(application_state: dict) -> dict:
+    intelligence = _conversation_intelligence(application_state)
+    return (
+        intelligence.get("business_context")
+        or (application_state or {}).get("business_context")
+        or ((application_state or {}).get("conversation") or {}).get("business_context")
+        or {}
+    )
+
+
 def _select_task(application_state: dict, user_message: str) -> tuple[str, str, str | None, list[str], str]:
     understanding = _conversation_understanding(application_state)
+    intent_resolution = _intent_resolution(application_state)
+    business_context = _business_context(application_state)
+    resolved_intent = intent_resolution.get("resolved_intent")
+    resolved_workflow = intent_resolution.get("resolved_workflow")
     understood_intent = understanding.get("detected_intent")
     active_workflow = ((application_state.get("workflow") or {}).get("workflow_state_v2") or {}).get("workflow")
+
+    if resolved_intent == "business_planning":
+        return "Dashboard Request", "dashboard_request", WORKFLOW_DASHBOARD_REQUEST, ["dashboard_builder"], "workflow"
+    if resolved_intent == "content_planning":
+        return "Content Plan", "content_plan", WORKFLOW_CONTENT_PLAN, ["content_creation"], "workflow"
+    if resolved_intent == "marketing_strategy":
+        return "Marketing", "content_plan", None, ["marketing"], "llm"
+    if resolved_intent in {"sales_planning", "pricing_question"}:
+        return "Sales Plan", "sales_plan", WORKFLOW_SALES_PLAN_7_DAY, ["sales_planning"], "workflow"
+    if resolved_intent == "cost_calculation":
+        return "Cost Calculation", "cost_calculation", WORKFLOW_COST_CALCULATION, ["cost_calculation"], "workflow"
+    if resolved_intent in {"continue_previous_workflow", "follow_up_edit"}:
+        workflow = resolved_workflow or active_workflow
+        if workflow in WORKFLOW_TO_TASK:
+            task_type, capability_key, skill_name = WORKFLOW_TO_TASK[workflow]
+            return task_type, capability_key, workflow, [skill_name], "workflow"
+        if resolved_intent == "follow_up_edit":
+            return "General Business Help", "conversation_memory", None, [], "llm"
+    if resolved_intent == "reference_resolution" and intent_resolution.get("resolved_references"):
+        if "price" in str(user_message).lower() or "ราคา" in str(user_message):
+            return "Sales Plan", "sales_plan", WORKFLOW_SALES_PLAN_7_DAY, ["sales_planning"], "workflow"
+        return "General Business Help", "conversation_memory", None, [], "llm"
+    if resolved_intent == "business_context_update" or (
+        business_context.get("business_type") and str(user_message or "").strip() == str(business_context.get("business_type"))
+    ):
+        return "General Business Help", "conversation_memory", None, [], "llm"
 
     if understood_intent == "continue_previous_workflow" and active_workflow:
         workflow = active_workflow
@@ -205,6 +263,9 @@ def build_execution_plan(application_state, user_message) -> dict:
     return {
         "goal": str(user_message or "").strip(),
         "conversation_understanding": _conversation_understanding(state),
+        "conversation_intelligence": _conversation_intelligence(state),
+        "business_context": _business_context(state),
+        "intent_resolution": _intent_resolution(state),
         "task_type": task_type,
         "required_skills": required_skills,
         "required_information": required_information,

@@ -11,6 +11,7 @@ from brain.conversation_intent_engine import (
     detect_conversation_intent,
     get_conversation_mode,
     should_show_business_insights,
+    CUSTOMER_RETENTION
 )
 from brain.response_cleaner import clean_response, localize_internal_labels
 from knowledge.knowledge_router import get_playbook

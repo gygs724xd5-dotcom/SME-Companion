@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 
+from brain.business_context_engine import build_business_context
 from brain.capability_registry import get_capability, is_capability_available
+from brain.conversation_memory_engine import get_last_context, remember_turn
 from brain.conversation_understanding_engine import understand_conversation
+from brain.intent_resolver import resolve_intent
 from brain.planner_engine import build_execution_plan
 from brain.reasoning_engine import build_reasoning
 from brain.skill_loader import load_skills
@@ -53,14 +56,40 @@ def _reasoning_mode(plan: dict, reasoning: dict) -> str:
 
 def build_task_route(application_state, user_message) -> dict:
     interpretation = understand_conversation(user_message, application_state or {})
+    memory_context = get_last_context(application_state or {})
+    business_context = build_business_context(
+        application_state or {},
+        user_message,
+        understanding=interpretation,
+        conversation_memory=memory_context,
+    )
+    intent_resolution = resolve_intent(interpretation, memory_context, business_context)
+    memory_context = remember_turn(
+        memory_context,
+        user_message,
+        intent=intent_resolution.get("resolved_intent") or interpretation.get("detected_intent"),
+        workflow=intent_resolution.get("resolved_workflow"),
+        business_topic=business_context.get("current_discussion_topic"),
+    )
+    conversation_intelligence = {
+        "conversation_memory": memory_context,
+        "business_context": business_context,
+        "intent_resolution": intent_resolution,
+    }
     enriched_state = dict(application_state or {})
     enriched_state["conversation_understanding"] = interpretation
+    enriched_state["conversation_memory"] = memory_context
+    enriched_state["business_context"] = business_context
+    enriched_state["conversation_intelligence"] = conversation_intelligence
     enriched_state["conversation"] = {
         **((application_state or {}).get("conversation") or {}),
         "understanding": interpretation,
         "last_understanding": interpretation,
+        "conversation_memory": memory_context,
+        "business_context": business_context,
+        "intent_resolution": intent_resolution,
     }
-    planner_message = interpretation.get("planner_message") or user_message
+    planner_message = intent_resolution.get("planner_message") or interpretation.get("planner_message") or user_message
     plan = build_execution_plan(enriched_state, planner_message)
     capability_name = TASK_CAPABILITY_NAMES.get(plan.get("task_type"), plan.get("task_type"))
     capability = get_capability(capability_name)
@@ -79,6 +108,10 @@ def build_task_route(application_state, user_message) -> dict:
     return {
         "planner_output": plan,
         "conversation_understanding": interpretation,
+        "conversation_intelligence": conversation_intelligence,
+        "intent_resolution": intent_resolution,
+        "business_context": business_context,
+        "conversation_memory": memory_context,
         "task_type": plan.get("task_type"),
         "selected_capability": capability,
         "loaded_skills": [_serialize_skill(skill) for skill in loaded_skills],
@@ -99,6 +132,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     return {
         "Planner Output": route.get("planner_output") or {},
         "Conversation Understanding": route.get("conversation_understanding") or {},
+        "Conversation Intelligence": route.get("conversation_intelligence") or {},
         "Task Type": route.get("task_type"),
         "Selected Capability": (route.get("selected_capability") or {}).get("name"),
         "Loaded Skill": loaded_skill_names,
