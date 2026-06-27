@@ -589,6 +589,103 @@ def _record_reasoning(user_message: str) -> dict:
     return reasoning
 
 
+def _loaded_skill_names(route: dict | None) -> list[str]:
+    names = []
+    for skill in (route or {}).get("loaded_skills") or []:
+        name = skill.get("name") if isinstance(skill, dict) else None
+        if name:
+            names.append(name)
+    return names
+
+
+def _selected_capability_name(route: dict | None):
+    capability = (route or {}).get("selected_capability")
+    if isinstance(capability, dict):
+        return capability.get("name")
+    return capability
+
+
+def _workflow_debug_state(extra: dict | None = None) -> dict:
+    conversation_state = st.session_state.get("conversation_state") or {}
+    workflow_state_v2 = conversation_state.get("workflow_state_v2") or {}
+    app_workflow = (_sync_session_to_application_state().get("workflow") or {})
+    state = {
+        "current_workflow": conversation_state.get("current_workflow") or app_workflow.get("current_workflow"),
+        "workflow_step": conversation_state.get("workflow_step") or app_workflow.get("workflow_step"),
+        "workflow_data": conversation_state.get("workflow_data") or app_workflow.get("workflow_data") or {},
+        "workflow_state_v2": workflow_state_v2 or app_workflow.get("workflow_state_v2") or {},
+        "route": app_workflow.get("workflow") or conversation_state.get("current_workflow"),
+        "step": app_workflow.get("step") or conversation_state.get("workflow_step"),
+        "is_ready": bool(app_workflow.get("is_ready") or workflow_state_v2.get("is_ready")),
+    }
+    if extra:
+        state.update(extra)
+    return state
+
+
+def _new_ai_pipeline_debug_trace(user_message: str, conversation_understanding: dict | None) -> dict:
+    understanding = conversation_understanding or {}
+    return {
+        "raw_user_message": user_message,
+        "conversation_understanding": {
+            "intent": understanding.get("detected_intent") or understanding.get("intent") or understanding.get("legacy_intent"),
+            "confidence": understanding.get("confidence"),
+            "requires_clarification": understanding.get("requires_clarification"),
+            "references": understanding.get("references"),
+            "planner_message": understanding.get("planner_message"),
+        },
+        "planner": {
+            "task_type": None,
+        },
+        "selected_capability": None,
+        "loaded_skill_names": [],
+        "workflow": _workflow_debug_state(),
+        "response_source": None,
+        "final_response_preview": None,
+    }
+
+
+def _update_ai_pipeline_debug_trace_from_route(trace: dict, route: dict | None) -> dict:
+    route = route or {}
+    planner = route.get("planner_output") or {}
+    trace["planner"] = {
+        "task_type": route.get("task_type") or planner.get("task_type"),
+        "next_step": planner.get("next_step"),
+        "estimated_response_mode": planner.get("estimated_response_mode"),
+        "missing_information": planner.get("missing_information") or [],
+        "can_execute": planner.get("can_execute"),
+    }
+    trace["selected_capability"] = _selected_capability_name(route)
+    trace["loaded_skill_names"] = _loaded_skill_names(route)
+    trace["reasoning"] = route.get("reasoning") or {}
+    trace["reasoning_mode"] = route.get("reasoning_mode")
+    return trace
+
+
+def _is_generic_fallback_reply(reply: str | None) -> bool:
+    text = str(reply or "")
+    return "เล่าเพิ่มอีกนิด" in text or "à¹€à¸¥à¹ˆà¸²à¹€à¸žà¸´à¹ˆà¸¡à¸­à¸µà¸à¸™à¸´à¸”" in text
+
+
+def _finalize_ai_pipeline_debug_trace(
+    trace: dict | None,
+    response_source: str,
+    final_reply: str | None,
+    workflow_extra: dict | None = None,
+) -> dict | None:
+    if not trace:
+        return None
+    source = "generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source
+    trace["workflow"] = _workflow_debug_state(workflow_extra)
+    trace["response_source"] = source
+    trace["final_response_preview"] = str(final_reply or "").strip()[:500]
+    st.session_state["ai_pipeline_debug_trace"] = trace
+    if st.session_state.get("developer_mode"):
+        print("AI Pipeline Debug Trace:")
+        print(json.dumps(trace, ensure_ascii=False, indent=2, default=str))
+    return trace
+
+
 # Future hooks. These are intentionally placeholders only.
 def _future_engine_hooks() -> dict:
     return {
@@ -649,6 +746,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("cached_prompt", None)
     st.session_state.setdefault("last_ai_state", None)
     st.session_state.setdefault("pending_followup", None)
+    st.session_state.setdefault("ai_pipeline_debug_trace", {})
     st.session_state.setdefault("active_store_name", "")
     st.session_state.setdefault("last_diagnosis_signature", "")
     st.session_state.setdefault("use_llm_companion", False)
@@ -2167,6 +2265,17 @@ def _show_platform_diagnostics() -> None:
         st.json(developer_diagnostics(route))
 
 
+def _show_ai_pipeline_debug_trace() -> None:
+    if not st.session_state.get("developer_mode"):
+        return
+    trace = st.session_state.get("ai_pipeline_debug_trace") or {}
+    with st.expander(" AI Pipeline Debug", expanded=False):
+        if trace:
+            st.json(trace)
+        else:
+            st.caption("No chat request traced yet.")
+
+
 def _handle_dashboard_workflow(user_message: str) -> dict:
     record_product_feedback(user_message, conversation_id=st.session_state.get("conversation_id"))
     _clear_workflow_state_v2()
@@ -2550,6 +2659,7 @@ def _show_chat_companion(
     _show_workflow_diagnostics()
     _show_shared_application_state_diagnostics()
     _show_platform_diagnostics()
+    _show_ai_pipeline_debug_trace()
 
     if st.session_state.get("demo_mode") and not st.session_state["chat_history"]:
         _show_demo_chat_suggestions()
@@ -2594,13 +2704,21 @@ def _show_chat_companion(
     conversation_intent = conversation_understanding.get("legacy_intent") or detect_conversation_intent(user_message)
     conversation_mode = get_conversation_mode(conversation_intent)
     planner_message = conversation_understanding.get("planner_message") or user_message
+    debug_trace = _new_ai_pipeline_debug_trace(user_message, conversation_understanding)
     workflow_detection = detect_workflow(planner_message, is_product_feedback=is_product_feedback(user_message))
     state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
     chat_profile = _profile_with_conversation_memory(profile) or profile
     reasoning = _record_reasoning(user_message)
+    _update_ai_pipeline_debug_trace_from_route(debug_trace, st.session_state.get("last_task_route") or {})
+
+    def finalize_debug(response_source: str, final_reply: str | None, workflow_extra: dict | None = None) -> None:
+        _finalize_ai_pipeline_debug_trace(debug_trace, response_source, final_reply, workflow_extra)
+
     if reasoning.get("action") in {"receipt_uploaded_ack", "receipt_ocr_pending"}:
+        reply = _receipt_uploaded_reply(reasoning.get("action"))
+        finalize_debug("reasoning_response", reply, {"reasoning_action": reasoning.get("action")})
         _append_workflow_reply(
-            _receipt_uploaded_reply(reasoning.get("action")),
+            reply,
             WORKFLOW_RECEIPT_CAPTURE,
             "บิล / สลิป",
         )
@@ -2622,6 +2740,15 @@ def _show_chat_companion(
         and detected_workflow not in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE, WORKFLOW_PRODUCT_FEEDBACK}
     ):
         detected_workflow_v2 = active_workflow_v2
+    debug_trace["workflow"] = _workflow_debug_state(
+        {
+            "detected_workflow": detected_workflow,
+            "detected_workflow_v2": detected_workflow_v2,
+            "active_workflow": active_workflow,
+            "active_workflow_v2": active_workflow_v2,
+            "active_workflow_step_v2": active_workflow_step_v2,
+        }
+    )
 
     direct_reply = None
     if should_answer_directly(conversation_understanding):
@@ -2643,17 +2770,20 @@ def _show_chat_companion(
         }
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
+        finalize_debug("direct_conversation_response", direct_reply)
         with st.chat_message("assistant"):
             _render_markdown(direct_reply)
         return
 
     if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
+        finalize_debug("workflow_response", response["reply"], {"workflow_handler": "dashboard_v2"})
         _append_workflow_reply(response["reply"], response["intent"], "à¹à¸”à¸Šà¸šà¸­à¸£à¹Œà¸”à¸£à¹‰à¸²à¸™à¸„à¹‰à¸²")
         return
 
     if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_RECEIPT_CAPTURE:
         response = _handle_receipt_workflow(user_message)
+        finalize_debug("workflow_response", response["reply"], {"workflow_handler": "receipt_v2"})
         _append_workflow_reply(response["reply"], response["intent"], "à¸šà¸´à¸¥ / à¸ªà¸¥à¸´à¸›")
         return
 
@@ -2666,6 +2796,12 @@ def _show_chat_companion(
             user_message=user_message,
             detected_workflow=detected_workflow_v2,
             profile=chat_profile,
+        )
+        source = "llm_response" if response.get("llm_attempted") and st.session_state.get("llm_response_mode") == "Workflow + LLM" else "workflow_response"
+        finalize_debug(
+            source,
+            response["reply"],
+            {"workflow_handler": "state_machine_v2", "extracted_fields": response.get("extracted_fields") or {}},
         )
         topic_labels = {
             V2_WORKFLOW_SALES_PLAN_7_DAY: "แผนขาย 7 วัน",
@@ -2685,21 +2821,25 @@ def _show_chat_companion(
         WORKFLOW_PRODUCT_FEEDBACK,
     }:
         response = _handle_cost_workflow(user_message, starting=False)
+        finalize_debug("workflow_response", response["reply"], {"workflow_handler": "cost_legacy_continue"})
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
     if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_COST_CALCULATION:
         response = _handle_cost_workflow(user_message, starting=True)
+        finalize_debug("workflow_response", response["reply"], {"workflow_handler": "cost_legacy_start"})
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
     if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
+        finalize_debug("workflow_response", response["reply"], {"workflow_handler": "dashboard_legacy"})
         _append_workflow_reply(response["reply"], response["intent"], "แดชบอร์ดร้านค้า")
         return
 
     if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
         response = _handle_receipt_workflow(user_message)
+        finalize_debug("workflow_response", response["reply"], {"workflow_handler": "receipt_legacy"})
         _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
         return
 
@@ -2722,6 +2862,7 @@ def _show_chat_companion(
         }
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
+        finalize_debug("direct_conversation_response", simple_reply)
         with st.chat_message("assistant"):
             _render_markdown(simple_reply)
         return
@@ -2741,6 +2882,7 @@ def _show_chat_companion(
         _update_conversation_state_after_assistant(response["reply"], conversation_intent, "Product Feedback")
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
+        finalize_debug("planner_response", response["reply"], {"workflow_handler": "product_feedback"})
         with st.chat_message("assistant"):
             _render_markdown(response["reply"])
         return
@@ -2778,6 +2920,7 @@ def _show_chat_companion(
         show_business_insights=show_business_insights,
     )
     response = deterministic_response
+    response_source = "planner_response"
     demo_ai_success = False
     demo_mode = bool(st.session_state.get("demo_mode"))
     llm_allowed_for_intent = conversation_intent not in {"GREETING", "FOLLOW_UP", "START_BUSINESS"}
@@ -2855,6 +2998,7 @@ def _show_chat_companion(
                 "related_feature": "ผู้ช่วย AI" if show_business_insights else None,
                 "related_module": "ผู้ช่วย AI" if show_business_insights else None,
             }
+            response_source = "llm_response"
     elif use_llm_companion and not llm_allowed_for_intent:
         pass
     elif not provider_has_api_key(demo_mode=demo_mode):
@@ -2908,6 +3052,7 @@ def _show_chat_companion(
     )
     st.session_state["chat_history"].append(assistant_message)
     _sync_chat_history_to_application_state()
+    finalize_debug(response_source, response["reply"])
 
     with st.chat_message("assistant"):
         _render_markdown(response["reply"])

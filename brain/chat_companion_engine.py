@@ -1,9 +1,12 @@
 from brain.chat_intelligence_engine import analyze_chat_intent
 from brain.conversation_intent_engine import (
+    CONTENT,
     FOLLOW_UP,
     GENERAL_CHAT,
     GREETING,
+    MARKETING,
     OTHER,
+    SALES,
     START_BUSINESS,
     detect_conversation_intent,
     get_conversation_mode,
