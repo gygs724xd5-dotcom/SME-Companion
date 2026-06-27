@@ -259,17 +259,6 @@ st.markdown(
     }
 
     div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"] {
-        background: #111111;
-        color: #111111;
-        width: 22px;
-        height: 22px;
-        min-width: 22px;
-        border-radius: 50%;
-        box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.06);
-    }
-
-    div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"]:has(svg),
-    div[data-testid="stChatMessage"] [data-testid="stChatMessageAvatar"] svg {
         display: none;
     }
 
@@ -277,12 +266,21 @@ st.markdown(
         line-height: 1.62;
     }
 
+    .assistant-dot,
     .sme-thinking-dot {
         display: inline-block;
         width: 8px;
         height: 8px;
         border-radius: 50%;
         background: #111111;
+    }
+
+    .assistant-dot {
+        margin: 0 0 6px;
+        box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.06);
+    }
+
+    .sme-thinking-dot {
         animation: sme-pulse 1.1s ease-in-out infinite;
     }
 
@@ -576,8 +574,14 @@ def _new_conversation_state() -> dict:
     return state
 
 
-def _chat_avatar(role: str) -> str | None:
-    return "\u25cf" if role == "assistant" else None
+def _render_assistant_indicator(pulse: bool = False) -> None:
+    class_name = "sme-thinking-dot" if pulse else "assistant-dot"
+    st.markdown(f'<div class="{class_name}" aria-hidden="true"></div>', unsafe_allow_html=True)
+
+
+def _render_assistant_message(content: str, stream: bool = True) -> None:
+    _render_assistant_indicator()
+    _render_assistant_response(content, stream=stream)
 
 
 def _get_application_state() -> dict:
@@ -2649,8 +2653,8 @@ def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) ->
     _update_conversation_state_after_assistant(reply, intent, topic)
     st.session_state["chat_history"].append(assistant_message)
     _sync_chat_history_to_application_state()
-    with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
-        _render_assistant_response(reply)
+    with st.chat_message("assistant"):
+        _render_assistant_message(reply)
 
 
 def _show_feedback_summary() -> None:
@@ -2963,7 +2967,9 @@ def _show_chat_companion(
         _show_demo_chat_suggestions()
 
     for message in st.session_state["chat_history"]:
-        with st.chat_message(message["role"], avatar=_chat_avatar(message["role"])):
+        with st.chat_message(message["role"]):
+            if message["role"] == "assistant":
+                _render_assistant_indicator()
             _render_markdown(clean_response(message["content"]))
             if message["role"] == "assistant":
                 _render_assistant_footer(message)
@@ -2980,16 +2986,16 @@ def _show_chat_companion(
         st.session_state["chat_history"].append({"role": "user", "content": user_message})
         st.session_state["chat_history"].append({"role": "assistant", "content": reset_reply})
         _sync_chat_history_to_application_state()
-        with st.chat_message("user", avatar=_chat_avatar("user")):
+        with st.chat_message("user"):
             _render_markdown(user_message)
-        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
-            _render_assistant_response(reset_reply)
+        with st.chat_message("assistant"):
+            _render_assistant_message(reset_reply)
         return
 
     previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
     st.session_state["chat_history"].append({"role": "user", "content": user_message})
     _sync_chat_history_to_application_state()
-    with st.chat_message("user", avatar=_chat_avatar("user")):
+    with st.chat_message("user"):
         _render_markdown(user_message)
 
     understanding_state = _sync_session_to_application_state()
@@ -3082,8 +3088,8 @@ def _show_chat_companion(
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
         finalize_debug("direct_conversation_response", direct_reply)
-        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
-            _render_assistant_response(direct_reply)
+        with st.chat_message("assistant"):
+            _render_assistant_message(direct_reply)
         return
 
     if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
@@ -3174,8 +3180,8 @@ def _show_chat_companion(
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
         finalize_debug("direct_conversation_response", simple_reply)
-        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
-            _render_assistant_response(simple_reply)
+        with st.chat_message("assistant"):
+            _render_assistant_message(simple_reply)
         return
 
     if conversation_intent == "PRODUCT_FEEDBACK":
@@ -3194,8 +3200,8 @@ def _show_chat_companion(
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
         finalize_debug("planner_response", response["reply"], {"workflow_handler": "product_feedback"})
-        with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
-            _render_assistant_response(response["reply"])
+        with st.chat_message("assistant"):
+            _render_assistant_message(response["reply"])
         return
 
     use_business_context = should_use_business_context(conversation_intent)
@@ -3370,8 +3376,8 @@ def _show_chat_companion(
     _sync_chat_history_to_application_state()
     finalize_debug(response_source, response["reply"])
 
-    with st.chat_message("assistant", avatar=_chat_avatar("assistant")):
-        _render_assistant_response(response["reply"])
+    with st.chat_message("assistant"):
+        _render_assistant_message(response["reply"])
         _render_assistant_footer(assistant_message)
     if demo_ai_success:
         st.success("✨ คุณได้ทดลองใช้ AI แล้ว ลองดูภาพรวมธุรกิจ แผนงานวันนี้ หรือกดสร้างโพสต์ต่อได้เลย")
