@@ -478,6 +478,37 @@ def _build_profile(
     }
 
 
+def normalize_store_profile(profile: dict | None, current_store_name: str | None = None) -> dict:
+    source = profile if isinstance(profile, dict) else {}
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    store_name = source.get("store_name") or current_store_name or st.session_state.get("current_store_name") or ""
+    customer = source.get("customer") or source.get("target_customer") or ""
+    normalized = {
+        "store_name": store_name,
+        "store_type": "",
+        "product": "",
+        "customer": customer,
+        "channel": "",
+        "goal": "",
+        "created_at": now,
+        "updated_at": now,
+        "target_customer": customer,
+        "tone": TONE_OPTIONS[0],
+    }
+    normalized.update(source)
+    normalized["store_name"] = normalized.get("store_name") or store_name
+    normalized["store_type"] = normalized.get("store_type") or ""
+    normalized["product"] = normalized.get("product") or ""
+    normalized["customer"] = normalized.get("customer") or normalized.get("target_customer") or ""
+    normalized["channel"] = normalized.get("channel") or ""
+    normalized["goal"] = normalized.get("goal") or ""
+    normalized["created_at"] = normalized.get("created_at") or now
+    normalized["updated_at"] = normalized.get("updated_at") or now
+    normalized["target_customer"] = normalized.get("target_customer") or normalized.get("customer") or ""
+    normalized["tone"] = normalized.get("tone") or TONE_OPTIONS[0]
+    return normalized
+
+
 def _build_companion(profile: dict | None, history: list[dict]) -> dict | None:
     if not profile:
         return None
@@ -952,7 +983,7 @@ def _show_first_run_setup() -> None:
         st.error("สร้างบัญชีแล้ว แต่ไม่สามารถบันทึกข้อมูลร้านได้")
         st.stop()
 
-    profile = {"store_name": clean_store_name}
+    profile = normalize_store_profile({"store_name": clean_store_name}, current_store_name=clean_store_name)
     save_persistent_store_profile(
         {
             "store_source": "manual",
@@ -1050,7 +1081,12 @@ def _restore_manual_store_profile() -> bool:
     if not store_data:
         return False
 
-    profile = store_data.get("store_profile") or {}
+    raw_profile = store_data.get("store_profile") or {}
+    profile = normalize_store_profile(raw_profile)
+    if profile != raw_profile:
+        store_data = {**store_data, "store_profile": profile}
+        save_persistent_store_profile(store_data, owner_id=_current_owner_id(), store_id=_current_store_id())
+        store_data = load_persistent_store_profile(_current_owner_id(), _current_store_id()) or store_data
     st.session_state["demo_mode"] = False
     st.session_state["selected_demo_store"] = None
     st.session_state["store_source"] = "manual"
@@ -1089,7 +1125,7 @@ def _manual_store_payload(
     existing = load_persistent_store_profile(_current_owner_id(), _current_store_id()) or {}
     return {
         "store_source": "manual",
-        "store_profile": profile or {},
+        "store_profile": normalize_store_profile(profile),
         "business_memory": business_memory if business_memory is not None else st.session_state.get("business_memory", {}),
         "business_goals": business_goals if business_goals is not None else st.session_state.get("business_goals", {}),
         "business_diagnosis": business_diagnosis if business_diagnosis is not None else st.session_state.get("business_diagnosis", {}),
@@ -1112,9 +1148,10 @@ def _save_manual_store_profile(
         return
     if not _is_authenticated():
         return
-    active_profile = profile or st.session_state.get("store_profile")
-    if not active_profile:
+    raw_active_profile = profile or st.session_state.get("store_profile")
+    if not raw_active_profile:
         return
+    active_profile = normalize_store_profile(raw_active_profile)
 
     st.session_state["store_source"] = "manual"
     st.session_state["store_profile"] = active_profile
@@ -3399,23 +3436,23 @@ store_info_expander = st.sidebar.expander("Store Information", expanded=not bool
 with store_info_expander:
     store_type = st.text_input(
         "ประเภทร้านค้า",
-        value=saved_profile["store_type"] if saved_profile else "",
+        value=saved_profile.get("store_type", "") if saved_profile else "",
         placeholder="เช่น ร้านกาแฟ, ร้านเสื้อผ้า, ร้านอาหารฮาลาล",
     )
     product = st.text_input(
         "สินค้า",
-        value=saved_profile["product"] if saved_profile else "",
+        value=saved_profile.get("product", "") if saved_profile else "",
         placeholder="เช่น กาแฟสกัดเย็น, เสื้อเชิ้ต, ข้าวกล่อง",
     )
     target_customer = st.text_input(
         "กลุ่มลูกค้าเป้าหมาย",
-        value=saved_profile["target_customer"] if saved_profile else "",
+        value=saved_profile.get("target_customer", saved_profile.get("customer", "")) if saved_profile else "",
         placeholder="เช่น พนักงานออฟฟิศ, นักศึกษา, คุณแม่",
     )
     tone = st.selectbox(
         "โทนการสื่อสาร",
         TONE_OPTIONS,
-        index=_tone_index(saved_profile["tone"]) if saved_profile else 0,
+        index=_tone_index(saved_profile.get("tone", "")) if saved_profile else 0,
     )
 
 st.markdown(
