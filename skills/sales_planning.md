@@ -20,7 +20,7 @@ Create a short-term sales plan from store profile, product, capacity, quantity, 
 2. Confirm available quantity or daily capacity.
 3. Confirm selling window or sales channel.
 4. Route to the existing sales plan workflow.
-5. Use LLM only if Developer Mode allows workflow enhancement.
+5. Use LLM only when the orchestrator decides language generation adds value.
 
 ## Limitations
 - Does not forecast demand.

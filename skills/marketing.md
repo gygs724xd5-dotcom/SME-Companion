@@ -18,7 +18,7 @@ Plan practical marketing actions and campaign angles from current store context.
 1. Identify campaign intent.
 2. Reuse store profile and recent topics.
 3. Prefer existing content and sales planning capabilities.
-4. Use LLM only for wording when enabled.
+4. Use LLM only when the orchestrator decides wording or explanation adds value.
 
 ## Limitations
 - Does not buy ads.

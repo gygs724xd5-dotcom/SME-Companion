@@ -29,7 +29,6 @@ def build_reasoning(application_state, user_message):
     receipt = state.get("receipt") or {}
     workflow = state.get("workflow") or {}
     developer = state.get("developer") or {}
-    ui = state.get("ui") or {}
 
     receipt_uploaded = bool(receipt.get("receipt_uploaded"))
     workflow_ready = bool(workflow.get("is_ready") or (workflow.get("workflow_state_v2") or {}).get("is_ready"))
@@ -38,14 +37,12 @@ def build_reasoning(application_state, user_message):
         or workflow.get("current_workflow")
         or (workflow.get("workflow_state_v2") or {}).get("workflow")
     )
-    llm_mode = ui.get("llm_response_mode") or developer.get("llm_response_mode") or "Workflow Only"
-
     result = {
         "action": "default_chat",
         "reason": "No higher-priority application state matched.",
         "workflow": current_workflow,
         "response_mode": "default_chat",
-        "llm_needed": llm_mode == "LLM Only",
+        "llm_needed": False,
         "workflow_ready": workflow_ready,
     }
 
@@ -79,7 +76,7 @@ def build_reasoning(application_state, user_message):
                 "action": "continue_workflow",
                 "reason": "Workflow has enough information to generate a deterministic result.",
                 "response_mode": "workflow",
-                "llm_needed": llm_mode == "Workflow + LLM",
+                "llm_needed": False,
             }
         )
         return result
@@ -106,16 +103,4 @@ def build_reasoning(application_state, user_message):
         )
         return result
 
-    if llm_mode == "LLM Only":
-        result.update(
-            {
-                "action": "llm",
-                "reason": "Developer mode selected LLM Only response mode.",
-                "response_mode": "llm",
-                "llm_needed": True,
-            }
-        )
-        return result
-
     return result
-

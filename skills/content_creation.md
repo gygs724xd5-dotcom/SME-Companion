@@ -19,7 +19,7 @@ Plan content ideas, captions, and campaign angles from store context and user in
 1. Identify product, business type, and customer.
 2. Check recent topics to avoid repetition.
 3. Route to content workflow when deterministic fields are available.
-4. Use LLM only for response wording when enabled.
+4. Use LLM only when the orchestrator decides response wording needs language generation.
 
 ## Limitations
 - Does not publish posts.

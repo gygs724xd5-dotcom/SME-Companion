@@ -7,6 +7,7 @@ from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
 from brain.conversation_understanding_engine import understand_conversation
 from brain.intent_resolver import resolve_intent
+from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
 from brain.planner_engine import build_execution_plan
 from brain.reasoning_engine import build_reasoning
 from brain.skill_loader import load_skills
@@ -103,7 +104,22 @@ def build_task_route(application_state, user_message) -> dict:
         or (workflow_state.get("workflow_state_v2") or {}).get("is_ready")
         or reasoning.get("workflow_ready")
     )
-    llm_needed = bool(reasoning.get("llm_needed") or plan.get("estimated_response_mode") == "llm")
+    llm_reasoning_context = build_reasoning_context(
+        user_message=planner_message,
+        application_state=enriched_state,
+        planner=plan,
+        workflow=workflow_state,
+        reasoning=reasoning,
+        capability=capability,
+        loaded_skill=[_serialize_skill(skill) for skill in loaded_skills],
+        conversation_intent=interpretation.get("legacy_intent") or interpretation.get("detected_intent"),
+        conversation_summary=memory_context,
+        business_context=business_context,
+        store_profile=(enriched_state.get("store") or {}),
+        current_task=plan.get("task_type"),
+    )
+    llm_decision = decide_llm_usage(llm_reasoning_context)
+    llm_needed = bool(llm_decision.get("should_use_llm"))
 
     return {
         "planner_output": plan,
@@ -117,6 +133,8 @@ def build_task_route(application_state, user_message) -> dict:
         "loaded_skills": [_serialize_skill(skill) for skill in loaded_skills],
         "reasoning": reasoning,
         "reasoning_mode": _reasoning_mode(plan, reasoning),
+        "llm_reasoning_context": llm_reasoning_context,
+        "llm_decision": llm_decision,
         "workflow_ready": workflow_ready,
         "llm_needed": llm_needed,
         "capability_available": capability_available,
@@ -138,6 +156,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Loaded Skill": loaded_skill_names,
         "Reasoning Mode": route.get("reasoning_mode"),
         "Workflow Ready": bool(route.get("workflow_ready")),
+        "LLM Decision": route.get("llm_decision") or {},
         "LLM Needed": bool(route.get("llm_needed")),
         "Capability Available": bool(route.get("capability_available")),
     }

@@ -52,6 +52,7 @@ from brain.goal_engine import (
     get_active_business_goal,
 )
 from brain.llm_context_builder import build_llm_context
+from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
 from brain.promotion_engine import get_promotion_idea
 from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
@@ -641,13 +642,10 @@ def _sync_session_to_application_state() -> dict:
     state["ui"] = {
         **(state.get("ui") or {}),
         "demo_mode": bool(st.session_state.get("demo_mode")),
-        "llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only"),
     }
     state["developer"] = {
         **(state.get("developer") or {}),
         "developer_mode": bool(st.session_state.get("developer_mode")),
-        "use_llm_companion": bool(st.session_state.get("use_llm_companion")),
-        "llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only"),
     }
     return _sync_global_application_state()
 
@@ -670,7 +668,8 @@ def _record_reasoning(user_message: str) -> dict:
             "reasoning_result": reasoning,
             "conversation_understanding": task_route.get("conversation_understanding"),
             "current_action": reasoning.get("action"),
-            "llm_needed": bool(reasoning.get("llm_needed")),
+            "llm_decision": task_route.get("llm_decision") or {},
+            "llm_needed": bool(task_route.get("llm_needed")),
             "workflow_ready": bool(reasoning.get("workflow_ready")),
         },
     )
@@ -773,6 +772,8 @@ def _update_ai_pipeline_debug_trace_from_route(trace: dict, route: dict | None) 
     trace["loaded_skill_names"] = _loaded_skill_names(route)
     trace["reasoning"] = route.get("reasoning") or {}
     trace["reasoning_mode"] = route.get("reasoning_mode")
+    trace["llm_decision"] = route.get("llm_decision") or {}
+    trace["prompt_context"] = route.get("prompt_context") or {}
     return trace
 
 
@@ -863,8 +864,6 @@ def _init_session_state() -> None:
     st.session_state.setdefault("ai_pipeline_debug_trace", {})
     st.session_state.setdefault("active_store_name", "")
     st.session_state.setdefault("last_diagnosis_signature", "")
-    st.session_state.setdefault("use_llm_companion", False)
-    st.session_state.setdefault("llm_response_mode", "Workflow Only")
     st.session_state.setdefault("developer_mode", False)
     st.session_state.setdefault("auth_session", {})
     st.session_state.setdefault("auth_owner_id", None)
@@ -2445,14 +2444,28 @@ def _maybe_improve_workflow_reply_with_llm(
     profile: dict | None,
     user_message: str,
 ) -> tuple[str, bool]:
-    mode = st.session_state.get("llm_response_mode", "Workflow Only")
-    if mode != "Workflow + LLM":
-        return base_reply, False
-
     demo_mode = bool(st.session_state.get("demo_mode"))
     context = _workflow_llm_context(workflow_state, profile, user_message)
     context["deterministic_reply"] = base_reply
     route = st.session_state.get("last_task_route") or {}
+    reasoning_context = build_reasoning_context(
+        user_message=user_message,
+        application_state=_sync_session_to_application_state(),
+        planner=route.get("planner_output"),
+        workflow=context,
+        reasoning=route.get("reasoning"),
+        capability=route.get("selected_capability"),
+        loaded_skill=route.get("loaded_skills"),
+        conversation_summary=(_get_application_state().get("conversation") or {}).get("conversation_memory") or {},
+        business_context=route.get("business_context"),
+        store_profile=profile,
+        current_task=(route.get("planner_output") or {}).get("task_type"),
+    )
+    llm_decision = decide_llm_usage(reasoning_context)
+    if not llm_decision.get("should_use_llm"):
+        _update_application_section("developer", {"llm_decision": llm_decision})
+        return base_reply, False
+
     context = build_prompt_context(
         application_state=_sync_session_to_application_state(),
         planner=route.get("planner_output"),
@@ -2461,8 +2474,13 @@ def _maybe_improve_workflow_reply_with_llm(
         reasoning=route.get("reasoning"),
         workflow_state=context,
         store_profile=profile,
+        business_context=route.get("business_context"),
+        current_task=(route.get("planner_output") or {}).get("task_type"),
+        llm_decision=llm_decision,
         developer_mode=bool(st.session_state.get("developer_mode")),
     )
+    st.session_state["last_prompt_context"] = context
+    _update_application_section("developer", {"llm_decision": llm_decision, "prompt_context": context})
     if not can_call_llm(st):
         print("Fallback reason: budget guard")
         return base_reply, False
@@ -2531,7 +2549,7 @@ def _show_workflow_diagnostics() -> None:
                 "Collected Fields": workflow_state.get("collected_fields") or {},
                 "Missing Fields": workflow_state.get("missing_fields") or [],
                 "Ready?": bool(workflow_state.get("is_ready")),
-                "LLM Response Mode": st.session_state.get("llm_response_mode", "Workflow Only"),
+                "LLM Decision": (_get_application_state().get("developer") or {}).get("llm_decision") or {},
             }
         )
 
@@ -2945,7 +2963,6 @@ def _show_chat_companion(
     diagnosis: dict | None,
     goal_status: dict | None,
     business_os_state: dict | None,
-    use_llm_companion: bool,
 ) -> None:
     st.markdown("### คุยกับผู้ช่วยธุรกิจ")
     _sync_conversation_business_context(profile, goal_status, business_os_state)
@@ -3043,7 +3060,6 @@ def _show_chat_companion(
 
     active_workflow = state.get("current_workflow")
     detected_workflow = workflow_detection.get("workflow")
-    llm_response_mode = st.session_state.get("llm_response_mode", "Workflow Only")
     active_workflow_v2_state = state.get("workflow_state_v2") or {}
     active_workflow_v2 = active_workflow_v2_state.get("workflow")
     active_workflow_step_v2 = active_workflow_v2_state.get("step")
@@ -3092,19 +3108,19 @@ def _show_chat_companion(
             _render_assistant_message(direct_reply)
         return
 
-    if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
+    if detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "dashboard_v2"})
         _append_workflow_reply(response["reply"], response["intent"], "à¹à¸”à¸Šà¸šà¸­à¸£à¹Œà¸”à¸£à¹‰à¸²à¸™à¸„à¹‰à¸²")
         return
 
-    if llm_response_mode != "LLM Only" and detected_workflow_v2 == V2_WORKFLOW_RECEIPT_CAPTURE:
+    if detected_workflow_v2 == V2_WORKFLOW_RECEIPT_CAPTURE:
         response = _handle_receipt_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "receipt_v2"})
         _append_workflow_reply(response["reply"], response["intent"], "à¸šà¸´à¸¥ / à¸ªà¸¥à¸´à¸›")
         return
 
-    if llm_response_mode != "LLM Only" and detected_workflow_v2 in {
+    if detected_workflow_v2 in {
         V2_WORKFLOW_SALES_PLAN_7_DAY,
         V2_WORKFLOW_COST_CALCULATION,
         V2_WORKFLOW_CONTENT_PLAN,
@@ -3114,7 +3130,7 @@ def _show_chat_companion(
             detected_workflow=detected_workflow_v2,
             profile=chat_profile,
         )
-        source = "llm_response" if response.get("llm_attempted") and st.session_state.get("llm_response_mode") == "Workflow + LLM" else "workflow_response"
+        source = "llm_response" if response.get("llm_attempted") else "workflow_response"
         finalize_debug(
             source,
             response["reply"],
@@ -3132,7 +3148,7 @@ def _show_chat_companion(
         )
         return
 
-    if llm_response_mode != "LLM Only" and active_workflow == WORKFLOW_COST_CALCULATION and state.get("workflow_step") == "collecting_cost_inputs" and detected_workflow not in {
+    if active_workflow == WORKFLOW_COST_CALCULATION and state.get("workflow_step") == "collecting_cost_inputs" and detected_workflow not in {
         WORKFLOW_DASHBOARD_REQUEST,
         WORKFLOW_RECEIPT_CAPTURE,
         WORKFLOW_PRODUCT_FEEDBACK,
@@ -3142,19 +3158,19 @@ def _show_chat_companion(
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
-    if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_COST_CALCULATION:
+    if detected_workflow == WORKFLOW_COST_CALCULATION:
         response = _handle_cost_workflow(user_message, starting=True)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "cost_legacy_start"})
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
-    if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
+    if detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "dashboard_legacy"})
         _append_workflow_reply(response["reply"], response["intent"], "แดชบอร์ดร้านค้า")
         return
 
-    if llm_response_mode != "LLM Only" and detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
+    if detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
         response = _handle_receipt_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "receipt_legacy"})
         _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
@@ -3240,17 +3256,37 @@ def _show_chat_companion(
     response_source = "planner_response"
     demo_ai_success = False
     demo_mode = bool(st.session_state.get("demo_mode"))
-    llm_allowed_for_intent = conversation_intent not in {"GREETING", "FOLLOW_UP", "START_BUSINESS"}
-    if use_llm_companion and llm_allowed_for_intent:
+    business_memory_context = (
+        st.session_state.get("business_memory")
+        if demo_mode
+        else load_business_memory(profile["store_name"])
+    )
+    route = st.session_state.get("last_task_route") or {}
+    llm_reasoning_context = build_reasoning_context(
+        user_message=user_message,
+        application_state=_sync_session_to_application_state(),
+        planner=route.get("planner_output"),
+        workflow=(application_state.get("workflow") or {}),
+        reasoning=route.get("reasoning"),
+        capability=route.get("selected_capability"),
+        loaded_skill=route.get("loaded_skills"),
+        conversation_intent=conversation_intent,
+        conversation_summary=(application_state.get("conversation") or {}).get("conversation_memory") or {},
+        business_context=route.get("business_context"),
+        store_profile=chat_profile,
+        business_memory=business_memory_context,
+        current_goal=goal_status or {},
+        current_task=(route.get("planner_output") or {}).get("task_type"),
+    )
+    llm_decision = decide_llm_usage(llm_reasoning_context)
+    _update_application_section("developer", {"llm_decision": llm_decision})
+    debug_trace["llm_decision"] = llm_decision
+    if llm_decision.get("should_use_llm"):
         llm_context = build_llm_context(
             store_profile=chat_profile,
             business_diagnosis=diagnosis or {},
             goal_status=goal_status or {},
-            business_memory=(
-                st.session_state.get("business_memory")
-                if demo_mode
-                else load_business_memory(profile["store_name"])
-            ),
+            business_memory=business_memory_context,
             business_os=business_os_state or {},
             recent_topics=recent_topics,
             intent_analysis=intent_analysis,
@@ -3259,7 +3295,6 @@ def _show_chat_companion(
             include_business_context=use_business_context,
             show_business_insights=show_business_insights,
         )
-        route = st.session_state.get("last_task_route") or {}
         llm_context = build_prompt_context(
             application_state=_sync_session_to_application_state(),
             planner=route.get("planner_output"),
@@ -3270,8 +3305,16 @@ def _show_chat_companion(
             workflow_state=(application_state.get("workflow") or {}),
             store_profile=chat_profile,
             product_brain=llm_context,
+            business_context=route.get("business_context"),
+            business_memory=business_memory_context,
+            current_goal=goal_status or {},
+            current_task=(route.get("planner_output") or {}).get("task_type"),
+            llm_decision=llm_decision,
             developer_mode=bool(st.session_state.get("developer_mode")),
         )
+        st.session_state["last_prompt_context"] = llm_context
+        debug_trace["prompt_context"] = llm_context
+        _update_application_section("developer", {"prompt_context": llm_context})
         llm_reply = None
         llm_attempted = False
         budget_allows_llm = can_call_llm(st)
@@ -3286,11 +3329,17 @@ def _show_chat_companion(
             spinner_text = "AI กำลังตอบ..." if not use_business_context else "AI กำลังวิเคราะห์ข้อมูลร้าน..."
             with st.spinner(spinner_text):
                 llm_attempted = True
+                started_at = time.perf_counter()
                 llm_reply = generate_llm_response(
                     user_message,
                     context=llm_context,
                     demo_mode=demo_mode,
                 )
+                llm_decision["llm_latency_ms"] = int((time.perf_counter() - started_at) * 1000)
+                llm_decision["token_usage"] = {
+                    "estimated_prompt_chars": len(json.dumps(llm_context, ensure_ascii=False))
+                }
+                _update_application_section("developer", {"llm_decision": llm_decision})
             if llm_reply:
                 record_llm_call(st, 0.002 if demo_mode else 0.01)
                 if demo_mode and not st.session_state.get("demo_first_ai_success_shown"):
@@ -3316,8 +3365,6 @@ def _show_chat_companion(
                 "related_module": "ผู้ช่วย AI" if show_business_insights else None,
             }
             response_source = "llm_response"
-    elif use_llm_companion and not llm_allowed_for_intent:
-        pass
     elif not provider_has_api_key(demo_mode=demo_mode):
         print("Fallback reason: missing key")
 
@@ -3329,7 +3376,7 @@ def _show_chat_companion(
             "intent": response.get("intent"),
             "business_intent": response.get("business_intent"),
             "conversation_mode": response.get("conversation_mode"),
-            "llm_enabled": bool(use_llm_companion),
+            "llm_enabled": bool(llm_decision.get("should_use_llm")),
             "llm_used": response.get("related_feature") == "ผู้ช่วย AI",
         },
     )
@@ -3850,44 +3897,21 @@ developer_mode = st.sidebar.checkbox(
 )
 st.session_state["developer_mode"] = developer_mode
 _update_application_section("developer", {"developer_mode": bool(developer_mode)})
-if not developer_mode:
-    st.session_state["llm_response_mode"] = "Workflow Only"
 
 llm_available = is_llm_available(demo_mode=demo_mode)
-use_llm_companion = bool(st.session_state.get("use_llm_companion")) if developer_mode else False
 if developer_mode:
-    llm_response_options = ["Workflow Only", "Workflow + LLM", "LLM Only"]
-    current_llm_response_mode = st.session_state.get("llm_response_mode", "Workflow Only")
-    if current_llm_response_mode not in llm_response_options:
-        current_llm_response_mode = "Workflow Only"
-    llm_response_mode = st.sidebar.selectbox(
-        "LLM Response Mode",
-        llm_response_options,
-        index=llm_response_options.index(current_llm_response_mode),
-    )
-    st.session_state["llm_response_mode"] = llm_response_mode
-    llm_default = llm_available if demo_mode else st.session_state["use_llm_companion"]
-    if llm_response_mode == "Workflow Only":
-        llm_default = False
-    elif llm_response_mode == "LLM Only":
-        llm_default = llm_available
-    use_llm_companion = st.checkbox(
-        "ใช้ผู้ช่วย AI เรียบเรียงคำตอบ",
-        value=llm_default,
-        disabled=(not llm_available) or llm_response_mode == "Workflow Only",
-    )
-    st.session_state["use_llm_companion"] = use_llm_companion
+    llm_decision = (_get_application_state().get("developer") or {}).get("llm_decision") or {}
     _update_application_section(
         "developer",
         {
             "developer_mode": True,
-            "use_llm_companion": bool(use_llm_companion),
-            "llm_response_mode": llm_response_mode,
+            "llm_available": bool(llm_available),
+            "llm_decision": llm_decision,
         },
     )
-    _update_application_section("ui", {"llm_response_mode": llm_response_mode})
-    if use_llm_companion:
-        st.caption("ผู้ช่วย AI จะเรียบเรียงคำตอบให้อ่านง่าย โดยยังยึดเหตุผลจากระบบเดิม")
+    st.caption(f"LLM provider available: {bool(llm_available)}")
+    if llm_decision:
+        st.caption(f"LLM decision: {llm_decision.get('response_mode')} - {llm_decision.get('reason')}")
     elif not llm_available:
         st.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
 
@@ -3895,11 +3919,9 @@ _update_application_section(
     "developer",
     {
         "developer_mode": bool(developer_mode),
-        "use_llm_companion": bool(use_llm_companion),
-        "llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only"),
+        "llm_available": bool(llm_available),
     },
 )
-_update_application_section("ui", {"llm_response_mode": st.session_state.get("llm_response_mode", "Workflow Only")})
 
 _show_feedback_summary()
 _show_developer_alert_center()
@@ -3911,5 +3933,4 @@ _show_chat_companion(
     diagnosis,
     goal_status,
     business_os_state,
-    use_llm_companion,
 )

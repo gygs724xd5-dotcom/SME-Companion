@@ -50,6 +50,11 @@ def build_prompt_context(
     conversation_memory: dict | None = None,
     store_profile: dict | None = None,
     product_brain: dict | None = None,
+    business_context: dict | None = None,
+    business_memory: dict | list | None = None,
+    current_goal: dict | None = None,
+    current_task: str | None = None,
+    llm_decision: dict | None = None,
     developer_mode: bool = False,
 ) -> dict:
     state = application_state or {}
@@ -60,14 +65,10 @@ def build_prompt_context(
     context = {
         "application_state": _compact_dict(
             state.get("ui") or {},
-            ["demo_mode", "llm_response_mode"],
+            ["demo_mode"],
         ),
-        "conversation_memory": {
-            "recent_messages": _recent_conversation(conversation),
-            "current_topic": (conversation or {}).get("current_topic"),
-            "last_intent": (conversation or {}).get("last_intent"),
-        },
-        "workflow_state": _compact_dict(
+        "planner_output": planner or {},
+        "workflow": _compact_dict(
             workflow or {},
             [
                 "workflow",
@@ -84,20 +85,31 @@ def build_prompt_context(
                 "instruction",
             ],
         ),
-        "planner": planner or {},
+        "business_context": business_context or state.get("business_context") or {},
+        "conversation_summary": {
+            "recent_messages": _recent_conversation(conversation),
+            "current_topic": (conversation or {}).get("current_topic"),
+            "last_intent": (conversation or {}).get("last_intent"),
+            "memory": (conversation or {}).get("conversation_memory"),
+        },
+        "store_profile": _compact_dict(
+            store or {},
+            ["store_name", "store_type", "product", "target_customer", "tone"],
+        ),
+        "business_memory": business_memory or {},
+        "current_goal": current_goal or {},
+        "missing_information": (planner or {}).get("missing_information") or (workflow or {}).get("missing_fields") or [],
+        "current_task": current_task or (planner or {}).get("task_type"),
         "capability": _compact_dict(
             capability or {},
             ["name", "description", "available", "maturity", "required_modules"],
         ),
         "loaded_skill": _skill_summary(loaded_skill),
-        "store_profile": _compact_dict(
-            store or {},
-            ["store_name", "store_type", "product", "target_customer", "tone"],
-        ),
         "reasoning": _compact_dict(
             reasoning or {},
             ["action", "reason", "workflow", "response_mode", "llm_needed", "workflow_ready"],
         ),
+        "llm_decision": llm_decision or {},
     }
 
     if product_brain:
@@ -107,7 +119,7 @@ def build_prompt_context(
         developer = state.get("developer") or {}
         context["developer_mode"] = _compact_dict(
             developer,
-            ["developer_mode", "use_llm_companion", "llm_response_mode", "current_action"],
+            ["developer_mode", "current_action", "llm_decision", "llm_latency_ms", "token_usage"],
         )
 
     context["future_context_sources"] = dict(PLACEHOLDER_CONTEXT_SOURCES)
