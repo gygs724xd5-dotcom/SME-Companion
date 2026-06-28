@@ -158,37 +158,43 @@ st.markdown(
     }
 
     .block-container {
-        padding-top: 2rem;
+        padding-top: 1.2rem;
         padding-bottom: 3rem;
-        max-width: 980px;
+        max-width: 900px;
     }
 
     .sme-hero {
-        background: linear-gradient(135deg, #4338ca 0%, #2563eb 58%, #14b8a6 100%);
-        border-radius: 28px;
-        box-shadow: var(--sme-shadow);
+        background: #ffffff;
+        border: 1px solid var(--sme-border);
+        border-left: 6px solid var(--sme-primary);
+        border-radius: 12px;
+        box-shadow: 0 10px 26px rgba(31, 41, 55, 0.06);
         color: #ffffff;
-        padding: 34px 34px 30px;
-        margin-bottom: 22px;
+        padding: 18px 22px;
+        margin-bottom: 20px;
+        min-height: 118px;
+        max-height: 150px;
         overflow: hidden;
     }
 
     .sme-hero h1 {
-        font-size: clamp(2.1rem, 5vw, 4rem);
-        line-height: 1.05;
-        margin: 0 0 10px;
+        color: var(--sme-text);
+        font-size: 1.55rem;
+        line-height: 1.22;
+        margin: 0 0 6px;
         letter-spacing: 0;
     }
 
     .sme-hero .subtitle {
-        font-size: 1.35rem;
+        color: var(--sme-primary-dark);
+        font-size: 1rem;
         font-weight: 700;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
     }
 
     .sme-hero .promise {
-        color: rgba(255, 255, 255, 0.90);
-        font-size: 1rem;
+        color: var(--sme-muted);
+        font-size: .92rem;
         max-width: 680px;
         margin: 0;
     }
@@ -370,6 +376,65 @@ st.markdown(
         padding: 7px 11px;
     }
 
+    .sme-brief-header,
+    .sme-summary-grid {
+        display: grid;
+        gap: 12px;
+    }
+
+    .sme-brief-header {
+        grid-template-columns: 1.3fr 1fr 1fr;
+        margin: 4px 0 22px;
+    }
+
+    .sme-summary-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin: 8px 0 22px;
+    }
+
+    .sme-brief-card,
+    .sme-business-card {
+        background: #ffffff;
+        border: 1px solid var(--sme-border);
+        border-radius: 8px;
+        box-shadow: 0 10px 24px rgba(31, 41, 55, 0.05);
+        padding: 15px;
+    }
+
+    .sme-brief-card span,
+    .sme-business-card span {
+        display: block;
+        color: var(--sme-muted);
+        font-size: .78rem;
+        font-weight: 800;
+        margin-bottom: 7px;
+    }
+
+    .sme-brief-card strong,
+    .sme-business-card strong {
+        display: block;
+        color: var(--sme-text);
+        font-size: 1.05rem;
+        line-height: 1.35;
+        margin-bottom: 7px;
+    }
+
+    .sme-business-card p,
+    .sme-brief-card p {
+        color: var(--sme-text);
+        font-size: .9rem;
+        line-height: 1.45;
+        margin: 0 0 10px;
+    }
+
+    .sme-business-card em {
+        color: var(--sme-primary-dark);
+        display: block;
+        font-size: .86rem;
+        font-style: normal;
+        font-weight: 800;
+    }
+
     @media (max-width: 640px) {
         .block-container {
             padding-left: 1rem;
@@ -378,11 +443,14 @@ st.markdown(
         }
 
         .sme-hero {
-            padding: 26px 22px;
-            border-radius: 22px;
+            padding: 16px 18px;
+            border-radius: 12px;
+            max-height: none;
         }
 
-        .sme-brief-grid {
+        .sme-brief-grid,
+        .sme-brief-header,
+        .sme-summary-grid {
             grid-template-columns: 1fr;
         }
 
@@ -582,13 +650,33 @@ def _render_assistant_indicator(pulse: bool = False) -> None:
 
 def _render_assistant_message(content: str, stream: bool = True) -> None:
     _render_assistant_indicator()
-    _render_assistant_response(content, stream=stream)
+    _render_assistant_response(_clean_chat_reply(content), stream=stream)
 
 
 def _get_application_state() -> dict:
     state = st.session_state.setdefault("application_state", application_state)
     ensure_application_state(state)
     return state
+
+
+def safe_set_session_state(key, value) -> bool:
+    if st.session_state.get(key) == value:
+        return False
+    st.session_state[key] = value
+    if st.session_state.get("developer_mode"):
+        st.session_state["session_state_changed_this_run"] = True
+    return True
+
+
+def _mark_profile_saved_this_run() -> None:
+    if st.session_state.get("developer_mode"):
+        safe_set_session_state("profile_saved_this_run", True)
+
+
+def _request_rerun(reason: str) -> None:
+    if st.session_state.get("developer_mode"):
+        safe_set_session_state("last_rerun_reason", reason)
+    st.rerun()
 
 
 def _sync_global_application_state() -> dict:
@@ -600,9 +688,14 @@ def _sync_global_application_state() -> dict:
 
 def _update_application_section(section: str, values: dict | None) -> dict:
     state = _get_application_state()
-    state.setdefault(section, {})
+    current = state.get(section) or {}
     if values:
-        state[section].update(values)
+        updated = {**current, **values}
+    else:
+        updated = current
+    if state.get(section) != updated:
+        state = {**state, section: updated}
+        safe_set_session_state("application_state", state)
     return _sync_global_application_state()
 
 
@@ -620,14 +713,15 @@ def _sync_session_to_application_state() -> dict:
     state = _get_application_state()
     conversation_state = st.session_state.get("conversation_state") or _new_conversation_state()
     workflow_state_v2 = conversation_state.get("workflow_state_v2") or {}
-    state["conversation"] = {
+    next_state = {**state}
+    next_state["conversation"] = {
         **(state.get("conversation") or {}),
         **conversation_state,
         "conversation_id": st.session_state.get("conversation_id"),
         "chat_history": st.session_state.get("chat_history", []),
         "pending_followup": st.session_state.get("pending_followup"),
     }
-    state["workflow"] = {
+    next_state["workflow"] = {
         **(state.get("workflow") or {}),
         "current_workflow": conversation_state.get("current_workflow"),
         "workflow_step": conversation_state.get("workflow_step"),
@@ -638,15 +732,17 @@ def _sync_session_to_application_state() -> dict:
         "is_ready": bool(workflow_state_v2.get("is_ready")),
         "last_workflow_message": conversation_state.get("last_workflow_message"),
     }
-    state["receipt"] = ensure_receipt_state(state.get("receipt"))
-    state["ui"] = {
+    next_state["receipt"] = ensure_receipt_state(state.get("receipt"))
+    next_state["ui"] = {
         **(state.get("ui") or {}),
         "demo_mode": bool(st.session_state.get("demo_mode")),
     }
-    state["developer"] = {
+    next_state["developer"] = {
         **(state.get("developer") or {}),
         "developer_mode": bool(st.session_state.get("developer_mode")),
     }
+    if state != next_state:
+        safe_set_session_state("application_state", next_state)
     return _sync_global_application_state()
 
 
@@ -872,6 +968,10 @@ def _init_session_state() -> None:
     st.session_state.setdefault("current_owner_id", None)
     st.session_state.setdefault("current_store_id", None)
     st.session_state.setdefault("current_store_name", None)
+    if st.session_state.get("developer_mode"):
+        st.session_state["app_run_count"] = int(st.session_state.get("app_run_count") or 0) + 1
+        st.session_state["session_state_changed_this_run"] = False
+        st.session_state["profile_saved_this_run"] = False
     _get_application_state()["receipt"] = ensure_receipt_state(_get_application_state().get("receipt"))
     _get_application_state()["developer"].setdefault("future_hooks", _future_engine_hooks())
     _ensure_conversation_state()
@@ -1021,7 +1121,7 @@ def _show_first_run_setup() -> None:
             "store_source": "manual",
         },
     )
-    st.rerun()
+    _request_rerun("successful_first_setup")
 
 
 def _show_auth_gate() -> None:
@@ -1045,7 +1145,7 @@ def _show_auth_gate() -> None:
         result = authenticate(username, password)
         if result.get("ok"):
             _set_authenticated_session(result)
-            st.rerun()
+            _request_rerun("successful_login")
         else:
             st.error("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
     st.stop()
@@ -1067,7 +1167,7 @@ def _show_logout_control() -> None:
         st.session_state["demo_mode"] = False
         st.session_state["developer_mode"] = False
         _clear_authenticated_store_session()
-        st.rerun()
+        _request_rerun("logout_button")
 
 
 def _manual_store_profile() -> dict | None:
@@ -1138,6 +1238,22 @@ def _manual_store_payload(
     }
 
 
+def _without_volatile_profile_fields(value):
+    if isinstance(value, dict):
+        return {
+            key: _without_volatile_profile_fields(item)
+            for key, item in value.items()
+            if key not in {"updated_at"}
+        }
+    if isinstance(value, list):
+        return [_without_volatile_profile_fields(item) for item in value]
+    return value
+
+
+def _payload_changed(existing: dict | None, payload: dict | None) -> bool:
+    return _without_volatile_profile_fields(existing or {}) != _without_volatile_profile_fields(payload or {})
+
+
 def _save_manual_store_profile(
     profile: dict | None = None,
     *,
@@ -1155,20 +1271,23 @@ def _save_manual_store_profile(
     if not raw_active_profile:
         return
     active_profile = normalize_store_profile(raw_active_profile)
+    current_profile = st.session_state.get("store_profile")
+    if _without_volatile_profile_fields(current_profile or {}) == _without_volatile_profile_fields(active_profile):
+        active_profile = current_profile
 
-    st.session_state["store_source"] = "manual"
-    st.session_state["store_profile"] = active_profile
-    st.session_state["current_store_name"] = active_profile.get("store_name") or st.session_state.get("current_store_name")
+    safe_set_session_state("store_source", "manual")
+    safe_set_session_state("store_profile", active_profile)
+    safe_set_session_state("current_store_name", active_profile.get("store_name") or st.session_state.get("current_store_name"))
     if business_memory is not None:
-        st.session_state["business_memory"] = business_memory
+        safe_set_session_state("business_memory", business_memory)
     if business_goals is not None:
-        st.session_state["business_goals"] = business_goals
+        safe_set_session_state("business_goals", business_goals)
     if business_diagnosis is not None:
-        st.session_state["business_diagnosis"] = business_diagnosis
+        safe_set_session_state("business_diagnosis", business_diagnosis)
     if business_os is not None:
-        st.session_state["business_os"] = business_os
+        safe_set_session_state("business_os", business_os)
     if knowledge_layer is not None:
-        st.session_state["knowledge_layer"] = knowledge_layer
+        safe_set_session_state("knowledge_layer", knowledge_layer)
 
     payload = _manual_store_payload(
         active_profile,
@@ -1178,10 +1297,15 @@ def _save_manual_store_profile(
         business_os=business_os,
         knowledge_layer=knowledge_layer,
     )
+    existing_payload = load_persistent_store_profile(_current_owner_id(), _current_store_id()) or {}
+    if not _payload_changed(existing_payload, payload):
+        return
+
     save_persistent_store_profile(payload, owner_id=_current_owner_id(), store_id=_current_store_id())
+    _mark_profile_saved_this_run()
     saved_data = load_persistent_store_profile(_current_owner_id(), _current_store_id()) or {}
-    st.session_state["manual_store_created_at"] = saved_data.get("created_at")
-    st.session_state["manual_store_storage_status"] = "saved"
+    safe_set_session_state("manual_store_created_at", saved_data.get("created_at"))
+    safe_set_session_state("manual_store_storage_status", "saved")
 
 
 def _clear_manual_store_session() -> None:
@@ -1220,7 +1344,7 @@ def _show_clear_manual_store_control() -> None:
         if st.button("ล้างข้อมูลร้านนี้", disabled=not confirm_clear, use_container_width=True):
             clear_persistent_store_profile(_current_owner_id(), _current_store_id())
             _clear_manual_store_session()
-            st.rerun()
+            _request_rerun("clear_manual_store_button")
 
 
 def _legacy_reset_conversation_state_for_demo_switch() -> None:
@@ -1382,7 +1506,7 @@ def _show_demo_entry() -> None:
             st.session_state["demo_mode"] = False
             st.session_state["store_source"] = None
             st.session_state["selected_demo_store"] = None
-            st.rerun()
+            _request_rerun("switch_demo_store_button")
         return
 
     _restore_manual_store_profile()
@@ -1423,7 +1547,7 @@ def _show_demo_entry() -> None:
                     use_container_width=True,
                 ):
                     _start_demo_store(demo_store["key"])
-                    st.rerun()
+                    _request_rerun("select_demo_store_button")
 
     st.divider()
     st.markdown("### อยากใช้กับร้านของคุณจริง ๆ?")
@@ -1433,7 +1557,7 @@ def _show_demo_entry() -> None:
         st.session_state["selected_demo_store"] = None
         st.session_state["demo_llm_tokens_used"] = 0
         st.session_state["demo_first_ai_success_shown"] = False
-        st.rerun()
+        _request_rerun("create_manual_store_button")
 
     st.stop()
 
@@ -1602,7 +1726,7 @@ def _show_daily_content() -> None:
     if not daily:
         return
 
-    with st.expander("แผนวันนี้", expanded=True):
+    with st.expander("แผนวันนี้", expanded=False):
         strategy = daily["strategy"]
         content = daily["content"]
         st.markdown(
@@ -1642,7 +1766,7 @@ def _show_calendar() -> None:
     if not calendar:
         return
 
-    with st.expander("แผนคอนเทนต์ 7 วัน", expanded=True):
+    with st.expander("แผนคอนเทนต์ 7 วัน", expanded=False):
         st.table(
             [
                 {
@@ -1663,7 +1787,7 @@ def _show_revenue_engine() -> None:
     if not revenue:
         return
 
-    with st.expander("แผนเพิ่มยอดขาย", expanded=True):
+    with st.expander("แผนเพิ่มยอดขาย", expanded=False):
         sales_strategy = revenue["sales_strategy"]
         promotion = revenue["promotion"]
         campaign = revenue["campaign"]
@@ -1845,6 +1969,113 @@ def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None, *, co
             clicks.append(st.button(button_label, key=f"ai_ranked_action_{index}", use_container_width=True))
 
     return clicks[0], clicks[1], clicks[2]
+
+
+def _first_sentence(value: object, fallback: str = "") -> str:
+    text = re.sub(r"\s+", " ", str(value or fallback or "")).strip()
+    if not text:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text)
+    return (parts[0] if parts else text)[:180]
+
+
+def _thai_day_label() -> str:
+    labels = ["วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์", "วันอาทิตย์"]
+    return labels[datetime.now().weekday()]
+
+
+def _show_dashboard(companion: dict | None, os_state: dict | None, *, compact: bool = False) -> None:
+    del compact
+    st.markdown("### Morning Brief")
+    if not companion:
+        st.info("กรอกข้อมูลร้านก่อนครับ แล้วผมจะสรุปสิ่งที่ควรทำวันนี้ให้ทันที")
+        return
+
+    health = (os_state or {}).get("operating_status") or companion.get("companion_message")
+    today_action = (os_state or {}).get("today_action") or companion.get("priority_action")
+    opportunity = (os_state or {}).get("growth_opportunity") or companion.get("opportunity")
+    risk = (os_state or {}).get("current_risk") or companion.get("warning")
+    store_profile = (_get_application_state().get("store") or {}).get("profile") or {}
+    store_name = store_profile.get("store_name") or "เจ้าของร้าน"
+    dashboard_state = _get_application_state().get("dashboard") or {}
+    goal_status = dashboard_state.get("goal_status") or {}
+    target_label = goal_status.get("goal_label") or "เป้าหมายวันนี้"
+    target_value = goal_status.get("target_value") or goal_status.get("gap_to_goal") or 3500
+
+    st.markdown(
+        f"""
+<div class="sme-brief-header">
+    <div class="sme-brief-card">
+        <span>อรุณสวัสดิ์</span>
+        <strong>{_html_escape(store_name)}</strong>
+        <p>วันนี้เป็น{_thai_day_label()}</p>
+    </div>
+    <div class="sme-brief-card">
+        <span>ยอดขายเป้าหมาย</span>
+        <strong>{_html_escape(_format_baht(target_value))}</strong>
+        <p>{_html_escape(target_label)}</p>
+    </div>
+    <div class="sme-brief-card">
+        <span>AI Confidence</span>
+        <strong>{_html_escape(str(companion.get("confidence", 0)))}%</strong>
+        <p>พร้อมช่วยเลือกสิ่งที่ควรทำก่อน</p>
+    </div>
+</div>
+<div class="sme-summary-grid">
+    <div class="sme-business-card">
+        <span>วันนี้</span>
+        <strong>ร้านพร้อมขาย</strong>
+        <p>{_html_escape(_first_sentence(health, "ร้านมีข้อมูลพอให้เริ่มขายและสื่อสารกับลูกค้าได้"))}</p>
+        <em>ทำตอนนี้: {_html_escape(_first_sentence(today_action, "เริ่มจากงานขายที่สำคัญที่สุด"))}</em>
+    </div>
+    <div class="sme-business-card">
+        <span>โอกาสเพิ่มยอดขาย</span>
+        <strong>มีเรื่องที่ควรดัน</strong>
+        <p>{_html_escape(_first_sentence(opportunity, "ใช้สินค้าเด่นหรือโปรโมชันเพื่อเพิ่มออเดอร์วันนี้"))}</p>
+        <em>ทำตอนนี้: สร้างโพสต์หรือแผนขายสั้น ๆ</em>
+    </div>
+    <div class="sme-business-card">
+        <span>Risk / Opportunity</span>
+        <strong>ควรโพสต์ Facebook</strong>
+        <p>{_html_escape(_first_sentence(risk, "อย่าปล่อยให้ลูกค้าขาดข้อมูลก่อนตัดสินใจซื้อ"))}</p>
+        <em>ทำตอนนี้: ตอบลูกค้าให้เร็วขึ้น</em>
+    </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None, *, compact: bool = False) -> tuple[bool, bool, bool]:
+    del os_state, compact
+    st.markdown("### Quick Actions")
+    if not companion:
+        st.info("สร้างหรือเลือกร้านก่อนครับ แล้วปุ่มลัดจะพร้อมใช้งาน")
+        return False, False, False
+
+    cols = st.columns(4)
+    post_clicked = cols[0].button("สร้างโพสต์", key="ai_quick_action_post", use_container_width=True)
+    cost_clicked = cols[1].button("คำนวณต้นทุน", key="ai_quick_action_cost", use_container_width=True)
+    receipt_clicked = cols[2].button("อ่านบิล", key="ai_quick_action_receipt", use_container_width=True)
+    analyze_clicked = cols[3].button("วิเคราะห์ร้าน", key="ai_quick_action_analyze", use_container_width=True)
+
+    if cost_clicked:
+        safe_set_session_state("pending_quick_prompt", "คำนวณต้นทุน")
+        _request_rerun("quick_action_cost_button")
+    if receipt_clicked:
+        safe_set_session_state("pending_quick_prompt", "อ่านบิล")
+        _request_rerun("quick_action_receipt_button")
+    if analyze_clicked:
+        safe_set_session_state("pending_quick_prompt", "วิเคราะห์ร้าน")
+        _request_rerun("quick_action_analyze_button")
+
+    return post_clicked, False, False
+
+
+def _show_smart_chat_prompts() -> None:
+    prompts = ["ถามเรื่องยอดขาย", "ถามเรื่องโพสต์", "ถามเรื่องต้นทุน", "ถามเรื่องลูกค้า"]
+    chips = "".join(f"<span>{_html_escape(prompt)}</span>" for prompt in prompts)
+    st.markdown(f'<div class="sme-chat-prompts">{chips}</div>', unsafe_allow_html=True)
 
 
 def _show_product_brain_card(profile: dict | None, business_insight: dict | None, diagnosis: dict | None) -> None:
@@ -2105,6 +2336,59 @@ def _clean_chat_reply(reply: str, preserve_greeting: bool = False) -> str:
         if chunk:
             split_paragraphs.append(" ".join(chunk))
     return "\n\n".join(split_paragraphs)
+
+
+def _structure_assistant_reply(reply: str) -> str:
+    text = str(reply or "").strip()
+    if not text or any(heading in text for heading in ["สิ่งที่ผมเข้าใจ", "วิเคราะห์", "คำแนะนำ", "ขั้นตอนถัดไป"]):
+        return text
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return text
+
+    first = lines[0]
+    rest = lines[1:] or [first]
+    analysis = rest[:2]
+    advice = rest[2:5] or rest[:2]
+    next_step = rest[5:6] or ["บอกผมเพิ่มได้เลยว่าอยากให้ช่วยต่อเรื่องยอดขาย โพสต์ ต้นทุน หรือลูกค้า"]
+
+    return (
+        "#### สิ่งที่ผมเข้าใจ\n"
+        f"{first}\n\n"
+        "#### วิเคราะห์\n"
+        + "\n".join(f"- {item}" for item in analysis)
+        + "\n\n"
+        "#### คำแนะนำ\n"
+        + "\n".join(f"- {item}" for item in advice)
+        + "\n\n"
+        "#### ขั้นตอนถัดไป\n"
+        + "\n".join(f"- {item}" for item in next_step)
+    )
+
+
+def _clean_chat_reply(reply: str, preserve_greeting: bool = False) -> str:
+    text = clean_response(reply)
+    state = _ensure_conversation_state()
+    greeting = "สวัสดีครับ"
+    while text.count(greeting) > 1:
+        first = text.find(greeting)
+        second = text.find(greeting, first + len(greeting))
+        text = text[:second] + text[second + len(greeting):].lstrip()
+    if state.get("greeted") and not preserve_greeting and text.startswith(greeting):
+        text = text[len(greeting):].lstrip(" \n")
+
+    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+    split_paragraphs = []
+    for paragraph in paragraphs or [text]:
+        words = paragraph.split()
+        if len(words) <= 95:
+            split_paragraphs.append(paragraph)
+            continue
+        for index in range(0, len(words), 80):
+            split_paragraphs.append(" ".join(words[index : index + 80]))
+
+    return _structure_assistant_reply("\n\n".join(split_paragraphs))
 
 
 def _should_show_chat_footer(message: dict) -> bool:
@@ -2986,7 +3270,7 @@ def _show_chat_companion(
 
     if st.button("เริ่มบทสนทนาใหม่", use_container_width=True):
         _reset_chat_session()
-        st.rerun()
+        _request_rerun("new_conversation_button")
 
     if not profile:
         st.info("กรอกข้อมูลร้านก่อน เพื่อให้แชทตอบโดยใช้บริบทของร้านได้")
@@ -3004,12 +3288,14 @@ def _show_chat_companion(
         with st.chat_message(message["role"]):
             if message["role"] == "assistant":
                 _render_assistant_indicator()
-            _render_markdown(clean_response(message["content"]))
+                _render_markdown(_clean_chat_reply(message["content"]))
+            else:
+                _render_markdown(clean_response(message["content"]))
             if message["role"] == "assistant":
                 _render_assistant_footer(message)
 
     _show_smart_chat_prompts()
-    user_message = st.chat_input("ถามเรื่องโพสต์ โปร ยอดขาย หรือแผนคอนเทนต์")
+    user_message = st.session_state.pop("pending_quick_prompt", None) or st.chat_input("วันนี้อยากให้ช่วยอะไรเกี่ยวกับร้าน?")
     if not user_message:
         return
 
@@ -3456,8 +3742,8 @@ st.markdown(
     """
 <section class="sme-hero">
     <h1>ผู้ช่วยธุรกิจของคุณ</h1>
-    <div class="subtitle">ผู้ช่วย AI สำหรับร้านค้าไทย</div>
-    <p class="promise">วันนี้ควรโพสต์อะไร ควรขายอะไร และควรแก้ปัญหาอะไร</p>
+    <div class="subtitle">AI Companion สำหรับร้านค้าไทย</div>
+    <p class="promise">วันนี้ควรทำอะไร • ควรขายอะไร • ควรโพสต์อะไร</p>
 </section>
 """,
     unsafe_allow_html=True,
@@ -3476,7 +3762,7 @@ settings_sidebar = st.sidebar.container()
 
 with settings_sidebar:
     st.markdown("### ตั้งค่า")
-    with st.expander("ข้อมูลร้าน", expanded=not bool(saved_profile)):
+    with st.expander("ข้อมูลร้าน", expanded=False):
         store_name = (demo_profile or {}).get("store_name", "") if demo_mode else st.text_input(
             "ชื่อร้าน",
             value=(manual_profile or {}).get("store_name", ""),
@@ -3514,11 +3800,11 @@ if demo_mode and demo_profile:
 current_store_name = store_name.strip().lower()
 if current_store_name != st.session_state["active_store_name"]:
     previous_store_name = st.session_state["active_store_name"]
-    st.session_state["active_store_name"] = current_store_name
-    st.session_state["generated_daily"] = None
-    st.session_state["generated_calendar"] = None
-    st.session_state["generated_revenue"] = None
-    st.session_state["last_diagnosis_signature"] = ""
+    safe_set_session_state("active_store_name", current_store_name)
+    safe_set_session_state("generated_daily", None)
+    safe_set_session_state("generated_calendar", None)
+    safe_set_session_state("generated_revenue", None)
+    safe_set_session_state("last_diagnosis_signature", "")
     if previous_store_name and current_store_name:
         _reset_chat_session()
 
@@ -3534,7 +3820,12 @@ sales_submitted = False
 input_profile = _build_profile(store_name, store_type, product, target_customer, tone)
 active_profile = input_profile or saved_profile
 if input_profile and not demo_mode:
-    if st.session_state.get("store_profile") != input_profile or st.session_state.get("store_source") != "manual":
+    profile_changed = (
+        _without_volatile_profile_fields(st.session_state.get("store_profile") or {})
+        != _without_volatile_profile_fields(normalize_store_profile(input_profile))
+        or st.session_state.get("store_source") != "manual"
+    )
+    if profile_changed:
         save_store_memory_profile(
             store_name=store_name,
             store_type=store_type,
@@ -3542,7 +3833,7 @@ if input_profile and not demo_mode:
             target_customer=target_customer,
             tone=tone,
         )
-        st.session_state["show_manual_store_setup"] = False
+        safe_set_session_state("show_manual_store_setup", False)
         _save_manual_store_profile(input_profile)
     active_profile = input_profile
 _update_application_section(
@@ -3603,12 +3894,9 @@ business_os_state = (
 )
 with dashboard_slot.container():
     _show_dashboard(companion, business_os_state, compact=True)
-with action_slot.container():
-    daily_submitted, calendar_submitted, sales_submitted = _show_ai_ranked_actions(
-        companion,
-        business_os_state,
-        compact=True,
-    )
+daily_submitted = bool(st.session_state.pop("pending_daily_action", False))
+calendar_submitted = bool(st.session_state.pop("pending_calendar_action", False))
+sales_submitted = bool(st.session_state.pop("pending_sales_action", False))
 _update_application_section(
     "ui",
     {
@@ -3850,7 +4138,7 @@ if (
             "urgency_level": diagnosis["urgency_level"],
         },
     )
-    st.session_state["last_diagnosis_signature"] = diagnosis_signature
+    safe_set_session_state("last_diagnosis_signature", diagnosis_signature)
     _save_manual_store_profile(
         active_profile,
         business_memory=load_business_memory(active_profile["store_name"]),
@@ -3863,28 +4151,32 @@ with dashboard_slot.container():
     _show_dashboard(companion, business_os_state, compact=True)
 with management_sidebar:
     st.markdown("### การจัดการร้าน")
-    _show_business_insights(active_profile, recent_history)
-    saved_goal = _show_business_os(
-        active_profile,
-        business_os_state,
-        active_goal,
-        goal_status,
-        show_plan=True,
-        show_goal=False,
-    )
-    _show_daily_content()
-    _show_calendar()
-    _show_revenue_engine()
-    _show_receipt_upload(active_profile)
-    saved_goal = _show_business_os(
-        active_profile,
-        business_os_state,
-        active_goal,
-        goal_status,
-        show_plan=False,
-        show_goal=True,
-    )
-    _show_recent_history(recent_history)
+    with st.expander("ภาพรวมธุรกิจ", expanded=False):
+        _show_business_insights(active_profile, recent_history)
+        _show_recent_history(recent_history)
+    with st.expander("แผนงานวันนี้", expanded=False):
+        saved_goal = _show_business_os(
+            active_profile,
+            business_os_state,
+            active_goal,
+            goal_status,
+            show_plan=True,
+            show_goal=False,
+        )
+        _show_daily_content()
+        _show_calendar()
+        _show_revenue_engine()
+    with st.expander("อัปโหลดบิล", expanded=False):
+        _show_receipt_upload(active_profile)
+    with st.expander("เป้าหมายธุรกิจ", expanded=False):
+        saved_goal = _show_business_os(
+            active_profile,
+            business_os_state,
+            active_goal,
+            goal_status,
+            show_plan=False,
+            show_goal=True,
+        )
 if saved_goal:
     save_business_event(
         store_name=active_profile["store_name"],
@@ -3916,11 +4208,18 @@ if saved_goal:
         )
     st.sidebar.success("บันทึกเป้าหมายร้านแล้ว")
 
-developer_mode = st.sidebar.checkbox(
-    "โหมดทีมพัฒนา",
-    value=bool(st.session_state.get("developer_mode")),
-)
-st.session_state["developer_mode"] = developer_mode
+with st.sidebar.expander("Developer diagnostics", expanded=False):
+    developer_mode = st.checkbox(
+        "โหมดทีมพัฒนา",
+        value=bool(st.session_state.get("developer_mode")),
+    )
+    if developer_mode:
+        st.caption("เปิดข้อมูลระบบสำหรับทีมพัฒนา")
+        st.caption(f"app_run_count: {st.session_state.get('app_run_count', 0)}")
+        st.caption(f"last_rerun_reason: {st.session_state.get('last_rerun_reason') or '-'}")
+        st.caption(f"session_state_changed_this_run: {bool(st.session_state.get('session_state_changed_this_run'))}")
+        st.caption(f"profile_saved_this_run: {bool(st.session_state.get('profile_saved_this_run'))}")
+safe_set_session_state("developer_mode", developer_mode)
 _update_application_section("developer", {"developer_mode": bool(developer_mode)})
 
 llm_available = is_llm_available(demo_mode=demo_mode)
@@ -3959,3 +4258,19 @@ _show_chat_companion(
     goal_status,
     business_os_state,
 )
+
+with action_slot.container():
+    next_daily, next_calendar, next_sales = _show_ai_ranked_actions(
+        companion,
+        business_os_state,
+        compact=True,
+    )
+    if next_daily:
+        safe_set_session_state("pending_daily_action", True)
+        _request_rerun("quick_action_post_button")
+    if next_calendar:
+        safe_set_session_state("pending_calendar_action", True)
+        _request_rerun("quick_action_calendar_button")
+    if next_sales:
+        safe_set_session_state("pending_sales_action", True)
+        _request_rerun("quick_action_sales_button")
