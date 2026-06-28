@@ -603,6 +603,98 @@
           }
         }
       ]
+    },
+    "audit shop": {
+      "store_name": "Audit Shop",
+      "events": [
+        {
+          "created_at": "2026-06-28T17:50:20",
+          "event_type": "diagnosis",
+          "summary": "Audit Shop มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+          "metadata": {
+            "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+            "urgency_level": "กลาง"
+          }
+        },
+        {
+          "created_at": "2026-06-28T17:50:34",
+          "event_type": "diagnosis",
+          "summary": "Audit Shop มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+          "metadata": {
+            "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+            "urgency_level": "กลาง"
+          }
+        },
+        {
+          "created_at": "2026-06-28T17:50:55",
+          "event_type": "diagnosis",
+          "summary": "Audit Shop มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+          "metadata": {
+            "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+            "urgency_level": "กลาง"
+          }
+        },
+        {
+          "created_at": "2026-06-28T17:51:01",
+          "event_type": "chat_question",
+          "summary": "??????",
+          "metadata": {
+            "intent": "OTHER",
+            "business_intent": null,
+            "conversation_mode": "casual",
+            "llm_enabled": true,
+            "llm_used": false
+          }
+        },
+        {
+          "created_at": "2026-06-28T17:51:07",
+          "event_type": "chat_question",
+          "summary": "??????????",
+          "metadata": {
+            "intent": "OTHER",
+            "business_intent": null,
+            "conversation_mode": "casual",
+            "llm_enabled": true,
+            "llm_used": false
+          }
+        },
+        {
+          "created_at": "2026-06-28T17:51:10",
+          "event_type": "chat_question",
+          "summary": "???????????????",
+          "metadata": {
+            "intent": "OTHER",
+            "business_intent": null,
+            "conversation_mode": "casual",
+            "llm_enabled": true,
+            "llm_used": false
+          }
+        },
+        {
+          "created_at": "2026-06-28T17:51:12",
+          "event_type": "chat_question",
+          "summary": "???????????",
+          "metadata": {
+            "intent": "OTHER",
+            "business_intent": null,
+            "conversation_mode": "casual",
+            "llm_enabled": true,
+            "llm_used": false
+          }
+        },
+        {
+          "created_at": "2026-06-28T17:51:15",
+          "event_type": "chat_question",
+          "summary": "???????",
+          "metadata": {
+            "intent": "OTHER",
+            "business_intent": null,
+            "conversation_mode": "casual",
+            "llm_enabled": true,
+            "llm_used": false
+          }
+        }
+      ]
     }
   }
 }

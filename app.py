@@ -751,13 +751,13 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
         response_empty=response_empty,
         pipeline_error=error_text,
     )
-    st.session_state["chat_pipeline_in_progress"] = False
 
     if rendered_user:
         with st.chat_message("user"):
             _render_markdown(last_chat_input)
     with st.chat_message("assistant"):
         _render_assistant_message(fallback_reply)
+    st.session_state["chat_pipeline_in_progress"] = False
 
 
 def _sync_global_application_state() -> dict:
@@ -972,7 +972,6 @@ def _finalize_ai_pipeline_debug_trace(
             response_empty=response_empty,
             pipeline_error=None,
         )
-        st.session_state["chat_pipeline_in_progress"] = False
         return None
     source = "generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source
     trace["workflow"] = _workflow_debug_state(workflow_extra)
@@ -984,7 +983,6 @@ def _finalize_ai_pipeline_debug_trace(
         response_empty=response_empty,
         pipeline_error=None,
     )
-    st.session_state["chat_pipeline_in_progress"] = False
     if st.session_state.get("developer_mode"):
         print("AI Pipeline Debug Trace:")
         print(json.dumps(trace, ensure_ascii=False, indent=2, default=str))
@@ -3081,9 +3079,9 @@ def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) ->
         response_empty=response_empty,
         pipeline_error=None,
     )
-    st.session_state["chat_pipeline_in_progress"] = False
     with st.chat_message("assistant"):
         _render_assistant_message(reply)
+    st.session_state["chat_pipeline_in_progress"] = False
 
 
 def _show_feedback_summary() -> None:
@@ -3430,11 +3428,11 @@ def _show_chat_companion(
             response_empty=reset_empty,
             pipeline_error=None,
         )
-        st.session_state["chat_pipeline_in_progress"] = False
         with st.chat_message("user"):
             _render_markdown(user_message)
         with st.chat_message("assistant"):
             _render_assistant_message(reset_reply)
+        st.session_state["chat_pipeline_in_progress"] = False
         return
 
     previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
@@ -3534,6 +3532,7 @@ def _show_chat_companion(
         finalize_debug("direct_conversation_response", direct_reply)
         with st.chat_message("assistant"):
             _render_assistant_message(direct_reply)
+        st.session_state["chat_pipeline_in_progress"] = False
         return
 
     if detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
@@ -3626,6 +3625,7 @@ def _show_chat_companion(
         finalize_debug("direct_conversation_response", simple_reply)
         with st.chat_message("assistant"):
             _render_assistant_message(simple_reply)
+        st.session_state["chat_pipeline_in_progress"] = False
         return
 
     if conversation_intent == "PRODUCT_FEEDBACK":
@@ -3650,6 +3650,7 @@ def _show_chat_companion(
         finalize_debug(product_source, response["reply"], {"workflow_handler": "product_feedback"})
         with st.chat_message("assistant"):
             _render_assistant_message(response["reply"])
+        st.session_state["chat_pipeline_in_progress"] = False
         return
 
     use_business_context = should_use_business_context(conversation_intent)
@@ -3869,6 +3870,7 @@ def _show_chat_companion(
     with st.chat_message("assistant"):
         _render_assistant_message(response["reply"])
         _render_assistant_footer(assistant_message)
+    st.session_state["chat_pipeline_in_progress"] = False
     if demo_ai_success:
         st.success("✨ คุณได้ทดลองใช้ AI แล้ว ลองดูภาพรวมธุรกิจ แผนงานวันนี้ หรือกดสร้างโพสต์ต่อได้เลย")
 
