@@ -466,6 +466,8 @@ def _tone_index(tone: str) -> int:
 
 
 HTML_FRAGMENT_RE = re.compile(r"</?(?:div|section|span|p|h[1-6]|style)\b", re.IGNORECASE)
+EMPTY_CHAT_RESPONSE_FALLBACK = "ผมรับข้อความแล้วครับ แต่ยังสร้างคำตอบไม่ได้ ลองบอกเพิ่มอีกนิดได้ไหมครับ"
+CHAT_DIAGNOSTIC_UNSET = object()
 
 
 def _render_markdown(content: str) -> None:
@@ -650,7 +652,8 @@ def _render_assistant_indicator(pulse: bool = False) -> None:
 
 def _render_assistant_message(content: str, stream: bool = True) -> None:
     _render_assistant_indicator()
-    _render_assistant_response(_clean_chat_reply(content), stream=stream)
+    reply = clean_response(content)
+    _render_assistant_response(reply or EMPTY_CHAT_RESPONSE_FALLBACK, stream=stream)
 
 
 def _get_application_state() -> dict:
@@ -679,6 +682,84 @@ def _request_rerun(reason: str) -> None:
     st.rerun()
 
 
+def _chat_history_snapshot() -> list[dict]:
+    return [dict(message) for message in st.session_state.get("chat_history", [])]
+
+
+def _update_chat_developer_diagnostics(
+    *,
+    last_chat_input=CHAT_DIAGNOSTIC_UNSET,
+    response_source=CHAT_DIAGNOSTIC_UNSET,
+    response_empty=CHAT_DIAGNOSTIC_UNSET,
+    pipeline_error=CHAT_DIAGNOSTIC_UNSET,
+    llm_decision=CHAT_DIAGNOSTIC_UNSET,
+) -> None:
+    if last_chat_input is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_chat_input"] = last_chat_input
+    if response_source is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_response_source"] = response_source
+    if response_empty is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_response_empty"] = bool(response_empty)
+    if pipeline_error is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_pipeline_error"] = pipeline_error
+    if llm_decision is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_llm_decision"] = llm_decision
+    st.session_state["chat_history_count"] = len(st.session_state.get("chat_history", []))
+    developer_state = {
+        "last_chat_input": st.session_state.get("last_chat_input"),
+        "last_response_source": st.session_state.get("last_response_source"),
+        "last_response_empty": bool(st.session_state.get("last_response_empty")),
+        "last_pipeline_error": st.session_state.get("last_pipeline_error"),
+        "last_llm_decision": st.session_state.get("last_llm_decision"),
+        "chat_history_count": st.session_state.get("chat_history_count", 0),
+    }
+    _update_application_section("developer", developer_state)
+
+
+def _resolve_assistant_reply(reply: str | None, response_source: str) -> tuple[str, str, bool]:
+    final_reply = clean_response(reply)
+    if final_reply:
+        return final_reply, response_source, False
+    return EMPTY_CHAT_RESPONSE_FALLBACK, "empty_response_fallback", True
+
+
+def _handle_chat_pipeline_exception(error: Exception) -> None:
+    error_text = f"{type(error).__name__}: {error}"
+    if not st.session_state.get("chat_pipeline_in_progress"):
+        _update_chat_developer_diagnostics(pipeline_error=error_text)
+        return
+
+    fallback_reply, response_source, response_empty = _resolve_assistant_reply(None, "empty_response_fallback")
+    history = st.session_state.setdefault("chat_history", [])
+    last_chat_input = st.session_state.get("last_chat_input")
+    rendered_user = False
+
+    if last_chat_input and not (
+        history
+        and history[-1].get("role") == "user"
+        and history[-1].get("content") == last_chat_input
+    ):
+        history.append({"role": "user", "content": last_chat_input})
+        rendered_user = True
+
+    if not history or history[-1].get("role") != "assistant":
+        history.append({"role": "assistant", "content": fallback_reply, "show_business_insights": False})
+
+    _sync_chat_history_to_application_state()
+    _update_chat_developer_diagnostics(
+        response_source=response_source,
+        response_empty=response_empty,
+        pipeline_error=error_text,
+    )
+    st.session_state["chat_pipeline_in_progress"] = False
+
+    if rendered_user:
+        with st.chat_message("user"):
+            _render_markdown(last_chat_input)
+    with st.chat_message("assistant"):
+        _render_assistant_message(fallback_reply)
+
+
 def _sync_global_application_state() -> dict:
     state = _get_application_state()
     application_state.clear()
@@ -704,7 +785,7 @@ def _sync_chat_history_to_application_state() -> None:
         "conversation",
         {
             "conversation_id": st.session_state.get("conversation_id"),
-            "chat_history": st.session_state.get("chat_history", []),
+            "chat_history": _chat_history_snapshot(),
         },
     )
 
@@ -718,7 +799,7 @@ def _sync_session_to_application_state() -> dict:
         **(state.get("conversation") or {}),
         **conversation_state,
         "conversation_id": st.session_state.get("conversation_id"),
-        "chat_history": st.session_state.get("chat_history", []),
+        "chat_history": _chat_history_snapshot(),
         "pending_followup": st.session_state.get("pending_followup"),
     }
     next_state["workflow"] = {
@@ -884,13 +965,26 @@ def _finalize_ai_pipeline_debug_trace(
     final_reply: str | None,
     workflow_extra: dict | None = None,
 ) -> dict | None:
+    final_reply, response_source, response_empty = _resolve_assistant_reply(final_reply, response_source)
     if not trace:
+        _update_chat_developer_diagnostics(
+            response_source=response_source,
+            response_empty=response_empty,
+            pipeline_error=None,
+        )
+        st.session_state["chat_pipeline_in_progress"] = False
         return None
     source = "generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source
     trace["workflow"] = _workflow_debug_state(workflow_extra)
     trace["response_source"] = source
     trace["final_response_preview"] = str(final_reply or "").strip()[:500]
     st.session_state["ai_pipeline_debug_trace"] = trace
+    _update_chat_developer_diagnostics(
+        response_source=source,
+        response_empty=response_empty,
+        pipeline_error=None,
+    )
+    st.session_state["chat_pipeline_in_progress"] = False
     if st.session_state.get("developer_mode"):
         print("AI Pipeline Debug Trace:")
         print(json.dumps(trace, ensure_ascii=False, indent=2, default=str))
@@ -958,6 +1052,13 @@ def _init_session_state() -> None:
     st.session_state.setdefault("last_ai_state", None)
     st.session_state.setdefault("pending_followup", None)
     st.session_state.setdefault("ai_pipeline_debug_trace", {})
+    st.session_state.setdefault("last_chat_input", None)
+    st.session_state.setdefault("last_response_source", None)
+    st.session_state.setdefault("last_response_empty", False)
+    st.session_state.setdefault("last_pipeline_error", None)
+    st.session_state.setdefault("last_llm_decision", None)
+    st.session_state.setdefault("chat_history_count", 0)
+    st.session_state.setdefault("chat_pipeline_in_progress", False)
     st.session_state.setdefault("active_store_name", "")
     st.session_state.setdefault("last_diagnosis_signature", "")
     st.session_state.setdefault("developer_mode", False)
@@ -2346,6 +2447,8 @@ def _structure_assistant_reply(reply: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         return text
+    if len(lines) <= 1:
+        return text
 
     first = lines[0]
     rest = lines[1:] or [first]
@@ -2968,10 +3071,17 @@ def _handle_receipt_workflow(user_message: str) -> dict:
 
 
 def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) -> None:
+    reply, response_source, response_empty = _resolve_assistant_reply(reply, "workflow_response")
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
     st.session_state["chat_history"].append(assistant_message)
     _sync_chat_history_to_application_state()
+    _update_chat_developer_diagnostics(
+        response_source=response_source,
+        response_empty=response_empty,
+        pipeline_error=None,
+    )
+    st.session_state["chat_pipeline_in_progress"] = False
     with st.chat_message("assistant"):
         _render_assistant_message(reply)
 
@@ -3299,13 +3409,28 @@ def _show_chat_companion(
     if not user_message:
         return
 
+    _update_chat_developer_diagnostics(
+        last_chat_input=user_message,
+        response_source=None,
+        response_empty=False,
+        pipeline_error=None,
+    )
+    st.session_state["chat_pipeline_in_progress"] = True
+
     if _is_reset_command(user_message):
         _reset_chat_session()
         reset_reply = "เริ่มบทสนทนาใหม่แล้วครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
+        reset_reply, reset_source, reset_empty = _resolve_assistant_reply(reset_reply, "reset_response")
         _update_conversation_state_after_assistant(reset_reply, "GREETING")
         st.session_state["chat_history"].append({"role": "user", "content": user_message})
         st.session_state["chat_history"].append({"role": "assistant", "content": reset_reply})
         _sync_chat_history_to_application_state()
+        _update_chat_developer_diagnostics(
+            response_source=reset_source,
+            response_empty=reset_empty,
+            pipeline_error=None,
+        )
+        st.session_state["chat_pipeline_in_progress"] = False
         with st.chat_message("user"):
             _render_markdown(user_message)
         with st.chat_message("assistant"):
@@ -3510,6 +3635,10 @@ def _show_chat_companion(
             previous_user_message=previous_user_message,
             assistant_reply=assistant_reply,
         )
+        response["reply"], product_source, product_empty = _resolve_assistant_reply(
+            response.get("reply"),
+            "planner_response",
+        )
         assistant_message = {
             "role": "assistant",
             "content": response["reply"],
@@ -3518,7 +3647,7 @@ def _show_chat_companion(
         _update_conversation_state_after_assistant(response["reply"], conversation_intent, "Product Feedback")
         st.session_state["chat_history"].append(assistant_message)
         _sync_chat_history_to_application_state()
-        finalize_debug("planner_response", response["reply"], {"workflow_handler": "product_feedback"})
+        finalize_debug(product_source, response["reply"], {"workflow_handler": "product_feedback"})
         with st.chat_message("assistant"):
             _render_assistant_message(response["reply"])
         return
@@ -3582,6 +3711,7 @@ def _show_chat_companion(
         current_task=(route.get("planner_output") or {}).get("task_type"),
     )
     llm_decision = decide_llm_usage(llm_reasoning_context)
+    _update_chat_developer_diagnostics(llm_decision=llm_decision)
     _update_application_section("developer", {"llm_decision": llm_decision})
     debug_trace["llm_decision"] = llm_decision
     if llm_decision.get("should_use_llm"):
@@ -3633,15 +3763,20 @@ def _show_chat_companion(
             with st.spinner(spinner_text):
                 llm_attempted = True
                 started_at = time.perf_counter()
-                llm_reply = generate_llm_response(
-                    user_message,
-                    context=llm_context,
-                    demo_mode=demo_mode,
-                )
+                try:
+                    llm_reply = generate_llm_response(
+                        user_message,
+                        context=llm_context,
+                        demo_mode=demo_mode,
+                    )
+                except Exception as llm_error:
+                    llm_reply = None
+                    llm_decision["error"] = f"{type(llm_error).__name__}: {llm_error}"
                 llm_decision["llm_latency_ms"] = int((time.perf_counter() - started_at) * 1000)
                 llm_decision["token_usage"] = {
                     "estimated_prompt_chars": len(json.dumps(llm_context, ensure_ascii=False))
                 }
+                _update_chat_developer_diagnostics(llm_decision=llm_decision)
                 _update_application_section("developer", {"llm_decision": llm_decision})
             if llm_reply:
                 record_llm_call(st, 0.002 if demo_mode else 0.01)
@@ -3700,12 +3835,17 @@ def _show_chat_companion(
             business_diagnosis=diagnosis or {},
             business_os=business_os_state or {},
         )
-    response["reply"] = _clean_chat_reply(response["reply"])
+    response["reply"], response_source, response_empty = _resolve_assistant_reply(
+        _clean_chat_reply(response.get("reply")),
+        response_source,
+    )
     guarded_response = guard_response(response["reply"], task_route, st.session_state["chat_history"])
     if guarded_response.get("changed"):
-        response["reply"] = _clean_chat_reply(guarded_response["reply"])
+        response["reply"], response_source, response_empty = _resolve_assistant_reply(
+            _clean_chat_reply(guarded_response.get("reply")),
+            "response_guard",
+        )
         response["intent"] = guarded_response.get("intent") or response.get("intent")
-        response_source = "response_guard"
     if response.get("suggested_action"):
         response["suggested_action"] = localize_internal_labels(response["suggested_action"])
     if response.get("related_feature"):
@@ -4219,6 +4359,13 @@ with st.sidebar.expander("Developer diagnostics", expanded=False):
         st.caption(f"last_rerun_reason: {st.session_state.get('last_rerun_reason') or '-'}")
         st.caption(f"session_state_changed_this_run: {bool(st.session_state.get('session_state_changed_this_run'))}")
         st.caption(f"profile_saved_this_run: {bool(st.session_state.get('profile_saved_this_run'))}")
+        st.caption(f"last_chat_input: {st.session_state.get('last_chat_input') or '-'}")
+        st.caption(f"last_response_source: {st.session_state.get('last_response_source') or '-'}")
+        st.caption(f"last_response_empty: {bool(st.session_state.get('last_response_empty'))}")
+        st.caption(f"last_pipeline_error: {st.session_state.get('last_pipeline_error') or '-'}")
+        st.caption(f"chat_history_count: {st.session_state.get('chat_history_count', 0)}")
+        if st.session_state.get("last_llm_decision"):
+            st.json({"last_llm_decision": st.session_state.get("last_llm_decision")})
 safe_set_session_state("developer_mode", developer_mode)
 _update_application_section("developer", {"developer_mode": bool(developer_mode)})
 
@@ -4250,14 +4397,23 @@ _update_application_section(
 _show_feedback_summary()
 _show_developer_alert_center()
 
-_show_chat_companion(
-    active_profile,
-    business_insight,
-    recent_topics,
-    diagnosis,
-    goal_status,
-    business_os_state,
-)
+try:
+    _show_chat_companion(
+        active_profile,
+        business_insight,
+        recent_topics,
+        diagnosis,
+        goal_status,
+        business_os_state,
+    )
+except Exception as chat_pipeline_error:
+    if st.session_state.get("chat_pipeline_in_progress"):
+        _handle_chat_pipeline_exception(chat_pipeline_error)
+    else:
+        _update_chat_developer_diagnostics(
+            pipeline_error=f"{type(chat_pipeline_error).__name__}: {chat_pipeline_error}"
+        )
+        raise
 
 with action_slot.container():
     next_daily, next_calendar, next_sales = _show_ai_ranked_actions(
