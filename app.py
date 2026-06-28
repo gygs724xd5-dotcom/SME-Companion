@@ -1055,8 +1055,8 @@ def _show_logout_control() -> None:
     owner_id = _current_owner_id()
     if not owner_id:
         return
-    st.sidebar.caption(f"Signed in: {owner_id}")
-    if st.sidebar.button("Logout", use_container_width=True):
+    st.caption(f"เข้าสู่ระบบแล้ว: {owner_id}")
+    if st.button("ออกจากระบบ", use_container_width=True):
         st.session_state["auth_session"] = {}
         st.session_state["auth_owner_id"] = None
         st.session_state["authenticated"] = False
@@ -1482,43 +1482,46 @@ def _show_business_os(
     os_state: dict | None,
     active_goal: dict | None,
     goal_status: dict | None,
+    *,
+    show_plan: bool = True,
+    show_goal: bool = True,
 ) -> dict | None:
-    with st.expander("แผนงานวันนี้", expanded=False):
-        if not profile or not os_state:
-            st.info("กรอกข้อมูลร้านเพื่อเปิดระบบบริหารร้านและตั้งเป้าหมายร้าน")
-            return None
+    if show_plan:
+        with st.expander("แผนงานวันนี้", expanded=False):
+            if not profile or not os_state:
+                st.info("กรอกข้อมูลร้านเพื่อเปิดระบบบริหารร้านและตั้งเป้าหมายร้าน")
+            else:
+                score_col, status_col = st.columns([1, 2])
+                with score_col.container(border=True):
+                    st.metric("คะแนนสุขภาพธุรกิจ", f"{os_state['business_health_score']}%")
+                with status_col.container(border=True):
+                    st.markdown("**สถานะร้านตอนนี้**")
+                    _render_markdown(os_state["operating_status"])
 
-        score_col, status_col = st.columns([1, 2])
-        with score_col.container(border=True):
-            st.metric("คะแนนสุขภาพธุรกิจ", f"{os_state['business_health_score']}%")
-        with status_col.container(border=True):
-            st.markdown("**สถานะร้านตอนนี้**")
-            _render_markdown(os_state["operating_status"])
+                priority_col, risk_col = st.columns(2)
+                with priority_col.container(border=True):
+                    st.markdown("**สิ่งสำคัญที่สุดวันนี้**")
+                    _render_markdown(os_state["today_action"])
+                with risk_col.container(border=True):
+                    st.markdown("**ความเสี่ยงหลัก**")
+                    _render_markdown(os_state["current_risk"])
 
-        priority_col, risk_col = st.columns(2)
-        with priority_col.container(border=True):
-            st.markdown("**สิ่งสำคัญที่สุดวันนี้**")
-            _render_markdown(os_state["today_action"])
-        with risk_col.container(border=True):
-            st.markdown("**ความเสี่ยงหลัก**")
-            _render_markdown(os_state["current_risk"])
+                opportunity_col, focus_col = st.columns(2)
+                with opportunity_col.container(border=True):
+                    st.markdown("**โอกาสเติบโต**")
+                    _render_markdown(os_state["growth_opportunity"])
+                with focus_col.container(border=True):
+                    st.markdown("**เป้าหมายสัปดาห์นี้**")
+                    _render_markdown(os_state["weekly_focus"])
 
-        opportunity_col, focus_col = st.columns(2)
-        with opportunity_col.container(border=True):
-            st.markdown("**โอกาสเติบโต**")
-            _render_markdown(os_state["growth_opportunity"])
-        with focus_col.container(border=True):
-            st.markdown("**เป้าหมายสัปดาห์นี้**")
-            _render_markdown(os_state["weekly_focus"])
+                if goal_status:
+                    st.progress(goal_status["progress_pct"] / 100)
+                    st.caption(
+                        f"ความคืบหน้าเป้าหมาย {goal_status['goal_label']}: {goal_status['progress_pct']}% "
+                        f"| ยังขาด {_format_baht(goal_status['gap_to_goal'])} | ความเสี่ยง {goal_status['goal_risk']}"
+                    )
 
-        if goal_status:
-            st.progress(goal_status["progress_pct"] / 100)
-            st.caption(
-                f"ความคืบหน้าเป้าหมาย {goal_status['goal_label']}: {goal_status['progress_pct']}% "
-                f"| ยังขาด {_format_baht(goal_status['gap_to_goal'])} | ความเสี่ยง {goal_status['goal_risk']}"
-            )
-
-    if not profile:
+    if not profile or not show_goal:
         return None
 
     goal_options = {
@@ -1736,7 +1739,7 @@ def _html_escape(value: object) -> str:
     )
 
 
-def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
+def _show_dashboard(companion: dict | None, os_state: dict | None, *, compact: bool = False) -> None:
     st.subheader("ผู้ช่วยธุรกิจของคุณ")
     if not companion:
         st.info("กรอกข้อมูลร้านก่อนครับ แล้วผมจะสรุปสุขภาพร้าน สิ่งที่ควรทำ โอกาส และสิ่งที่ต้องระวังให้")
@@ -1781,6 +1784,11 @@ def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
         unsafe_allow_html=True,
     )
 
+    if compact:
+        if risk:
+            st.warning(f"สิ่งที่ควรระวังวันนี้: {risk}")
+        return
+
     with st.container(border=True):
         st.markdown("##### สิ่งที่ควรโฟกัสวันนี้")
         st.markdown(f"**สิ่งที่ควรทำ:** {today_action}")
@@ -1800,8 +1808,8 @@ def _show_dashboard(companion: dict | None, os_state: dict | None) -> None:
         st.markdown(f"**เป้าหมายสัปดาห์นี้:** {weekly_focus}")
 
 
-def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None) -> tuple[bool, bool, bool]:
-    st.markdown("### สิ่งที่ AI แนะนำให้ทำ")
+def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None, *, compact: bool = False) -> tuple[bool, bool, bool]:
+    st.markdown("### ทางลัดที่ใช้บ่อย" if compact else "### สิ่งที่ AI แนะนำให้ทำ")
     if not companion:
         st.info("สร้างหรือเลือกร้านก่อนครับ แล้วผมจะเรียงสิ่งที่ควรทำถัดไปให้")
         return False, False, False
@@ -1816,6 +1824,15 @@ def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None) -> tu
         ("วางแผนโฟกัส 7 วัน", weekly_focus, "ช่วยให้รู้ว่าควรทำอะไรก่อนหลังในแต่ละวัน", max(70, confidence - 3), "กลาง", "สร้างแผน 7 วัน"),
         ("วางแผนเพิ่มยอดขาย", opportunity, "ช่วยให้มีแคมเปญขายที่ชัดเจนและทำตามได้ทันที", max(68, confidence - 6), "กลาง", "วางแผนเพิ่มยอดขาย"),
     ]
+
+    if compact:
+        cols = st.columns(3)
+        clicks = []
+        for index, (_, reason, _, _, _, button_label) in enumerate(actions):
+            with cols[index]:
+                clicks.append(st.button(button_label, key=f"ai_quick_action_{index}", use_container_width=True))
+                st.caption(reason)
+        return clicks[0], clicks[1], clicks[2]
 
     cols = st.columns(3)
     clicks = []
@@ -3433,7 +3450,6 @@ def _show_chat_companion(
 _init_session_state()
 
 _show_auth_gate()
-_show_logout_control()
 _show_demo_entry()
 
 st.markdown(
@@ -3453,11 +3469,44 @@ demo_history = _content_examples_to_history(st.session_state.get("content_exampl
 demo_topics = [item["topic"] for item in demo_history if item.get("topic")]
 manual_profile = _manual_store_profile()
 
-store_name = (demo_profile or {}).get("store_name", "") if demo_mode else st.text_input(
-    "ชื่อร้าน",
-    value=(manual_profile or {}).get("store_name", ""),
-    placeholder="เช่น บ้านกาแฟสุขใจ",
-)
+saved_profile = demo_profile or manual_profile
+profile_for_form = saved_profile or {}
+management_sidebar = st.sidebar.container()
+settings_sidebar = st.sidebar.container()
+
+with settings_sidebar:
+    st.markdown("### ตั้งค่า")
+    with st.expander("ข้อมูลร้าน", expanded=not bool(saved_profile)):
+        store_name = (demo_profile or {}).get("store_name", "") if demo_mode else st.text_input(
+            "ชื่อร้าน",
+            value=(manual_profile or {}).get("store_name", ""),
+            placeholder="เช่น บ้านกาแฟสุขใจ",
+        )
+        store_type = st.text_input(
+            "ประเภทร้านค้า",
+            value=profile_for_form.get("store_type", ""),
+            placeholder="เช่น ร้านกาแฟ, ร้านเสื้อผ้า, ร้านอาหารฮาลาล",
+        )
+        product = st.text_input(
+            "สินค้า",
+            value=profile_for_form.get("product", ""),
+            placeholder="เช่น กาแฟสกัดเย็น, เสื้อเชิ้ต, ข้าวกล่อง",
+        )
+        target_customer = st.text_input(
+            "กลุ่มลูกค้าเป้าหมาย",
+            value=profile_for_form.get("target_customer", profile_for_form.get("customer", "")),
+            placeholder="เช่น พนักงานออฟฟิศ, นักศึกษา, คุณแม่",
+        )
+        tone = st.selectbox(
+            "โทนการสื่อสาร",
+            TONE_OPTIONS,
+            index=_tone_index(profile_for_form.get("tone", "")) if profile_for_form else 0,
+        )
+    with st.expander("จัดการข้อมูลร้าน", expanded=False):
+        _show_manual_store_storage_caption()
+        _show_clear_manual_store_control()
+    with st.expander("ออกจากระบบ", expanded=False):
+        _show_logout_control()
 
 if demo_mode and demo_profile:
     store_name = demo_profile.get("store_name", "")
@@ -3473,49 +3522,11 @@ if current_store_name != st.session_state["active_store_name"]:
     if previous_store_name and current_store_name:
         _reset_chat_session()
 
-saved_profile = demo_profile or manual_profile
 recent_history = demo_history or (get_content_history(store_name) if store_name.strip() else [])
 recent_topics = demo_topics or (get_recent_topics(store_name) if store_name.strip() else [])
 
 dashboard_slot = st.empty()
 action_slot = st.empty()
-brain_slot = st.empty()
-journey_slot = st.empty()
-
-_show_manual_store_storage_caption()
-_show_clear_manual_store_control()
-
-store_info_expander = st.sidebar.expander("Store Information", expanded=not bool(saved_profile)) if saved_profile else st.expander("ข้อมูลร้าน", expanded=True)
-with store_info_expander:
-    store_type = st.text_input(
-        "ประเภทร้านค้า",
-        value=saved_profile.get("store_type", "") if saved_profile else "",
-        placeholder="เช่น ร้านกาแฟ, ร้านเสื้อผ้า, ร้านอาหารฮาลาล",
-    )
-    product = st.text_input(
-        "สินค้า",
-        value=saved_profile.get("product", "") if saved_profile else "",
-        placeholder="เช่น กาแฟสกัดเย็น, เสื้อเชิ้ต, ข้าวกล่อง",
-    )
-    target_customer = st.text_input(
-        "กลุ่มลูกค้าเป้าหมาย",
-        value=saved_profile.get("target_customer", saved_profile.get("customer", "")) if saved_profile else "",
-        placeholder="เช่น พนักงานออฟฟิศ, นักศึกษา, คุณแม่",
-    )
-    tone = st.selectbox(
-        "โทนการสื่อสาร",
-        TONE_OPTIONS,
-        index=_tone_index(saved_profile.get("tone", "")) if saved_profile else 0,
-    )
-
-st.markdown(
-    """
-<div class="sme-action-area">
-    <div class="sme-section-title" style="margin-top: 0;">เริ่มทำงานกับร้านวันนี้</div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
 daily_submitted = False
 calendar_submitted = False
 sales_submitted = False
@@ -3591,13 +3602,13 @@ business_os_state = (
     )
 )
 with dashboard_slot.container():
-    _show_dashboard(companion, business_os_state)
+    _show_dashboard(companion, business_os_state, compact=True)
 with action_slot.container():
-    daily_submitted, calendar_submitted, sales_submitted = _show_ai_ranked_actions(companion, business_os_state)
-with brain_slot.container():
-    _show_product_brain_card(active_profile, business_insight, diagnosis)
-with journey_slot.container():
-    _show_business_journey(active_profile, active_goal, business_os_state)
+    daily_submitted, calendar_submitted, sales_submitted = _show_ai_ranked_actions(
+        companion,
+        business_os_state,
+        compact=True,
+    )
 _update_application_section(
     "ui",
     {
@@ -3849,14 +3860,31 @@ if (
     )
 
 with dashboard_slot.container():
-    _show_dashboard(companion, business_os_state)
-_show_daily_content()
-_show_calendar()
-with st.sidebar:
-    _show_receipt_upload(active_profile)
+    _show_dashboard(companion, business_os_state, compact=True)
+with management_sidebar:
+    st.markdown("### การจัดการร้าน")
     _show_business_insights(active_profile, recent_history)
+    saved_goal = _show_business_os(
+        active_profile,
+        business_os_state,
+        active_goal,
+        goal_status,
+        show_plan=True,
+        show_goal=False,
+    )
+    _show_daily_content()
+    _show_calendar()
+    _show_revenue_engine()
+    _show_receipt_upload(active_profile)
+    saved_goal = _show_business_os(
+        active_profile,
+        business_os_state,
+        active_goal,
+        goal_status,
+        show_plan=False,
+        show_goal=True,
+    )
     _show_recent_history(recent_history)
-    saved_goal = _show_business_os(active_profile, business_os_state, active_goal, goal_status)
 if saved_goal:
     save_business_event(
         store_name=active_profile["store_name"],
@@ -3886,10 +3914,7 @@ if saved_goal:
             business_diagnosis=diagnosis or {},
             business_os=business_os_state or {},
         )
-    st.success("บันทึกเป้าหมายร้านแล้ว")
-with st.sidebar:
-    st.caption("Production account and store controls.")
-_show_revenue_engine()
+    st.sidebar.success("บันทึกเป้าหมายร้านแล้ว")
 
 developer_mode = st.sidebar.checkbox(
     "โหมดทีมพัฒนา",
@@ -3909,11 +3934,11 @@ if developer_mode:
             "llm_decision": llm_decision,
         },
     )
-    st.caption(f"LLM provider available: {bool(llm_available)}")
+    st.sidebar.caption(f"LLM provider available: {bool(llm_available)}")
     if llm_decision:
-        st.caption(f"LLM decision: {llm_decision.get('response_mode')} - {llm_decision.get('reason')}")
+        st.sidebar.caption(f"LLM decision: {llm_decision.get('response_mode')} - {llm_decision.get('reason')}")
     elif not llm_available:
-        st.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
+        st.sidebar.caption("ยังไม่ได้ตั้งค่ากุญแจเชื่อมต่อสำหรับผู้ช่วย AI ระบบจะใช้แชทแบบกฎพื้นฐานตามเดิม")
 
 _update_application_section(
     "developer",
