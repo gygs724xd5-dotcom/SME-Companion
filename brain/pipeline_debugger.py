@@ -79,6 +79,9 @@ def _key_state(overrides: dict | None = None) -> dict:
         "workflow_state_v2.collected_fields": deepcopy(workflow_state.get("collected_fields") or {}),
         "workflow_state_v2.missing_fields": list(workflow_state.get("missing_fields") or []),
         "response_source": _safe_get(session, "last_response_source") or developer.get("last_response_source"),
+        "response_mode": _safe_get(session, "last_response_mode") or developer.get("response_mode"),
+        "reply_builder": _safe_get(session, "last_reply_builder") or developer.get("reply_builder"),
+        "natural_response": _safe_get(session, "last_natural_response") or developer.get("natural_response"),
         "last_response_empty": bool(_safe_get(session, "last_response_empty") or developer.get("last_response_empty")),
         "last_pipeline_error": _safe_get(session, "last_pipeline_error") or developer.get("last_pipeline_error"),
     }

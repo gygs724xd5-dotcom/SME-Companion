@@ -75,6 +75,7 @@ from brain.promotion_engine import get_promotion_idea
 from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.response_intelligence_engine import guard_response, select_planner_first_response
+from brain.response_mode_engine import determine_response_mode
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from brain.task_router import build_task_route, developer_diagnostics
@@ -84,6 +85,7 @@ from brain.pipeline_debugger import (
     get_pipeline_trace,
     start_pipeline_trace,
 )
+from brain.workflow_reply_builder import build_workflow_reply, prepare_content_collection_state
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
 from feedback.chatgpt_export_builder import (
@@ -719,6 +721,9 @@ def _update_chat_developer_diagnostics(
     response_empty=CHAT_DIAGNOSTIC_UNSET,
     pipeline_error=CHAT_DIAGNOSTIC_UNSET,
     llm_decision=CHAT_DIAGNOSTIC_UNSET,
+    response_mode=CHAT_DIAGNOSTIC_UNSET,
+    reply_builder=CHAT_DIAGNOSTIC_UNSET,
+    natural_response=CHAT_DIAGNOSTIC_UNSET,
 ) -> None:
     if last_chat_input is not CHAT_DIAGNOSTIC_UNSET:
         st.session_state["last_chat_input"] = last_chat_input
@@ -730,6 +735,12 @@ def _update_chat_developer_diagnostics(
         st.session_state["last_pipeline_error"] = pipeline_error
     if llm_decision is not CHAT_DIAGNOSTIC_UNSET:
         st.session_state["last_llm_decision"] = llm_decision
+    if response_mode is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_response_mode"] = response_mode
+    if reply_builder is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_reply_builder"] = reply_builder
+    if natural_response is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_natural_response"] = bool(natural_response)
     st.session_state["chat_history_count"] = len(st.session_state.get("chat_history", []))
     developer_state = {
         "last_chat_input": st.session_state.get("last_chat_input"),
@@ -737,6 +748,9 @@ def _update_chat_developer_diagnostics(
         "last_response_empty": bool(st.session_state.get("last_response_empty")),
         "last_pipeline_error": st.session_state.get("last_pipeline_error"),
         "last_llm_decision": st.session_state.get("last_llm_decision"),
+        "response_mode": st.session_state.get("last_response_mode"),
+        "reply_builder": st.session_state.get("last_reply_builder"),
+        "natural_response": st.session_state.get("last_natural_response"),
         "chat_history_count": st.session_state.get("chat_history_count", 0),
     }
     _update_application_section("developer", developer_state)
@@ -1038,6 +1052,18 @@ def _finalize_ai_pipeline_debug_trace(
     workflow_extra: dict | None = None,
 ) -> dict | None:
     final_reply, response_source, response_empty = _resolve_assistant_reply(final_reply, response_source)
+    workflow_extra = dict(workflow_extra or {})
+    response_mode = workflow_extra.get("response_mode")
+    if not response_mode:
+        mode_decision = determine_response_mode(
+            workflow_state=_workflow_debug_state().get("workflow_state_v2") or {},
+            planner=(trace or {}).get("planner") or {},
+            reasoning=(trace or {}).get("reasoning") or {},
+        )
+        response_mode = mode_decision.mode
+        workflow_extra["response_mode"] = response_mode
+    workflow_extra.setdefault("reply_builder", "legacy_response_pipeline")
+    workflow_extra.setdefault("natural_response", True)
     add_pipeline_event(
         "response",
         "_finalize_ai_pipeline_debug_trace",
@@ -1053,17 +1079,26 @@ def _finalize_ai_pipeline_debug_trace(
             response_source=response_source,
             response_empty=response_empty,
             pipeline_error=None,
+            response_mode=response_mode,
+            reply_builder=workflow_extra.get("reply_builder"),
+            natural_response=workflow_extra.get("natural_response"),
         )
         return None
     source = "generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source
     trace["workflow"] = _workflow_debug_state(workflow_extra)
     trace["response_source"] = source
+    trace["response_mode"] = response_mode
+    trace["reply_builder"] = workflow_extra.get("reply_builder")
+    trace["natural_response"] = workflow_extra.get("natural_response")
     trace["final_response_preview"] = str(final_reply or "").strip()[:500]
     st.session_state["ai_pipeline_debug_trace"] = trace
     _update_chat_developer_diagnostics(
         response_source=source,
         response_empty=response_empty,
         pipeline_error=None,
+        response_mode=response_mode,
+        reply_builder=workflow_extra.get("reply_builder"),
+        natural_response=workflow_extra.get("natural_response"),
     )
     if st.session_state.get("developer_mode"):
         print("AI Pipeline Debug Trace:")
@@ -2574,7 +2609,7 @@ def _clean_chat_reply(reply: str, preserve_greeting: bool = False) -> str:
         for index in range(0, len(words), 80):
             split_paragraphs.append(" ".join(words[index : index + 80]))
 
-    return _structure_assistant_reply("\n\n".join(split_paragraphs))
+    return "\n\n".join(split_paragraphs)
 
 
 def _should_show_chat_footer(message: dict) -> bool:
@@ -3064,11 +3099,14 @@ def _handle_state_machine_workflow(
         user_message,
         detected_workflow=detected_workflow,
     )
+    workflow_state = prepare_content_collection_state(workflow_state)
     _sync_workflow_state_v2(workflow_state)
 
     if workflow_state.get("is_ready"):
         reply = _generate_workflow_reply(workflow_state)
         reply, llm_attempted = _maybe_improve_workflow_reply_with_llm(reply, workflow_state, profile, user_message)
+        reply_result = build_workflow_reply(workflow_state, generated_reply=reply)
+        reply = reply_result["reply"]
         workflow_state["next_action"] = "completed"
         workflow_state["step"] = "completed"
         _sync_workflow_state_v2(workflow_state)
@@ -3078,6 +3116,9 @@ def _handle_state_machine_workflow(
             "done": True,
             "llm_attempted": llm_attempted,
             "extracted_fields": extracted_fields,
+            "response_mode": reply_result.get("response_mode"),
+            "reply_builder": reply_result.get("reply_builder"),
+            "natural_response": reply_result.get("natural_response"),
         }
         add_pipeline_event(
             "workflow",
@@ -3089,17 +3130,24 @@ def _handle_state_machine_workflow(
                 "workflow_state_v2.collected_fields": workflow_state.get("collected_fields") or {},
                 "workflow_state_v2.missing_fields": workflow_state.get("missing_fields") or [],
                 "last_response_empty": not bool(reply),
+                "response_mode": result.get("response_mode"),
+                "reply_builder": result.get("reply_builder"),
+                "natural_response": result.get("natural_response"),
             },
         )
         return result
 
-    reply = _workflow_missing_reply(workflow_state)
+    reply_result = build_workflow_reply(workflow_state)
+    reply = reply_result["reply"]
     result = {
         "reply": reply,
         "intent": workflow_state.get("workflow"),
         "done": False,
         "llm_attempted": False,
         "extracted_fields": extracted_fields,
+        "response_mode": reply_result.get("response_mode"),
+        "reply_builder": reply_result.get("reply_builder"),
+        "natural_response": reply_result.get("natural_response"),
     }
     add_pipeline_event(
         "workflow",
@@ -3111,6 +3159,9 @@ def _handle_state_machine_workflow(
             "workflow_state_v2.collected_fields": workflow_state.get("collected_fields") or {},
             "workflow_state_v2.missing_fields": workflow_state.get("missing_fields") or [],
             "last_response_empty": not bool(reply),
+            "response_mode": result.get("response_mode"),
+            "reply_builder": result.get("reply_builder"),
+            "natural_response": result.get("natural_response"),
         },
     )
     return result
@@ -3574,7 +3625,13 @@ def _handle_quick_action_conversation(quick_action: str, profile: dict | None) -
             debug_trace,
             source,
             response["reply"],
-            {"workflow_handler": "quick_action_state_machine", "quick_action": quick_action},
+            {
+                "workflow_handler": "quick_action_state_machine",
+                "quick_action": quick_action,
+                "response_mode": response.get("response_mode"),
+                "reply_builder": response.get("reply_builder"),
+                "natural_response": response.get("natural_response"),
+            },
         )
         _append_workflow_reply(response["reply"], response["intent"], None)
         return
@@ -3807,6 +3864,9 @@ def _show_chat_companion(
                     "workflow_handler": "conversation_os_continue",
                     "planner_locked": True,
                     "extracted_fields": response.get("extracted_fields") or continuation.get("extracted_fields") or {},
+                    "response_mode": response.get("response_mode"),
+                    "reply_builder": response.get("reply_builder"),
+                    "natural_response": response.get("natural_response"),
                 },
             )
             _append_workflow_reply(response["reply"], response["intent"], None)
@@ -4024,7 +4084,13 @@ def _show_chat_companion(
         finalize_debug(
             source,
             response["reply"],
-            {"workflow_handler": "state_machine_v2", "extracted_fields": response.get("extracted_fields") or {}},
+            {
+                "workflow_handler": "state_machine_v2",
+                "extracted_fields": response.get("extracted_fields") or {},
+                "response_mode": response.get("response_mode"),
+                "reply_builder": response.get("reply_builder"),
+                "natural_response": response.get("natural_response"),
+            },
         )
         topic_labels = {
             V2_WORKFLOW_SALES_PLAN_7_DAY: "แผนขาย 7 วัน",
