@@ -1,0 +1,14 @@
+{
+  "users": {
+    "reefdaddy": {
+      "owner_id": "reefdaddy",
+      "password_hash": "3cee1785b8fe7d7647c9607b98ca9a0b019e775b1fcb83a48378038ea5d5cd4f",
+      "salt": "c9f00ca4c31fc01ca5b58fe9e7d08ebf",
+      "created_at": "2026-06-28T11:39:35+00:00",
+      "updated_at": "2026-06-28T11:39:35+00:00",
+      "store_id": "reefdaddy",
+      "store_name": "HOMCHOUX",
+      "username": "reefdaddy"
+    }
+  }
+}

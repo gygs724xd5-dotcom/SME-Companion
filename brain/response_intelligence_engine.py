@@ -60,6 +60,20 @@ def _first_missing_question(missing: list[str]) -> str:
     return "\u0e02\u0e2d\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e2d\u0e35\u0e01 1 \u0e08\u0e38\u0e14\u0e04\u0e23\u0e31\u0e1a"
 
 
+def _active_workflow_state_v2(route: dict) -> dict:
+    workflow_context = (
+        route.get("workflow")
+        or (route.get("llm_reasoning_context") or {}).get("workflow")
+        or {}
+    )
+    workflow_state = workflow_context.get("workflow_state_v2") or {}
+    if not workflow_state and workflow_context.get("workflow") and workflow_context.get("step"):
+        workflow_state = workflow_context
+    if workflow_state.get("workflow") and workflow_state.get("step") != "completed":
+        return workflow_state
+    return {}
+
+
 def _business_context_reply(business_context: dict) -> str | None:
     business_type = (business_context or {}).get("business_type")
     if not business_type:
@@ -75,6 +89,10 @@ def _business_context_reply(business_context: dict) -> str | None:
 
 def select_planner_first_response(route: dict | None, chat_history: list[dict] | None = None) -> dict:
     route = route or {}
+    active_workflow_state = _active_workflow_state_v2(route)
+    if active_workflow_state:
+        return {"handled": False}
+
     plan = route.get("planner_output") or {}
     intent = route.get("intent_resolution") or plan.get("intent_resolution") or {}
     business_context = route.get("business_context") or plan.get("business_context") or {}
@@ -89,6 +107,17 @@ def select_planner_first_response(route: dict | None, chat_history: list[dict] |
 
     current_goal = str(plan.get("goal") or "")
     has_numeric_fields = bool(re.search(r"\d", current_goal))
+    if workflow and not active_workflow_state and plan.get("next_step") == "collect_missing_information":
+        return {"handled": False}
+
+    if not workflow and plan.get("next_step") == "collect_missing_information" and missing:
+        return {
+            "handled": True,
+            "reply": _first_missing_question(missing),
+            "intent": plan.get("task_type"),
+            "topic": plan.get("task_type"),
+        }
+
     if workflow and plan.get("next_step") == "collect_missing_information" and (
         workflow == WORKFLOW_CONTENT_PLAN or not has_numeric_fields
     ):

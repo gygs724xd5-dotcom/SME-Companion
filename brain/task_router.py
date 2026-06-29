@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 
+from brain.conversation_manager import active_workflow_state, planner_locked
 from brain.business_context_engine import build_business_context
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
@@ -56,10 +57,47 @@ def _reasoning_mode(plan: dict, reasoning: dict) -> str:
 
 
 def build_task_route(application_state, user_message) -> dict:
-    interpretation = understand_conversation(user_message, application_state or {})
-    memory_context = get_last_context(application_state or {})
+    state = application_state if application_state is not None else {}
+    if planner_locked(state):
+        workflow_state = active_workflow_state(state) or {}
+        return {
+            "planner_output": {
+                "goal": str(user_message or "").strip(),
+                "task_type": workflow_state.get("workflow_name"),
+                "workflow": workflow_state.get("workflow_id"),
+                "required_skills": [],
+                "required_information": workflow_state.get("required_fields") or [],
+                "known_information": ["conversation_os"],
+                "missing_information": workflow_state.get("missing_fields") or [],
+                "can_execute": not bool(workflow_state.get("missing_fields")),
+                "next_step": "continue_active_workflow",
+                "priority": "high",
+                "estimated_response_mode": "workflow",
+                "planner_locked": True,
+            },
+            "conversation_understanding": {},
+            "conversation_intelligence": {},
+            "intent_resolution": {"resolved_intent": "continue_previous_workflow", "resolved_workflow": workflow_state.get("workflow_id")},
+            "business_context": {},
+            "conversation_memory": {},
+            "task_type": workflow_state.get("workflow_name"),
+            "selected_capability": None,
+            "loaded_skills": [],
+            "reasoning": {"action": "continue_active_workflow", "workflow_ready": not bool(workflow_state.get("missing_fields"))},
+            "reasoning_mode": "workflow",
+            "llm_reasoning_context": {},
+            "llm_decision": {"should_use_llm": False, "reason": "Planner locked by Conversation OS."},
+            "workflow_ready": not bool(workflow_state.get("missing_fields")),
+            "llm_needed": False,
+            "capability_available": True,
+            "placeholders": dict(PLACEHOLDER_ENGINES),
+            "planner_locked": True,
+        }
+
+    interpretation = understand_conversation(user_message, state)
+    memory_context = get_last_context(state)
     business_context = build_business_context(
-        application_state or {},
+        state,
         user_message,
         understanding=interpretation,
         conversation_memory=memory_context,
@@ -77,13 +115,13 @@ def build_task_route(application_state, user_message) -> dict:
         "business_context": business_context,
         "intent_resolution": intent_resolution,
     }
-    enriched_state = dict(application_state or {})
+    enriched_state = dict(state)
     enriched_state["conversation_understanding"] = interpretation
     enriched_state["conversation_memory"] = memory_context
     enriched_state["business_context"] = business_context
     enriched_state["conversation_intelligence"] = conversation_intelligence
     enriched_state["conversation"] = {
-        **((application_state or {}).get("conversation") or {}),
+        **(state.get("conversation") or {}),
         "understanding": interpretation,
         "last_understanding": interpretation,
         "conversation_memory": memory_context,
@@ -156,6 +194,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Loaded Skill": loaded_skill_names,
         "Reasoning Mode": route.get("reasoning_mode"),
         "Workflow Ready": bool(route.get("workflow_ready")),
+        "Planner Locked": bool(route.get("planner_locked") or (route.get("planner_output") or {}).get("planner_locked")),
         "LLM Decision": route.get("llm_decision") or {},
         "LLM Needed": bool(route.get("llm_needed")),
         "Capability Available": bool(route.get("capability_available")),

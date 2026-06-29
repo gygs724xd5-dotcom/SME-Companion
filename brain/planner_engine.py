@@ -9,14 +9,15 @@ from brain.workflow_readiness import (
     WORKFLOW_SALES_PLAN_7_DAY,
 )
 from brain.workflow_state_machine import REQUIRED_FIELDS, detect_workflow_intent
+from brain.workflow_registry import get_workflow_definition
 
 
-WORKFLOW_TO_TASK = {
-    WORKFLOW_SALES_PLAN_7_DAY: ("Sales Plan", "sales_plan", "sales_planning"),
-    WORKFLOW_COST_CALCULATION: ("Cost Calculation", "cost_calculation", "cost_calculation"),
-    WORKFLOW_CONTENT_PLAN: ("Content Plan", "content_plan", "content_creation"),
-    WORKFLOW_DASHBOARD_REQUEST: ("Dashboard Request", "dashboard_request", "dashboard_builder"),
-    WORKFLOW_RECEIPT_CAPTURE: ("Receipt Upload", "receipt_upload", "receipt_capture"),
+WORKFLOW_TASK_TYPES = {
+    WORKFLOW_SALES_PLAN_7_DAY: "Sales Plan",
+    WORKFLOW_COST_CALCULATION: "Cost Calculation",
+    WORKFLOW_CONTENT_PLAN: "Content Plan",
+    WORKFLOW_DASHBOARD_REQUEST: "Dashboard Request",
+    WORKFLOW_RECEIPT_CAPTURE: "Receipt Upload",
 }
 
 
@@ -122,6 +123,17 @@ def _future_capability_from_message(message: str) -> tuple[str, str] | None:
     return None
 
 
+def _workflow_task(workflow: str | None) -> tuple[str, str, str | None] | None:
+    definition = get_workflow_definition(workflow)
+    if not definition:
+        return None
+    return (
+        WORKFLOW_TASK_TYPES.get(definition.workflow_id, definition.workflow_name.replace("_", " ").title()),
+        definition.capability_key,
+        definition.skill_name,
+    )
+
+
 def _conversation_understanding(application_state: dict) -> dict:
     return (
         (application_state or {}).get("conversation_understanding")
@@ -179,9 +191,10 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
         return "Cost Calculation", "cost_calculation", WORKFLOW_COST_CALCULATION, ["cost_calculation"], "workflow"
     if resolved_intent in {"continue_previous_workflow", "follow_up_edit"}:
         workflow = resolved_workflow or active_workflow
-        if workflow in WORKFLOW_TO_TASK:
-            task_type, capability_key, skill_name = WORKFLOW_TO_TASK[workflow]
-            return task_type, capability_key, workflow, [skill_name], "workflow"
+        task = _workflow_task(workflow)
+        if task:
+            task_type, capability_key, skill_name = task
+            return task_type, capability_key, workflow, [skill_name] if skill_name else [], "workflow"
         if resolved_intent == "follow_up_edit":
             return "General Business Help", "conversation_memory", None, [], "llm"
     if resolved_intent == "reference_resolution" and intent_resolution.get("resolved_references"):
@@ -195,9 +208,10 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
 
     if understood_intent == "continue_previous_workflow" and active_workflow:
         workflow = active_workflow
-        if workflow in WORKFLOW_TO_TASK:
-            task_type, capability_key, skill_name = WORKFLOW_TO_TASK[workflow]
-            return task_type, capability_key, workflow, [skill_name], "workflow"
+        task = _workflow_task(workflow)
+        if task:
+            task_type, capability_key, skill_name = task
+            return task_type, capability_key, workflow, [skill_name] if skill_name else [], "workflow"
     if understood_intent in {"store_summary", "business_status"}:
         return "Dashboard Request", "dashboard_request", WORKFLOW_DASHBOARD_REQUEST, ["dashboard_builder"], "workflow"
     if understood_intent in {"receipt_reference", "image_reference"}:
@@ -222,9 +236,10 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
     if not workflow and active_workflow:
         workflow = active_workflow
 
-    if workflow in WORKFLOW_TO_TASK:
-        task_type, capability_key, skill_name = WORKFLOW_TO_TASK[workflow]
-        return task_type, capability_key, workflow, [skill_name], "workflow"
+    task = _workflow_task(workflow)
+    if task:
+        task_type, capability_key, skill_name = task
+        return task_type, capability_key, workflow, [skill_name] if skill_name else [], "workflow"
 
     intent = detect_conversation_intent(user_message)
     if intent == "PRODUCT_FEEDBACK":

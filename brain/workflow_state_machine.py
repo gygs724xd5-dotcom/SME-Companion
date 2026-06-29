@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from brain.workflow_field_extractor import extract_workflow_fields
@@ -55,6 +56,17 @@ _INTENT_TRIGGERS = {
 }
 
 
+_WORKFLOW_START_ONLY_MESSAGES = {
+    WORKFLOW_CONTENT_PLAN: {
+        "create post",
+        "post",
+        "สร้างโพสต์",
+        "ทำโพสต์",
+        "เขียนโพสต์",
+    },
+}
+
+
 def new_workflow_state(workflow: str | None = None) -> dict:
     selected = workflow or WORKFLOW_GENERAL_BUSINESS_HELP
     return {
@@ -96,7 +108,19 @@ def _merge_fields(existing: dict, new_fields: dict) -> dict:
     return merged
 
 
-def _missing_fields(workflow: str, fields: dict) -> list[str]:
+def _field_has_value(field: str, fields: dict) -> bool:
+    if field == "product_or_business_type":
+        return bool(fields.get("product") or fields.get("business_type"))
+    if field == "daily_capacity_or_available_quantity":
+        return bool(fields.get("daily_capacity") or fields.get("available_quantity"))
+    if field == "selling_window_or_sales_channel":
+        return bool(fields.get("selling_window") or fields.get("sales_channel"))
+    return bool(fields.get(field))
+
+
+def _missing_fields(workflow: str, fields: dict, required_fields: list[str] | None = None) -> list[str]:
+    if required_fields:
+        return [field for field in required_fields if not _field_has_value(field, fields)]
     if workflow == WORKFLOW_SALES_PLAN_7_DAY:
         missing = []
         if not fields.get("product"):
@@ -118,6 +142,149 @@ def _missing_fields(workflow: str, fields: dict) -> list[str]:
     return []
 
 
+_TARGET_CUSTOMER_SHORT_ANSWERS = {
+    "วัยรุ่น",
+    "แม่บ้าน",
+    "นักเรียน",
+    "นักศึกษา",
+    "คนทำงาน",
+    "พนักงานออฟฟิศ",
+    "ครอบครัว",
+    "เด็ก",
+    "ผู้ใหญ่",
+}
+
+
+def _clean_thai_answer(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip(" :,-")
+
+
+def _strip_answer_prefix(answer: str, prefixes: list[str]) -> str:
+    cleaned = _clean_thai_answer(answer)
+    for prefix in prefixes:
+        pattern = rf"^{re.escape(prefix)}\s*(?:คือ|เป็น|ชื่อ|ชื่อว่า|:|-)?\s*"
+        stripped = re.sub(pattern, "", cleaned, count=1, flags=re.IGNORECASE).strip(" :,-")
+        if stripped != cleaned:
+            return stripped
+    return cleaned
+
+
+def _looks_like_business_type(answer: str) -> bool:
+    return bool(re.match(r"^(?:ร้าน|ร้านขาย|ธุรกิจ|ประเภทร้าน|ประเภทธุรกิจ)", _clean_thai_answer(answer)))
+
+
+def _extract_product_answer(answer: str) -> str | None:
+    cleaned = _strip_answer_prefix(
+        answer,
+        ["ชื่อสินค้า", "สินค้า", "เป็นสินค้า", "เป็น", "เมนู", "ชื่อเมนู", "ขาย", "ทำ"],
+    )
+    cleaned = _strip_answer_prefix(cleaned, ["ชื่อ"])
+    if cleaned:
+        return cleaned
+    fallback = _clean_thai_answer(answer)
+    return fallback or None
+
+
+def _extract_business_type_answer(answer: str) -> str | None:
+    cleaned = _strip_answer_prefix(
+        answer,
+        ["ประเภทร้าน", "ประเภทธุรกิจ", "ธุรกิจ", "เป็นร้าน", "ร้าน"],
+    )
+    if cleaned.startswith("ขาย"):
+        cleaned = "ร้าน" + cleaned
+    if _looks_like_business_type(answer):
+        return _clean_thai_answer(cleaned if cleaned.startswith("ร้าน") else answer)
+    return None
+
+
+def _extract_target_customer_answer(answer: str) -> str | None:
+    cleaned = _strip_answer_prefix(answer, ["กลุ่มลูกค้า", "ลูกค้าเป้าหมาย", "ลูกค้า"])
+    if cleaned != _clean_thai_answer(answer) and cleaned:
+        return cleaned
+    if _clean_thai_answer(answer) in _TARGET_CUSTOMER_SHORT_ANSWERS:
+        return _clean_thai_answer(answer)
+    return None
+
+
+def _extract_promotion_answer(answer: str) -> str | None:
+    cleaned = _clean_thai_answer(answer)
+    if re.search(r"(?:โปร|โปรโมชั่น|ส่วนลด|ลด\s*\d|discount|promotion|offer)", cleaned, flags=re.IGNORECASE):
+        return cleaned
+    return None
+
+
+def _answer_for_missing_field(field: str, answer: str) -> dict:
+    if field == "product_or_business_type":
+        business_type = _extract_business_type_answer(answer)
+        if business_type:
+            return {"business_type": business_type}
+        product = _extract_product_answer(answer)
+        return {"product": product} if product else {}
+    if field == "product":
+        product = _extract_product_answer(answer)
+        return {"product": product} if product else {}
+    if field == "business_type":
+        business_type = _extract_business_type_answer(answer) or _clean_thai_answer(answer)
+        return {"business_type": business_type} if business_type else {}
+    if field == "target_customer":
+        target_customer = _extract_target_customer_answer(answer) or _clean_thai_answer(answer)
+        return {"target_customer": target_customer} if target_customer else {}
+    if field == "promotion":
+        promotion = _extract_promotion_answer(answer) or _clean_thai_answer(answer)
+        return {"promotion": promotion} if promotion else {}
+    return {}
+
+
+def _direct_answer_fields(workflow: str, current: dict, user_message: str, extracted_fields: dict) -> dict:
+    answer = str(user_message or "").strip()
+    if not answer:
+        return {}
+    if not (current.get("collected_fields") or {}) and answer.lower() in _WORKFLOW_START_ONLY_MESSAGES.get(workflow, set()):
+        return {}
+
+    missing = list(current.get("missing_fields") or _missing_fields(workflow, current.get("collected_fields") or {}))
+    explicit_fields = {}
+    business_type = _extract_business_type_answer(answer)
+    target_customer = _extract_target_customer_answer(answer)
+    promotion = _extract_promotion_answer(answer)
+    if business_type:
+        explicit_fields["business_type"] = business_type
+    if target_customer:
+        explicit_fields["target_customer"] = target_customer
+    if promotion:
+        explicit_fields["promotion"] = promotion
+
+    if not missing:
+        return explicit_fields
+
+    first_missing = missing[0]
+    field_answer = _answer_for_missing_field(first_missing, answer)
+    if field_answer:
+        return {**explicit_fields, **field_answer}
+
+    if extracted_fields:
+        return {}
+
+    if workflow == WORKFLOW_SALES_PLAN_7_DAY:
+        if first_missing == "daily_capacity_or_available_quantity":
+            amount = _first_number(answer)
+            return {"daily_capacity": amount} if amount else {}
+        if first_missing == "selling_window_or_sales_channel":
+            return {"sales_channel": answer}
+    if workflow == WORKFLOW_COST_CALCULATION and first_missing == "total_units":
+        amount = _first_number(answer)
+        return {"total_units": amount} if amount else {}
+    return {}
+
+
+def _first_number(value: str) -> float | int | None:
+    match = re.search(r"\d+(?:,\d{3})*(?:\.\d+)?", str(value or ""))
+    if not match:
+        return None
+    amount = float(match.group(0).replace(",", ""))
+    return int(amount) if amount.is_integer() else amount
+
+
 def update_workflow_state(
     current_state: dict | None,
     user_message: str,
@@ -128,26 +295,27 @@ def update_workflow_state(
     if detected_workflow and detected_workflow != current.get("workflow"):
         current = new_workflow_state(detected_workflow)
 
-    collected_fields = _merge_fields(
-        current.get("collected_fields") or {},
-        extract_workflow_fields(user_message, workflow=workflow),
-    )
+    extracted = extract_workflow_fields(user_message, workflow=workflow)
+    direct_answer = _direct_answer_fields(workflow, current, user_message, extracted)
+    collected_fields = _merge_fields(current.get("collected_fields") or {}, {**extracted, **direct_answer})
+    required_fields = list(current.get("required_fields") or REQUIRED_FIELDS.get(workflow, []))
     state = {
         **new_workflow_state(workflow),
         **current,
         "workflow": workflow,
-        "required_fields": list(REQUIRED_FIELDS.get(workflow, [])),
+        "required_fields": required_fields,
         "collected_fields": collected_fields,
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
-    state["missing_fields"] = _missing_fields(workflow, collected_fields)
-    state["is_ready"] = is_workflow_ready(state)
-    if state["is_ready"]:
+    state["missing_fields"] = _missing_fields(workflow, collected_fields, required_fields)
+    state["is_ready"] = is_workflow_ready(state) or (bool(required_fields) and not state["missing_fields"])
+    if workflow in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE}:
+        state["step"] = WORKFLOW_START_STEPS.get(workflow, "route")
+        state["next_action"] = "route"
+    elif state["is_ready"]:
         state["step"] = "ready_to_generate"
         state["next_action"] = "generate"
-    elif workflow in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE}:
-        state["next_action"] = "route"
     else:
         state["step"] = WORKFLOW_START_STEPS.get(workflow, "collecting_fields")
         state["next_action"] = "ask_missing_field"
-    return state, extract_workflow_fields(user_message, workflow=workflow)
+    return state, {**extracted, **direct_answer}

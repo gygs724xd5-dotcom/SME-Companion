@@ -21,6 +21,23 @@ from brain.conversation_intent_engine import (
     should_show_business_insights,
     should_use_business_context,
 )
+from brain.conversation_manager import (
+    active_workflow_state as conversation_os_active_workflow_state,
+    complete_workflow as conversation_os_complete_workflow,
+    continue_workflow as conversation_os_continue_workflow,
+    developer_diagnostics as conversation_os_developer_diagnostics,
+    ensure_conversation_os_state,
+    pause_workflow as conversation_os_pause_workflow,
+    route_quick_action as conversation_os_route_quick_action,
+    sync_legacy_workflow_state as conversation_os_sync_legacy_workflow_state,
+)
+from brain.conversation_priority_engine import (
+    NEW_INTENT as PRIORITY_NEW_INTENT,
+    TEMPORARY_INTERRUPT as PRIORITY_TEMPORARY_INTERRUPT,
+    WORKFLOW_ANSWER as PRIORITY_WORKFLOW_ANSWER,
+    WORKFLOW_SWITCH as PRIORITY_WORKFLOW_SWITCH,
+    classify_message_priority,
+)
 from brain.conversation_understanding_engine import (
     build_direct_reply as build_understanding_direct_reply,
     should_answer_directly,
@@ -44,6 +61,7 @@ from brain.workflow_readiness import (
     WORKFLOW_RECEIPT_CAPTURE as V2_WORKFLOW_RECEIPT_CAPTURE,
     WORKFLOW_SALES_PLAN_7_DAY as V2_WORKFLOW_SALES_PLAN_7_DAY,
 )
+from brain.workflow_registry import get_workflow_definition
 from brain.content_calendar_engine import generate_content_calendar
 from brain.content_strategy_engine import get_content_strategy
 from brain.goal_engine import (
@@ -60,6 +78,12 @@ from brain.response_intelligence_engine import guard_response, select_planner_fi
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
 from brain.task_router import build_task_route, developer_diagnostics
+from brain.pipeline_debugger import (
+    add_pipeline_event,
+    finalize_pipeline_trace,
+    get_pipeline_trace,
+    start_pipeline_trace,
+)
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
 from feedback.chatgpt_export_builder import (
@@ -634,6 +658,7 @@ DEFAULT_CONVERSATION_STATE = {
     "last_workflow_message": None,
     "workflow_state_v2": {},
     "workflow_blocked_phrases": {},
+    "conversation_os": {},
 }
 
 
@@ -642,6 +667,7 @@ def _new_conversation_state() -> dict:
     state["workflow_data"] = {}
     state["workflow_state_v2"] = {}
     state["workflow_blocked_phrases"] = {}
+    state["conversation_os"] = {}
     return state
 
 
@@ -725,8 +751,15 @@ def _resolve_assistant_reply(reply: str | None, response_source: str) -> tuple[s
 
 def _handle_chat_pipeline_exception(error: Exception) -> None:
     error_text = f"{type(error).__name__}: {error}"
+    add_pipeline_event(
+        "error",
+        "_handle_chat_pipeline_exception",
+        "pipeline error",
+        {"last_pipeline_error": error_text},
+    )
     if not st.session_state.get("chat_pipeline_in_progress"):
         _update_chat_developer_diagnostics(pipeline_error=error_text)
+        finalize_pipeline_trace("failed")
         return
 
     fallback_reply, response_source, response_empty = _resolve_assistant_reply(None, "empty_response_fallback")
@@ -744,6 +777,12 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
 
     if not history or history[-1].get("role") != "assistant":
         history.append({"role": "assistant", "content": fallback_reply, "show_business_insights": False})
+        add_pipeline_event(
+            "response",
+            "_handle_chat_pipeline_exception",
+            "assistant message appended",
+            {"response_source": response_source, "last_response_empty": response_empty},
+        )
 
     _sync_chat_history_to_application_state()
     _update_chat_developer_diagnostics(
@@ -757,7 +796,15 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
             _render_markdown(last_chat_input)
     with st.chat_message("assistant"):
         _render_assistant_message(fallback_reply)
+    add_pipeline_event(
+        "render",
+        "_handle_chat_pipeline_exception",
+        "assistant rendered",
+        {"response_source": response_source, "last_response_empty": response_empty},
+    )
     st.session_state["chat_pipeline_in_progress"] = False
+    add_pipeline_event("finalize", "_handle_chat_pipeline_exception", "pipeline finalized")
+    finalize_pipeline_trace("failed")
 
 
 def _sync_global_application_state() -> dict:
@@ -793,6 +840,7 @@ def _sync_chat_history_to_application_state() -> None:
 def _sync_session_to_application_state() -> dict:
     state = _get_application_state()
     conversation_state = st.session_state.get("conversation_state") or _new_conversation_state()
+    conversation_state.setdefault("conversation_os", {})
     workflow_state_v2 = conversation_state.get("workflow_state_v2") or {}
     next_state = {**state}
     next_state["conversation"] = {
@@ -822,9 +870,33 @@ def _sync_session_to_application_state() -> dict:
         **(state.get("developer") or {}),
         "developer_mode": bool(st.session_state.get("developer_mode")),
     }
+    ensure_conversation_os_state(next_state)
     if state != next_state:
         safe_set_session_state("application_state", next_state)
     return _sync_global_application_state()
+
+
+def _sync_conversation_os_to_session() -> dict:
+    app_state = _get_application_state()
+    os_state = ensure_conversation_os_state(app_state)
+    conversation_state = _ensure_conversation_state()
+    conversation_state["conversation_os"] = os_state
+    active_workflow = conversation_os_active_workflow_state(app_state)
+    if active_workflow:
+        conversation_state["current_workflow"] = active_workflow.get("workflow_id")
+        conversation_state["workflow_step"] = active_workflow.get("current_step")
+        conversation_state["workflow_data"] = active_workflow.get("collected_fields") or {}
+        conversation_state["workflow_state_v2"] = active_workflow.get("state_machine") or {}
+        conversation_state["workflow_started_at"] = active_workflow.get("started_at")
+        conversation_state["last_workflow_message"] = active_workflow.get("updated_at")
+        conversation_os_sync_legacy_workflow_state(app_state, active_workflow)
+    else:
+        conversation_state["current_workflow"] = None
+        conversation_state["workflow_step"] = None
+        conversation_state["workflow_data"] = {}
+        conversation_state["workflow_state_v2"] = {}
+    _update_application_section("conversation", {"conversation_os": os_state})
+    return os_state
 
 
 def _record_reasoning(user_message: str) -> dict:
@@ -966,6 +1038,16 @@ def _finalize_ai_pipeline_debug_trace(
     workflow_extra: dict | None = None,
 ) -> dict | None:
     final_reply, response_source, response_empty = _resolve_assistant_reply(final_reply, response_source)
+    add_pipeline_event(
+        "response",
+        "_finalize_ai_pipeline_debug_trace",
+        "response source selected",
+        {
+            "response_source": "generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source,
+            "last_response_empty": response_empty,
+            **(workflow_extra or {}),
+        },
+    )
     if not trace:
         _update_chat_developer_diagnostics(
             response_source=response_source,
@@ -2158,17 +2240,20 @@ def _show_ai_ranked_actions(companion: dict | None, os_state: dict | None, *, co
     receipt_clicked = cols[2].button("อ่านบิล", key="ai_quick_action_receipt", use_container_width=True)
     analyze_clicked = cols[3].button("วิเคราะห์ร้าน", key="ai_quick_action_analyze", use_container_width=True)
 
+    if post_clicked:
+        safe_set_session_state("pending_quick_action", "create_post")
+        _request_rerun("quick_action_post_button")
     if cost_clicked:
-        safe_set_session_state("pending_quick_prompt", "คำนวณต้นทุน")
+        safe_set_session_state("pending_quick_action", "cost_calculator")
         _request_rerun("quick_action_cost_button")
     if receipt_clicked:
-        safe_set_session_state("pending_quick_prompt", "อ่านบิล")
+        safe_set_session_state("pending_quick_action", "receipt_ocr")
         _request_rerun("quick_action_receipt_button")
     if analyze_clicked:
-        safe_set_session_state("pending_quick_prompt", "วิเคราะห์ร้าน")
+        safe_set_session_state("pending_quick_action", "business_analysis")
         _request_rerun("quick_action_analyze_button")
 
-    return post_clicked, False, False
+    return False, False, False
 
 
 def _show_smart_chat_prompts() -> None:
@@ -2706,6 +2791,48 @@ def _sync_workflow_state_v2(workflow_state: dict) -> None:
             "last_workflow_message": workflow_state.get("last_updated"),
         },
     )
+    _sync_conversation_os_from_v2_state(workflow_state)
+
+
+def _sync_conversation_os_from_v2_state(workflow_state: dict) -> None:
+    workflow_id = workflow_state.get("workflow")
+    definition = get_workflow_definition(workflow_id)
+    if not workflow_id or not definition:
+        return
+    app_state = _get_application_state()
+    os_state = ensure_conversation_os_state(app_state)
+    existing = (os_state.get("workflow_states") or {}).get(workflow_id) or {}
+    timestamp = datetime.now(timezone.utc).isoformat()
+    status = "END" if workflow_state.get("step") == "completed" else "EXECUTE" if workflow_state.get("is_ready") else "COLLECT"
+    os_workflow_state = {
+        **existing,
+        "workflow_id": workflow_id,
+        "workflow_name": definition.workflow_name,
+        "mode": definition.mode,
+        "current_step": workflow_state.get("step"),
+        "workflow_status": status,
+        "collected_fields": workflow_state.get("collected_fields") or {},
+        "missing_fields": workflow_state.get("missing_fields") or [],
+        "required_fields": list(definition.required_fields or workflow_state.get("required_fields") or []),
+        "started_at": existing.get("started_at") or timestamp,
+        "updated_at": timestamp,
+        "resume_allowed": definition.resume_allowed,
+        "cancel_allowed": definition.cancel_allowed,
+        "owner_id": existing.get("owner_id") or _current_owner_id(),
+        "store_id": existing.get("store_id") or _current_store_id(),
+        "state_machine": workflow_state,
+    }
+    os_state.setdefault("workflow_states", {})[workflow_id] = os_workflow_state
+    if status == "END":
+        conversation_os_complete_workflow(app_state, workflow_id)
+    else:
+        os_state["active_workflow_id"] = workflow_id
+        os_state["mode"] = definition.mode
+        os_state["planner_locked"] = True
+        os_state["updated_at"] = timestamp
+    latest_os_state = ensure_conversation_os_state(app_state)
+    _ensure_conversation_state()["conversation_os"] = latest_os_state
+    _update_application_section("conversation", {"conversation_os": latest_os_state})
 
 
 def _clear_workflow_state_v2() -> None:
@@ -2908,6 +3035,30 @@ def _handle_state_machine_workflow(
     profile: dict | None,
 ) -> dict:
     state = _ensure_conversation_state()
+    workflow_before = state.get("workflow_state_v2") or {}
+    add_pipeline_event(
+        "workflow",
+        "_handle_state_machine_workflow",
+        "workflow_state_v2 before handler",
+        {
+            "workflow_state_v2.workflow": workflow_before.get("workflow"),
+            "workflow_state_v2.step": workflow_before.get("step"),
+            "workflow_state_v2.collected_fields": workflow_before.get("collected_fields") or {},
+            "workflow_state_v2.missing_fields": workflow_before.get("missing_fields") or [],
+        },
+    )
+    priority_decision = classify_message_priority(user_message, _sync_session_to_application_state())
+    add_pipeline_event(
+        "conversation_priority",
+        "_handle_state_machine_workflow",
+        "priority_action",
+        {
+            "conversation_priority": priority_decision.get("classification"),
+            "priority_action": priority_decision.get("priority_action"),
+            "detected_new_intent": priority_decision.get("detected_new_intent"),
+            "allow_field_extraction": bool(priority_decision.get("allow_field_extraction")),
+        },
+    )
     workflow_state, extracted_fields = update_workflow_state(
         state.get("workflow_state_v2") or {},
         user_message,
@@ -2921,22 +3072,48 @@ def _handle_state_machine_workflow(
         workflow_state["next_action"] = "completed"
         workflow_state["step"] = "completed"
         _sync_workflow_state_v2(workflow_state)
-        return {
+        result = {
             "reply": reply,
             "intent": workflow_state.get("workflow"),
             "done": True,
             "llm_attempted": llm_attempted,
             "extracted_fields": extracted_fields,
         }
+        add_pipeline_event(
+            "workflow",
+            "_handle_state_machine_workflow",
+            "workflow_state_machine handler result",
+            {
+                "workflow_state_v2.workflow": workflow_state.get("workflow"),
+                "workflow_state_v2.step": workflow_state.get("step"),
+                "workflow_state_v2.collected_fields": workflow_state.get("collected_fields") or {},
+                "workflow_state_v2.missing_fields": workflow_state.get("missing_fields") or [],
+                "last_response_empty": not bool(reply),
+            },
+        )
+        return result
 
     reply = _workflow_missing_reply(workflow_state)
-    return {
+    result = {
         "reply": reply,
         "intent": workflow_state.get("workflow"),
         "done": False,
         "llm_attempted": False,
         "extracted_fields": extracted_fields,
     }
+    add_pipeline_event(
+        "workflow",
+        "_handle_state_machine_workflow",
+        "workflow_state_machine handler result",
+        {
+            "workflow_state_v2.workflow": workflow_state.get("workflow"),
+            "workflow_state_v2.step": workflow_state.get("step"),
+            "workflow_state_v2.collected_fields": workflow_state.get("collected_fields") or {},
+            "workflow_state_v2.missing_fields": workflow_state.get("missing_fields") or [],
+            "last_response_empty": not bool(reply),
+        },
+    )
+    return result
 
 
 def _show_workflow_diagnostics() -> None:
@@ -2946,6 +3123,7 @@ def _show_workflow_diagnostics() -> None:
     with st.expander("Workflow Diagnostics", expanded=False):
         st.json(
             {
+                "Conversation OS": conversation_os_developer_diagnostics(_sync_session_to_application_state()),
                 "Current Workflow": workflow_state.get("workflow"),
                 "Workflow Step": workflow_state.get("step"),
                 "Collected Fields": workflow_state.get("collected_fields") or {},
@@ -2990,8 +3168,8 @@ def _show_platform_diagnostics() -> None:
 def _show_ai_pipeline_debug_trace() -> None:
     if not st.session_state.get("developer_mode"):
         return
-    trace = st.session_state.get("ai_pipeline_debug_trace") or {}
-    with st.expander(" AI Pipeline Debug", expanded=False):
+    trace = get_pipeline_trace() or {}
+    with st.expander("AI Pipeline Debug", expanded=False):
         if trace:
             st.json(trace)
         else:
@@ -3073,6 +3251,12 @@ def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) ->
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
     st.session_state["chat_history"].append(assistant_message)
+    add_pipeline_event(
+        "response",
+        "_append_workflow_reply",
+        "assistant message appended",
+        {"response_source": response_source, "last_response_empty": response_empty},
+    )
     _sync_chat_history_to_application_state()
     _update_chat_developer_diagnostics(
         response_source=response_source,
@@ -3081,7 +3265,15 @@ def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) ->
     )
     with st.chat_message("assistant"):
         _render_assistant_message(reply)
+    add_pipeline_event(
+        "render",
+        "_append_workflow_reply",
+        "assistant rendered",
+        {"response_source": response_source, "last_response_empty": response_empty},
+    )
     st.session_state["chat_pipeline_in_progress"] = False
+    add_pipeline_event("finalize", "_append_workflow_reply", "pipeline finalized")
+    finalize_pipeline_trace()
 
 
 def _show_feedback_summary() -> None:
@@ -3365,6 +3557,50 @@ def _show_receipt_upload(profile: dict | None) -> None:
             st.success("รับไฟล์บิลแล้วครับ ตอนนี้ระบบบันทึกไฟล์ไว้ก่อน ขั้นถัดไปจะเพิ่มระบบอ่านบิลเพื่อดึงยอดเงินให้อัตโนมัติ")
 
 
+def _handle_quick_action_conversation(quick_action: str, profile: dict | None) -> None:
+    app_state = _sync_session_to_application_state()
+    result = conversation_os_route_quick_action(app_state, quick_action)
+    if not result.get("handled"):
+        return
+    _sync_conversation_os_to_session()
+    workflow_id = (result.get("workflow_state") or {}).get("workflow_id")
+    debug_trace = _new_ai_pipeline_debug_trace(f"quick_action:{quick_action}", {})
+    debug_trace["conversation_os"] = conversation_os_developer_diagnostics(app_state)
+
+    if workflow_id in {V2_WORKFLOW_SALES_PLAN_7_DAY, V2_WORKFLOW_COST_CALCULATION, V2_WORKFLOW_CONTENT_PLAN}:
+        response = _handle_state_machine_workflow("", workflow_id, _profile_with_conversation_memory(profile) or profile)
+        source = "llm_response" if response.get("llm_attempted") else "workflow_response"
+        _finalize_ai_pipeline_debug_trace(
+            debug_trace,
+            source,
+            response["reply"],
+            {"workflow_handler": "quick_action_state_machine", "quick_action": quick_action},
+        )
+        _append_workflow_reply(response["reply"], response["intent"], None)
+        return
+
+    if workflow_id == V2_WORKFLOW_RECEIPT_CAPTURE:
+        response = _handle_receipt_workflow("quick_action:receipt_ocr")
+        _finalize_ai_pipeline_debug_trace(
+            debug_trace,
+            "workflow_response",
+            response["reply"],
+            {"workflow_handler": "quick_action_receipt"},
+        )
+        _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
+        return
+
+    if workflow_id == V2_WORKFLOW_DASHBOARD_REQUEST:
+        response = _handle_dashboard_workflow("quick_action:business_analysis")
+        _finalize_ai_pipeline_debug_trace(
+            debug_trace,
+            "workflow_response",
+            response["reply"],
+            {"workflow_handler": "quick_action_dashboard"},
+        )
+        _append_workflow_reply(response["reply"], response["intent"], "วิเคราะห์ร้าน")
+
+
 def _show_chat_companion(
     profile: dict | None,
     business_insight: dict | None,
@@ -3403,10 +3639,16 @@ def _show_chat_companion(
                 _render_assistant_footer(message)
 
     _show_smart_chat_prompts()
+    pending_quick_action = st.session_state.pop("pending_quick_action", None)
+    if pending_quick_action:
+        _handle_quick_action_conversation(pending_quick_action, profile)
+        return
+
     user_message = st.session_state.pop("pending_quick_prompt", None) or st.chat_input("วันนี้อยากให้ช่วยอะไรเกี่ยวกับร้าน?")
     if not user_message:
         return
 
+    start_pipeline_trace(user_message)
     _update_chat_developer_diagnostics(
         last_chat_input=user_message,
         response_source=None,
@@ -3415,13 +3657,26 @@ def _show_chat_companion(
     )
     st.session_state["chat_pipeline_in_progress"] = True
 
+    add_pipeline_event("control", "_show_chat_companion", "reset command check")
     if _is_reset_command(user_message):
         _reset_chat_session()
         reset_reply = "เริ่มบทสนทนาใหม่แล้วครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
         reset_reply, reset_source, reset_empty = _resolve_assistant_reply(reset_reply, "reset_response")
+        add_pipeline_event(
+            "response",
+            "_show_chat_companion",
+            "response source selected",
+            {"response_source": reset_source, "last_response_empty": reset_empty},
+        )
         _update_conversation_state_after_assistant(reset_reply, "GREETING")
         st.session_state["chat_history"].append({"role": "user", "content": user_message})
         st.session_state["chat_history"].append({"role": "assistant", "content": reset_reply})
+        add_pipeline_event(
+            "response",
+            "_show_chat_companion",
+            "assistant message appended",
+            {"response_source": reset_source, "last_response_empty": reset_empty},
+        )
         _sync_chat_history_to_application_state()
         _update_chat_developer_diagnostics(
             response_source=reset_source,
@@ -3432,7 +3687,15 @@ def _show_chat_companion(
             _render_markdown(user_message)
         with st.chat_message("assistant"):
             _render_assistant_message(reset_reply)
+        add_pipeline_event(
+            "render",
+            "_show_chat_companion",
+            "assistant rendered",
+            {"response_source": reset_source, "last_response_empty": reset_empty},
+        )
         st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
+        finalize_pipeline_trace()
         return
 
     previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
@@ -3441,8 +3704,133 @@ def _show_chat_companion(
     with st.chat_message("user"):
         _render_markdown(user_message)
 
+    locked_state = _sync_session_to_application_state()
+    locked_workflow = conversation_os_active_workflow_state(locked_state)
+    add_pipeline_event(
+        "conversation_os",
+        "conversation_os_active_workflow_state",
+        "Conversation OS active workflow check",
+        {
+            "active_workflow_id": (locked_workflow or {}).get("workflow_id"),
+            "planner_locked": bool(locked_workflow),
+        },
+    )
+    if locked_workflow:
+        priority_decision = classify_message_priority(user_message, locked_state)
+        add_pipeline_event(
+            "conversation_priority",
+            "classify_message_priority",
+            "conversation_priority decision",
+            {
+                "conversation_priority": priority_decision.get("classification"),
+                "priority_action": priority_decision.get("priority_action"),
+                "detected_new_intent": priority_decision.get("detected_new_intent"),
+                "allow_field_extraction": bool(priority_decision.get("allow_field_extraction")),
+            },
+        )
+        _update_application_section("conversation", {"conversation_priority": priority_decision})
+        if priority_decision.get("classification") in {PRIORITY_NEW_INTENT, PRIORITY_WORKFLOW_SWITCH}:
+            conversation_os_pause_workflow(locked_state)
+            _sync_conversation_os_to_session()
+            locked_workflow = {}
+            add_pipeline_event(
+                "conversation_priority",
+                "_show_chat_companion",
+                "priority_action",
+                {
+                    "conversation_priority": priority_decision.get("classification"),
+                    "priority_action": "release_planner_for_new_intent",
+                    "detected_new_intent": priority_decision.get("detected_new_intent"),
+                    "allow_field_extraction": False,
+                },
+            )
+        continuation = conversation_os_continue_workflow(locked_state, user_message)
+        add_pipeline_event(
+            "conversation_os",
+            "conversation_os_continue_workflow",
+            "Conversation OS continue_workflow result",
+            {
+                "active_workflow_id": locked_workflow.get("workflow_id"),
+                "planner_locked": True,
+                "continue_event": continuation.get("event"),
+                "priority_action": (continuation.get("priority_decision") or priority_decision).get("priority_action"),
+                "allow_field_extraction": bool((continuation.get("priority_decision") or priority_decision).get("allow_field_extraction")),
+            },
+        )
+        _sync_conversation_os_to_session()
+        debug_trace = _new_ai_pipeline_debug_trace(user_message, {})
+        debug_trace["conversation_os"] = conversation_os_developer_diagnostics(locked_state)
+
+        if continuation.get("event") == "temporary_interrupt":
+            resume_prompt = _workflow_missing_reply(locked_workflow.get("state_machine") or {})
+            reply = f"{datetime.now().strftime('%H:%M')} ครับ\n\nกลับมาต่อเรื่องเดิมนะครับ {resume_prompt}"
+            _update_conversation_state_after_assistant(reply, locked_workflow.get("workflow_id"), None)
+            st.session_state["chat_history"].append({"role": "assistant", "content": reply, "show_business_insights": False})
+            _sync_chat_history_to_application_state()
+            _finalize_ai_pipeline_debug_trace(
+                debug_trace,
+                "conversation_os_interrupt",
+                reply,
+                {"planner_locked": True, "resume_after_reply": True},
+            )
+            with st.chat_message("assistant"):
+                _render_assistant_message(reply)
+            st.session_state["chat_pipeline_in_progress"] = False
+            return
+
+        if continuation.get("event") == "cancelled":
+            reply = "ยกเลิกงานนี้ให้แล้วครับ"
+            _append_workflow_reply(reply, locked_workflow.get("workflow_id"), None)
+            _finalize_ai_pipeline_debug_trace(debug_trace, "conversation_os_control", reply, {"planner_locked": True})
+            return
+
+        if continuation.get("event") == "paused":
+            reply = "พักเรื่องนี้ไว้ก่อนครับ กลับมาบอกว่า “ทำต่อ” ได้เลย"
+            _append_workflow_reply(reply, locked_workflow.get("workflow_id"), None)
+            _finalize_ai_pipeline_debug_trace(debug_trace, "conversation_os_control", reply, {"planner_locked": True})
+            return
+
+        active_after_continue = conversation_os_active_workflow_state(_get_application_state()) or locked_workflow
+        active_workflow_id = active_after_continue.get("workflow_id")
+        if active_workflow_id in {V2_WORKFLOW_SALES_PLAN_7_DAY, V2_WORKFLOW_COST_CALCULATION, V2_WORKFLOW_CONTENT_PLAN}:
+            response = _handle_state_machine_workflow(
+                user_message=user_message,
+                detected_workflow=active_workflow_id,
+                profile=_profile_with_conversation_memory(profile) or profile,
+            )
+            source = "llm_response" if response.get("llm_attempted") else "workflow_response"
+            _finalize_ai_pipeline_debug_trace(
+                debug_trace,
+                source,
+                response["reply"],
+                {
+                    "workflow_handler": "conversation_os_continue",
+                    "planner_locked": True,
+                    "extracted_fields": response.get("extracted_fields") or continuation.get("extracted_fields") or {},
+                },
+            )
+            _append_workflow_reply(response["reply"], response["intent"], None)
+            return
+
+        if active_workflow_id == V2_WORKFLOW_RECEIPT_CAPTURE:
+            response = _handle_receipt_workflow(user_message)
+            _finalize_ai_pipeline_debug_trace(debug_trace, "workflow_response", response["reply"], {"workflow_handler": "conversation_os_receipt"})
+            _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
+            return
+
     understanding_state = _sync_session_to_application_state()
+    add_pipeline_event("understanding", "understand_conversation", "understanding engine start")
     conversation_understanding = understand_conversation(user_message, understanding_state)
+    add_pipeline_event(
+        "understanding",
+        "understand_conversation",
+        "understanding engine result",
+        {
+            "detected_intent": conversation_understanding.get("detected_intent"),
+            "legacy_intent": conversation_understanding.get("legacy_intent"),
+            "planner_message": conversation_understanding.get("planner_message"),
+        },
+    )
     conversation_state = _ensure_conversation_state()
     conversation_state["understanding"] = conversation_understanding
     conversation_state["last_understanding"] = conversation_understanding
@@ -3455,8 +3843,27 @@ def _show_chat_companion(
     workflow_detection = detect_workflow(planner_message, is_product_feedback=is_product_feedback(user_message))
     state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
     chat_profile = _profile_with_conversation_memory(profile) or profile
+    add_pipeline_event("planner", "build_task_route", "planner/router start")
     reasoning = _record_reasoning(user_message)
     task_route = st.session_state.get("last_task_route") or {}
+    add_pipeline_event(
+        "planner",
+        "build_task_route",
+        "planner/router result",
+        {
+            "planner_locked": bool(task_route.get("planner_locked") or (task_route.get("planner_output") or {}).get("planner_locked")),
+            "task_type": task_route.get("task_type"),
+            "reasoning_action": (task_route.get("reasoning") or {}).get("action"),
+        },
+    )
+    add_pipeline_event(
+        "business_context",
+        "build_business_context",
+        "business_context_engine result",
+        {
+            "business_context": task_route.get("business_context") or {},
+        },
+    )
     _sync_route_intelligence_to_session(task_route)
     _update_ai_pipeline_debug_trace_from_route(debug_trace, task_route)
 
@@ -3473,7 +3880,18 @@ def _show_chat_companion(
         )
         return
 
+    add_pipeline_event("response", "select_planner_first_response", "planner_first response decision")
     planner_first = select_planner_first_response(task_route, st.session_state["chat_history"])
+    add_pipeline_event(
+        "response",
+        "select_planner_first_response",
+        "planner_first response decision",
+        {
+            "planner_first_handled": bool(planner_first.get("handled")),
+            "response_source": "planner_first_response" if planner_first.get("handled") else None,
+            "last_response_empty": not bool(planner_first.get("reply")) if planner_first.get("handled") else False,
+        },
+    )
     if planner_first.get("handled"):
         reply = _clean_chat_reply(planner_first["reply"])
         finalize_debug("planner_first_response", reply, {"response_guard": "planner_first"})
@@ -3489,13 +3907,44 @@ def _show_chat_companion(
     active_workflow_v2_state = state.get("workflow_state_v2") or {}
     active_workflow_v2 = active_workflow_v2_state.get("workflow")
     active_workflow_step_v2 = active_workflow_v2_state.get("step")
+    priority_decision = classify_message_priority(user_message, _sync_session_to_application_state())
+    add_pipeline_event(
+        "conversation_priority",
+        "classify_message_priority",
+        "conversation_priority decision",
+        {
+            "conversation_priority": priority_decision.get("classification"),
+            "priority_action": priority_decision.get("priority_action"),
+            "detected_new_intent": priority_decision.get("detected_new_intent"),
+            "allow_field_extraction": bool(priority_decision.get("allow_field_extraction")),
+        },
+    )
+    _update_application_section("conversation", {"conversation_priority": priority_decision})
     detected_workflow_v2 = detect_workflow_intent(planner_message, is_product_feedback=is_product_feedback(user_message))
-    if conversation_understanding.get("detected_intent") == "continue_previous_workflow" and active_workflow_v2:
+    if priority_decision.get("classification") in {PRIORITY_NEW_INTENT, PRIORITY_WORKFLOW_SWITCH}:
+        detected_workflow_v2 = priority_decision.get("detected_new_intent") or detected_workflow_v2
+    planner_workflow_v2 = (task_route.get("planner_output") or {}).get("workflow")
+    if (
+        not detected_workflow_v2
+        and planner_workflow_v2
+        and planner_workflow_v2 in {
+            V2_WORKFLOW_SALES_PLAN_7_DAY,
+            V2_WORKFLOW_COST_CALCULATION,
+            V2_WORKFLOW_CONTENT_PLAN,
+        }
+    ):
+        detected_workflow_v2 = planner_workflow_v2
+    if (
+        conversation_understanding.get("detected_intent") == "continue_previous_workflow"
+        and active_workflow_v2
+        and priority_decision.get("classification") == PRIORITY_WORKFLOW_ANSWER
+    ):
         detected_workflow_v2 = active_workflow_v2
     if (
         not detected_workflow_v2
         and active_workflow_v2
         and active_workflow_step_v2 not in {"completed", "route_to_product_brain"}
+        and priority_decision.get("classification") == PRIORITY_WORKFLOW_ANSWER
         and detected_workflow not in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE, WORKFLOW_PRODUCT_FEEDBACK}
     ):
         detected_workflow_v2 = active_workflow_v2
@@ -3528,11 +3977,25 @@ def _show_chat_companion(
             "show_business_insights": conversation_understanding.get("detected_intent") in {"store_summary", "business_status"},
         }
         st.session_state["chat_history"].append(assistant_message)
-        _sync_chat_history_to_application_state()
         finalize_debug("direct_conversation_response", direct_reply)
+        add_pipeline_event(
+            "response",
+            "_show_chat_companion",
+            "assistant message appended",
+            {"response_source": "direct_conversation_response", "last_response_empty": not bool(direct_reply)},
+        )
+        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_assistant_message(direct_reply)
+        add_pipeline_event(
+            "render",
+            "_show_chat_companion",
+            "assistant rendered",
+            {"response_source": "direct_conversation_response", "last_response_empty": not bool(direct_reply)},
+        )
         st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
+        finalize_pipeline_trace()
         return
 
     if detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
@@ -3621,11 +4084,25 @@ def _show_chat_companion(
             "show_business_insights": False,
         }
         st.session_state["chat_history"].append(assistant_message)
-        _sync_chat_history_to_application_state()
         finalize_debug("direct_conversation_response", simple_reply)
+        add_pipeline_event(
+            "response",
+            "_show_chat_companion",
+            "assistant message appended",
+            {"response_source": "direct_conversation_response", "last_response_empty": not bool(simple_reply)},
+        )
+        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_assistant_message(simple_reply)
+        add_pipeline_event(
+            "render",
+            "_show_chat_companion",
+            "assistant rendered",
+            {"response_source": "direct_conversation_response", "last_response_empty": not bool(simple_reply)},
+        )
         st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
+        finalize_pipeline_trace()
         return
 
     if conversation_intent == "PRODUCT_FEEDBACK":
@@ -3646,11 +4123,25 @@ def _show_chat_companion(
         }
         _update_conversation_state_after_assistant(response["reply"], conversation_intent, "Product Feedback")
         st.session_state["chat_history"].append(assistant_message)
-        _sync_chat_history_to_application_state()
         finalize_debug(product_source, response["reply"], {"workflow_handler": "product_feedback"})
+        add_pipeline_event(
+            "response",
+            "_show_chat_companion",
+            "assistant message appended",
+            {"response_source": product_source, "last_response_empty": product_empty},
+        )
+        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_assistant_message(response["reply"])
+        add_pipeline_event(
+            "render",
+            "_show_chat_companion",
+            "assistant rendered",
+            {"response_source": product_source, "last_response_empty": product_empty},
+        )
         st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
+        finalize_pipeline_trace()
         return
 
     use_business_context = should_use_business_context(conversation_intent)
@@ -3864,13 +4355,27 @@ def _show_chat_companion(
         state.get("current_topic"),
     )
     st.session_state["chat_history"].append(assistant_message)
-    _sync_chat_history_to_application_state()
     finalize_debug(response_source, response["reply"])
+    add_pipeline_event(
+        "response",
+        "_show_chat_companion",
+        "assistant message appended",
+        {"response_source": response_source, "last_response_empty": response_empty},
+    )
+    _sync_chat_history_to_application_state()
 
     with st.chat_message("assistant"):
         _render_assistant_message(response["reply"])
         _render_assistant_footer(assistant_message)
+    add_pipeline_event(
+        "render",
+        "_show_chat_companion",
+        "assistant rendered",
+        {"response_source": response_source, "last_response_empty": response_empty},
+    )
     st.session_state["chat_pipeline_in_progress"] = False
+    add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
+    finalize_pipeline_trace()
     if demo_ai_success:
         st.success("✨ คุณได้ทดลองใช้ AI แล้ว ลองดูภาพรวมธุรกิจ แผนงานวันนี้ หรือกดสร้างโพสต์ต่อได้เลย")
 

@@ -58,6 +58,24 @@ def _store_profile(application_state: dict | None) -> dict:
     return store
 
 
+def _has_active_workflow(application_state: dict | None) -> bool:
+    state = application_state or {}
+    workflow = state.get("workflow") or {}
+    workflow_state = workflow.get("workflow_state_v2") or {}
+    if workflow_state.get("workflow") and workflow_state.get("step") != "completed":
+        return True
+
+    conversation = state.get("conversation") or {}
+    conversation_workflow_state = conversation.get("workflow_state_v2") or {}
+    if conversation_workflow_state.get("workflow") and conversation_workflow_state.get("step") != "completed":
+        return True
+
+    os_state = conversation.get("conversation_os") or {}
+    active_id = os_state.get("active_workflow_id")
+    active = (os_state.get("workflow_states") or {}).get(active_id) if active_id else None
+    return bool(active and active.get("workflow_status") not in {"END", "CANCELLED", "TIMEOUT", "PAUSED"})
+
+
 def _match_alias(message: str, aliases: dict[str, str]) -> str | None:
     lowered = str(message or "").strip().lower()
     for phrase, value in aliases.items():
@@ -112,6 +130,11 @@ def build_business_context(
     profile = _store_profile(state)
     message = str(user_message or "").strip()
     context = dict(previous)
+    priority = ((state.get("conversation") or {}).get("conversation_priority") or state.get("conversation_priority") or {})
+    if priority.get("allow_field_extraction"):
+        return _clean_dict(context)
+    if _has_active_workflow(state):
+        return _clean_dict(context)
 
     profile_business_type = profile.get("store_type") or profile.get("business_type")
     profile_product = profile.get("product")
