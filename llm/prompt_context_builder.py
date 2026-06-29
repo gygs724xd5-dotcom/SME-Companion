@@ -40,6 +40,29 @@ def _skill_summary(loaded_skill: dict | list | None) -> dict | list | None:
     return _compact_dict(loaded_skill, ["name", "path", "available", "content"])
 
 
+def _business_guidance(reasoning: dict | None, planner: dict | None) -> dict:
+    reasoning = reasoning or {}
+    planner = planner or {}
+    intelligence = planner.get("business_intelligence") or {}
+    business_reasoning = reasoning.get("business_reasoning") or planner.get("business_reasoning") or intelligence.get("business_reasoning") or {}
+    return _compact_dict(
+        {
+            "matched_skill": reasoning.get("matched_skill") or intelligence.get("matched_skill"),
+            "matched_domain": reasoning.get("matched_domain") or intelligence.get("matched_domain"),
+            "business_principle": reasoning.get("business_principle") or planner.get("business_principle") or intelligence.get("business_principle"),
+            "thinking_pattern": reasoning.get("thinking_pattern") or planner.get("thinking_pattern") or intelligence.get("thinking_pattern"),
+            "decision_tree": reasoning.get("decision_tree") or planner.get("decision_tree") or intelligence.get("decision_tree"),
+            "questions_to_ask": reasoning.get("questions_to_ask") or planner.get("questions_to_ask") or intelligence.get("questions_to_ask"),
+            "response_mode": reasoning.get("response_mode") or planner.get("business_response_mode") or intelligence.get("response_mode"),
+            "workflow": reasoning.get("workflow") or intelligence.get("workflow"),
+            "memory_tags": reasoning.get("memory_tags") or intelligence.get("memory_tags"),
+            "confidence": reasoning.get("confidence") or intelligence.get("confidence") or business_reasoning.get("confidence"),
+            "recommended_response": business_reasoning.get("recommended_response"),
+            "things_to_avoid": business_reasoning.get("things_to_avoid"),
+        }
+    )
+
+
 def build_prompt_context(
     application_state: dict | None,
     planner: dict | None = None,
@@ -107,10 +130,30 @@ def build_prompt_context(
         "loaded_skill": _skill_summary(loaded_skill),
         "reasoning": _compact_dict(
             reasoning or {},
-            ["action", "reason", "workflow", "response_mode", "llm_needed", "workflow_ready"],
+            [
+                "action",
+                "reason",
+                "workflow",
+                "response_mode",
+                "llm_needed",
+                "workflow_ready",
+                "business_principle",
+                "thinking_pattern",
+                "decision_tree",
+                "questions_to_ask",
+                "matched_skill",
+                "matched_domain",
+                "memory_tags",
+                "confidence",
+                "bridge_used",
+                "fallback_used",
+            ],
         ),
         "llm_decision": llm_decision or {},
     }
+    business_guidance = _business_guidance(reasoning, planner)
+    if business_guidance:
+        context["business_guidance"] = business_guidance
 
     if product_brain:
         context["product_brain"] = product_brain

@@ -18,6 +18,8 @@ RECEIPT_ANALYSIS_TERMS = [
     "กำไร",
 ]
 
+BUSINESS_REASONING_CONFIDENCE_THRESHOLD = 0.6
+
 
 def _contains_any(message: str, terms: list[str]) -> bool:
     lowered = str(message or "").strip().lower()
@@ -29,6 +31,11 @@ def build_reasoning(application_state, user_message):
     receipt = state.get("receipt") or {}
     workflow = state.get("workflow") or {}
     developer = state.get("developer") or {}
+    business_intelligence = (
+        state.get("business_intelligence")
+        or ((state.get("conversation") or {}).get("business_intelligence"))
+        or {}
+    )
 
     receipt_uploaded = bool(receipt.get("receipt_uploaded"))
     workflow_ready = bool(workflow.get("is_ready") or (workflow.get("workflow_state_v2") or {}).get("is_ready"))
@@ -45,6 +52,34 @@ def build_reasoning(application_state, user_message):
         "llm_needed": False,
         "workflow_ready": workflow_ready,
     }
+
+    if (
+        business_intelligence.get("bridge_used")
+        and float(business_intelligence.get("confidence") or 0.0) >= BUSINESS_REASONING_CONFIDENCE_THRESHOLD
+    ):
+        business_reasoning = business_intelligence.get("business_reasoning") or {}
+        result.update(
+            {
+                "action": "business_reasoning",
+                "reason": business_reasoning.get("reasoning_summary") or "Business Intelligence Bridge matched a business skill.",
+                "workflow": business_intelligence.get("workflow") or current_workflow,
+                "response_mode": business_intelligence.get("response_mode") or business_reasoning.get("response_mode") or "business_reasoning",
+                "llm_needed": True,
+                "business_skill_id": ((business_intelligence.get("matched_skill") or {}).get("skill_id")),
+                "matched_skill": business_intelligence.get("matched_skill"),
+                "matched_domain": business_intelligence.get("matched_domain"),
+                "business_reasoning": business_reasoning,
+                "business_principle": business_intelligence.get("business_principle"),
+                "thinking_pattern": business_intelligence.get("thinking_pattern"),
+                "decision_tree": business_intelligence.get("decision_tree") or [],
+                "questions_to_ask": business_intelligence.get("questions_to_ask") or [],
+                "memory_tags": business_intelligence.get("memory_tags") or [],
+                "confidence": business_intelligence.get("confidence"),
+                "bridge_used": True,
+                "fallback_used": False,
+            }
+        )
+        return result
 
     if receipt_uploaded and _contains_any(user_message, RECEIPT_CONFIRMATION_TERMS):
         result.update(

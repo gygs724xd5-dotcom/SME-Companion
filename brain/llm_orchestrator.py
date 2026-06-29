@@ -21,6 +21,7 @@ DETERMINISTIC_WORKFLOWS = {
 }
 
 LANGUAGE_TASKS = {
+    "Business Consulting",
     "Marketing",
     "General Business Help",
 }

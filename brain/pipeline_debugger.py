@@ -54,7 +54,7 @@ def _safe_get(container, key, default=None):
 def _key_state(overrides: dict | None = None) -> dict:
     session = _session_state()
     session_app_state = _safe_get(session, "application_state", {}) or {}
-    app_state = session_app_state if isinstance(session_app_state, dict) else application_state
+    app_state = session_app_state if session is not None and isinstance(session_app_state, dict) else application_state
     conversation = _safe_get(session, "conversation_state", {}) or (app_state.get("conversation") or {})
     workflow_state = (
         (conversation or {}).get("workflow_state_v2")
@@ -65,6 +65,7 @@ def _key_state(overrides: dict | None = None) -> dict:
     developer = app_state.get("developer") or {}
     route = _safe_get(session, "last_task_route", {}) or developer.get("task_route") or {}
     planner = route.get("planner_output") or {}
+    business_intelligence = route.get("business_intelligence") or planner.get("business_intelligence") or {}
 
     state = {
         "active_workflow_id": (
@@ -84,6 +85,17 @@ def _key_state(overrides: dict | None = None) -> dict:
         "natural_response": _safe_get(session, "last_natural_response") or developer.get("natural_response"),
         "last_response_empty": bool(_safe_get(session, "last_response_empty") or developer.get("last_response_empty")),
         "last_pipeline_error": _safe_get(session, "last_pipeline_error") or developer.get("last_pipeline_error"),
+        "business_skill_search": bool(business_intelligence.get("bridge_used") or business_intelligence.get("fallback_used")),
+        "matched_skill": (business_intelligence.get("matched_skill") or {}).get("skill_id"),
+        "matched_domain": business_intelligence.get("matched_domain"),
+        "business_principle": business_intelligence.get("business_principle"),
+        "thinking_pattern": business_intelligence.get("thinking_pattern"),
+        "decision_tree": business_intelligence.get("decision_tree") or [],
+        "business_reasoning": business_intelligence.get("business_reasoning") or {},
+        "reasoning_confidence": business_intelligence.get("confidence"),
+        "business_response_mode": business_intelligence.get("response_mode"),
+        "bridge_used": bool(business_intelligence.get("bridge_used")),
+        "fallback_used": bool(business_intelligence.get("fallback_used")),
     }
     if overrides:
         state.update(overrides)

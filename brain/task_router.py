@@ -4,6 +4,10 @@ from dataclasses import asdict, is_dataclass
 
 from brain.conversation_manager import active_workflow_state, planner_locked
 from brain.business_context_engine import build_business_context
+from brain.business_intelligence_bridge import (
+    inject_business_intelligence,
+    run_business_intelligence_bridge,
+)
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
 from brain.conversation_understanding_engine import understand_conversation
@@ -34,6 +38,7 @@ TASK_CAPABILITY_NAMES = {
     "Product Feedback": "Product Feedback",
     "Developer Intelligence": "Developer Intelligence",
     "Marketing": "Content Plan",
+    "Business Consulting": "Conversation Memory",
     "General Business Help": "Conversation Memory",
     "OCR": "OCR",
     "Inventory": "Inventory",
@@ -94,7 +99,11 @@ def build_task_route(application_state, user_message) -> dict:
             "planner_locked": True,
         }
 
-    interpretation = understand_conversation(user_message, state)
+    existing_interpretation = state.get("conversation_understanding") or ((state.get("conversation") or {}).get("understanding")) or {}
+    if existing_interpretation.get("raw_text") == str(user_message or ""):
+        interpretation = existing_interpretation
+    else:
+        interpretation = understand_conversation(user_message, state)
     memory_context = get_last_context(state)
     business_context = build_business_context(
         state,
@@ -130,6 +139,24 @@ def build_task_route(application_state, user_message) -> dict:
     }
     planner_message = intent_resolution.get("planner_message") or interpretation.get("planner_message") or user_message
     plan = build_execution_plan(enriched_state, planner_message)
+    bridge_result = run_business_intelligence_bridge(
+        user_message,
+        {
+            "conversation_understanding": interpretation,
+            "conversation_intelligence": conversation_intelligence,
+            "conversation_memory": memory_context,
+            "business_context": business_context,
+            "intent_resolution": intent_resolution,
+            "store_profile": enriched_state.get("store") or {},
+        },
+        plan,
+    )
+    plan = inject_business_intelligence(plan, bridge_result)
+    enriched_state["business_intelligence"] = bridge_result
+    enriched_state["conversation"] = {
+        **(enriched_state.get("conversation") or {}),
+        "business_intelligence": bridge_result,
+    }
     capability_name = TASK_CAPABILITY_NAMES.get(plan.get("task_type"), plan.get("task_type"))
     capability = get_capability(capability_name)
     capability_available = is_capability_available(capability_name)
@@ -166,6 +193,7 @@ def build_task_route(application_state, user_message) -> dict:
         "intent_resolution": intent_resolution,
         "business_context": business_context,
         "conversation_memory": memory_context,
+        "business_intelligence": bridge_result,
         "task_type": plan.get("task_type"),
         "selected_capability": capability,
         "loaded_skills": [_serialize_skill(skill) for skill in loaded_skills],
@@ -192,6 +220,17 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Task Type": route.get("task_type"),
         "Selected Capability": (route.get("selected_capability") or {}).get("name"),
         "Loaded Skill": loaded_skill_names,
+        "Business Skill Search": bool((route.get("business_intelligence") or {}).get("bridge_used") or (route.get("business_intelligence") or {}).get("fallback_used")),
+        "Matched Skill": ((route.get("business_intelligence") or {}).get("matched_skill") or {}).get("skill_id"),
+        "Matched Domain": (route.get("business_intelligence") or {}).get("matched_domain"),
+        "Business Principle": (route.get("business_intelligence") or {}).get("business_principle"),
+        "Thinking Pattern": (route.get("business_intelligence") or {}).get("thinking_pattern"),
+        "Decision Tree": (route.get("business_intelligence") or {}).get("decision_tree") or [],
+        "Business Reasoning": (route.get("business_intelligence") or {}).get("business_reasoning") or {},
+        "Reasoning Confidence": (route.get("business_intelligence") or {}).get("confidence"),
+        "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
+        "Bridge Used": bool((route.get("business_intelligence") or {}).get("bridge_used")),
+        "Fallback Used": bool((route.get("business_intelligence") or {}).get("fallback_used")),
         "Reasoning Mode": route.get("reasoning_mode"),
         "Workflow Ready": bool(route.get("workflow_ready")),
         "Planner Locked": bool(route.get("planner_locked") or (route.get("planner_output") or {}).get("planner_locked")),

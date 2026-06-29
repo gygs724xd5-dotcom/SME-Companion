@@ -924,6 +924,7 @@ def _record_reasoning(user_message: str) -> dict:
         {
             "task_route": task_route,
             "planner_output": task_route.get("planner_output"),
+            "business_intelligence": task_route.get("business_intelligence") or {},
             "selected_capability": task_route.get("selected_capability"),
             "loaded_skills": task_route.get("loaded_skills"),
             "reasoning_mode": task_route.get("reasoning_mode"),
@@ -960,6 +961,7 @@ def _sync_route_intelligence_to_session(route: dict | None) -> None:
             "business_context": business_context,
             "intent_resolution": intent_resolution,
             "conversation_intelligence": route.get("conversation_intelligence") or {},
+            "business_intelligence": route.get("business_intelligence") or {},
         },
     )
     _update_application_section("business_context", business_context)
@@ -1034,6 +1036,7 @@ def _update_ai_pipeline_debug_trace_from_route(trace: dict, route: dict | None) 
     trace["selected_capability"] = _selected_capability_name(route)
     trace["loaded_skill_names"] = _loaded_skill_names(route)
     trace["reasoning"] = route.get("reasoning") or {}
+    trace["business_intelligence"] = route.get("business_intelligence") or {}
     trace["reasoning_mode"] = route.get("reasoning_mode")
     trace["llm_decision"] = route.get("llm_decision") or {}
     trace["prompt_context"] = route.get("prompt_context") or {}
@@ -3914,6 +3917,39 @@ def _show_chat_companion(
             "planner_locked": bool(task_route.get("planner_locked") or (task_route.get("planner_output") or {}).get("planner_locked")),
             "task_type": task_route.get("task_type"),
             "reasoning_action": (task_route.get("reasoning") or {}).get("action"),
+        },
+    )
+    business_intelligence = task_route.get("business_intelligence") or {}
+    add_pipeline_event(
+        "business_intelligence",
+        "Business Skill Search",
+        "Business Skill Search",
+        {
+            "Business Skill Search": bool(business_intelligence.get("bridge_used") or business_intelligence.get("fallback_used")),
+            "Bridge Used": bool(business_intelligence.get("bridge_used")),
+            "Fallback Used": bool(business_intelligence.get("fallback_used")),
+        },
+    )
+    add_pipeline_event(
+        "business_intelligence",
+        "Matched Skill",
+        "Matched Skill",
+        {
+            "Matched Skill": (business_intelligence.get("matched_skill") or {}).get("skill_id"),
+            "Matched Domain": business_intelligence.get("matched_domain"),
+            "Business Principle": business_intelligence.get("business_principle"),
+            "Thinking Pattern": business_intelligence.get("thinking_pattern"),
+            "Decision Tree": business_intelligence.get("decision_tree") or [],
+        },
+    )
+    add_pipeline_event(
+        "business_intelligence",
+        "Business Reasoning",
+        "Business Reasoning",
+        {
+            "Business Reasoning": business_intelligence.get("business_reasoning") or {},
+            "Reasoning Confidence": business_intelligence.get("confidence"),
+            "Business Response Mode": business_intelligence.get("response_mode"),
         },
     )
     add_pipeline_event(

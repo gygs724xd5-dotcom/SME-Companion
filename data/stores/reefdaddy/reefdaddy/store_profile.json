@@ -125,6 +125,48 @@
           "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
           "urgency_level": "กลาง"
         }
+      },
+      {
+        "created_at": "2026-06-29T14:04:47",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-29T14:05:19",
+        "event_type": "chat_question",
+        "summary": "มาเรียนรู้ธุรกิจกัน",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-29T16:56:45",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-29T16:57:13",
+        "event_type": "chat_question",
+        "summary": "ลูกค้าบอกว่าแพง",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
       }
     ]
   },
@@ -163,5 +205,5 @@
   "created_at": "2026-06-28T11:39:35+00:00",
   "owner_id": "reefdaddy",
   "store_id": "reefdaddy",
-  "updated_at": "2026-06-29T03:33:01+00:00"
+  "updated_at": "2026-06-29T09:58:44+00:00"
 }
