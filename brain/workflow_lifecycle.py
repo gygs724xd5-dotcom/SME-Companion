@@ -40,6 +40,23 @@ _PRICING_TRIGGERS = (
     "pricing",
 )
 
+_VARIANT_TRIGGERS = _VARIANT_TRIGGERS + (
+    "\u0e02\u0e2d\u0e2d\u0e35\u0e01\u0e41\u0e1a\u0e1a",
+    "\u0e2d\u0e35\u0e01\u0e41\u0e1a\u0e1a",
+    "\u0e40\u0e2d\u0e32\u0e41\u0e1a\u0e1a\u0e2a\u0e31\u0e49\u0e19",
+    "\u0e40\u0e2d\u0e32\u0e41\u0e1a\u0e1a\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19",
+)
+
+_PRICING_TRIGGERS = _PRICING_TRIGGERS + (
+    "\u0e04\u0e27\u0e23\u0e02\u0e32\u0e22\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23",
+    "\u0e02\u0e32\u0e22\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23",
+    "\u0e15\u0e31\u0e49\u0e07\u0e23\u0e32\u0e04\u0e32",
+    "\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22",
+    "\u0e01\u0e33\u0e44\u0e23",
+    "profit",
+    "markup",
+)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -160,6 +177,7 @@ def classify_completed_workflow_followup(application_state: dict | None, user_me
         "reuse_completed_workflow": False,
         "completed_workflow": completed or {},
         "workflow_transition_reason": None,
+        "followup_chain": [],
     }
     if not completed or not normalized:
         return base
@@ -172,6 +190,7 @@ def classify_completed_workflow_followup(application_state: dict | None, user_me
             "workflow_variant_mode": VARIANT_MODE_GENERATE_VARIANT,
             "reuse_completed_workflow": True,
             "workflow_transition_reason": "variant request reused last completed workflow",
+            "followup_chain": ["completed_workflow", "variant_request"],
         }
 
     if workflow_id == WORKFLOW_COST_CALCULATION and any(trigger in normalized for trigger in _PRICING_TRIGGERS):
@@ -181,6 +200,7 @@ def classify_completed_workflow_followup(application_state: dict | None, user_me
             "workflow_variant_mode": VARIANT_MODE_NONE,
             "reuse_completed_workflow": True,
             "workflow_transition_reason": "pricing follow-up reused completed cost workflow",
+            "followup_chain": ["completed_workflow", "pricing_followup"],
         }
 
     return base

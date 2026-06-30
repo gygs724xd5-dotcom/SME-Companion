@@ -60,7 +60,6 @@ from brain.workflow_lifecycle import (
     completed_to_workflow_state,
     mark_completed,
     mark_executing,
-    pricing_reply_from_completed_cost,
     variant_instruction_from_message,
 )
 from brain.workflow_readiness import (
@@ -94,7 +93,11 @@ from brain.pipeline_debugger import (
     get_pipeline_trace,
     start_pipeline_trace,
 )
-from brain.workflow_reply_builder import build_workflow_reply, prepare_content_collection_state
+from brain.workflow_reply_builder import (
+    build_workflow_reply,
+    completed_workflow_followup_reply,
+    prepare_content_collection_state,
+)
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
 from feedback.chatgpt_export_builder import (
@@ -1162,6 +1165,15 @@ def _finalize_ai_pipeline_debug_trace(
         },
     ).get("diagnostics") or {}
     workflow_extra.update(response_audit)
+    response_audit = {**response_audit, **{key: workflow_extra.get(key) for key in (
+        "response_type",
+        "response_source",
+        "response_reason",
+        "reuse_completed_workflow",
+        "variant_source",
+        "composer_trace",
+        "followup_chain",
+    ) if key in workflow_extra}}
     add_pipeline_event(
         "response",
         "_finalize_ai_pipeline_debug_trace",
@@ -3095,17 +3107,29 @@ def _completed_workflow_followup_response(user_message: str, application_state: 
         return None
     completed = decision.get("completed_workflow") or {}
     workflow_id = completed.get("workflow_id")
+    composed = completed_workflow_followup_reply(
+        completed,
+        user_message,
+        workflow_variant_mode=decision.get("workflow_variant_mode"),
+    )
     if workflow_id == V2_WORKFLOW_COST_CALCULATION and decision.get("workflow_variant_mode") is None:
-        reply = pricing_reply_from_completed_cost(completed)
-        if reply:
+        if composed and composed.get("reply"):
             return {
-                "reply": reply,
+                "reply": composed["reply"],
                 "intent": workflow_id,
                 "done": True,
                 "workflow_lifecycle": decision,
                 "response_mode": "generate_output",
                 "reply_builder": "workflow_completion_followup",
                 "natural_response": True,
+                "response_type": composed.get("response_type"),
+                "response_source": composed.get("response_source"),
+                "response_reason": composed.get("response_reason"),
+                "reuse_completed_workflow": True,
+                "variant_source": composed.get("variant_source"),
+                "composer_trace": composed.get("composer_trace") or [],
+                "followup_chain": decision.get("followup_chain") or [],
+                "calculation_trace": composed.get("calculation_trace") or {},
             }
 
     workflow_state = completed_to_workflow_state(completed)
@@ -3119,6 +3143,8 @@ def _completed_workflow_followup_response(user_message: str, application_state: 
     reply = _generate_workflow_reply(workflow_state)
     if variant.get("short"):
         reply = "\n".join([line for line in reply.splitlines() if line.strip()][:4])
+    if composed and composed.get("reply"):
+        reply = composed["reply"]
     return {
         "reply": reply,
         "intent": workflow_id,
@@ -3127,6 +3153,14 @@ def _completed_workflow_followup_response(user_message: str, application_state: 
         "response_mode": "generate_output",
         "reply_builder": "workflow_completion_followup",
         "natural_response": True,
+        "response_type": (composed or {}).get("response_type") or "workflow_followup",
+        "response_source": (composed or {}).get("response_source") or "completed_workflow",
+        "response_reason": (composed or {}).get("response_reason") or "fallback_completed_workflow_generation",
+        "reuse_completed_workflow": True,
+        "variant_source": (composed or {}).get("variant_source"),
+        "composer_trace": (composed or {}).get("composer_trace") or ["completed_workflow", "legacy_workflow_generator"],
+        "followup_chain": decision.get("followup_chain") or [],
+        "calculation_trace": (composed or {}).get("calculation_trace") or {},
     }
 
 
@@ -4141,6 +4175,14 @@ def _show_chat_companion(
             "response_mode": completed_followup.get("response_mode"),
             "reply_builder": completed_followup.get("reply_builder"),
             "natural_response": completed_followup.get("natural_response"),
+            "response_type": completed_followup.get("response_type"),
+            "response_source": completed_followup.get("response_source"),
+            "response_reason": completed_followup.get("response_reason"),
+            "reuse_completed_workflow": completed_followup.get("reuse_completed_workflow"),
+            "variant_source": completed_followup.get("variant_source"),
+            "composer_trace": completed_followup.get("composer_trace") or [],
+            "followup_chain": completed_followup.get("followup_chain") or [],
+            "calculation_trace": completed_followup.get("calculation_trace") or {},
             "workflow_status": "COMPLETED",
             "workflow_complete": True,
             "workflow_released": True,

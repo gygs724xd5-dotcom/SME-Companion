@@ -547,6 +547,13 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "llm_response_used": bool(route.get("llm_response_used")),
         "workflow_response_used": bool(route.get("workflow_response_used")),
         "reasoning_response_used": bool(route.get("reasoning_response_used")),
+        "response_type": route.get("response_type"),
+        "response_source": route.get("response_source"),
+        "response_reason": route.get("response_reason"),
+        "reuse_completed_workflow": bool(route.get("reuse_completed_workflow")),
+        "variant_source": route.get("variant_source"),
+        "composer_trace": route.get("composer_trace") or [],
+        "followup_chain": route.get("followup_chain") or [],
     }
 
     return {
@@ -586,6 +593,17 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "workflow_transition_reason": workflow.get("workflow_transition_reason") or (workflow.get("workflow_state") or {}).get("workflow_transition_reason"),
         "workflow_followup_mode": workflow.get("workflow_followup_mode") or (workflow.get("workflow_state") or {}).get("workflow_followup_mode"),
         "workflow_variant_mode": workflow.get("workflow_variant_mode") or (workflow.get("workflow_state") or {}).get("workflow_variant_mode"),
+        "response_type": route.get("response_type") or response_audit_defaults.get("response_type"),
+        "response_source": route.get("response_source") or response_audit_defaults.get("response_source"),
+        "response_reason": route.get("response_reason") or response_audit_defaults.get("response_reason"),
+        "reuse_completed_workflow": bool(
+            route.get("reuse_completed_workflow")
+            or response_audit_defaults.get("reuse_completed_workflow")
+            or workflow.get("reuse_completed_workflow")
+        ),
+        "variant_source": route.get("variant_source") or response_audit_defaults.get("variant_source"),
+        "composer_trace": route.get("composer_trace") or response_audit_defaults.get("composer_trace") or [],
+        "followup_chain": route.get("followup_chain") or response_audit_defaults.get("followup_chain") or workflow.get("followup_chain") or [],
         "workflow_stage": workflow.get("workflow_stage"),
         "workflow_progress": workflow.get("workflow_progress") or {},
         "workflow_confidence": workflow.get("workflow_confidence"),
