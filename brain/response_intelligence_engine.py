@@ -4,6 +4,7 @@ from difflib import SequenceMatcher
 import re
 
 from brain.business_context_engine import sanitize_user_context_text
+from brain.task_router import workflow_response_gate
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION,
@@ -90,6 +91,7 @@ def _business_context_reply(business_context: dict) -> str | None:
 
 def select_planner_first_response(route: dict | None, chat_history: list[dict] | None = None) -> dict:
     route = route or {}
+    gate = workflow_response_gate(route)
     active_workflow_state = _active_workflow_state_v2(route)
     if active_workflow_state:
         return {"handled": False}
@@ -119,7 +121,7 @@ def select_planner_first_response(route: dict | None, chat_history: list[dict] |
             "topic": plan.get("task_type"),
         }
 
-    if workflow and plan.get("next_step") == "collect_missing_information" and (
+    if workflow and gate.get("workflow_response_allowed") and plan.get("next_step") == "collect_missing_information" and (
         workflow == WORKFLOW_CONTENT_PLAN or not has_numeric_fields
     ):
         return {
@@ -149,7 +151,8 @@ def guard_response(reply: str | None, route: dict | None, chat_history: list[dic
     plan = (route or {}).get("planner_output") or {}
     workflow = plan.get("workflow") or ((route or {}).get("intent_resolution") or {}).get("resolved_workflow")
     missing = list(plan.get("missing_information") or [])
-    if workflow and missing:
+    gate = workflow_response_gate(route)
+    if workflow and missing and gate.get("workflow_response_allowed"):
         return {
             "changed": True,
             "reply": _first_missing_question(missing),

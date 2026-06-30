@@ -78,7 +78,7 @@ from brain.response_intelligence_engine import guard_response, select_planner_fi
 from brain.response_mode_engine import determine_response_mode
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
-from brain.task_router import build_task_route, developer_diagnostics
+from brain.task_router import build_task_route, developer_diagnostics, workflow_response_gate
 from brain.pipeline_debugger import (
     add_pipeline_event,
     finalize_pipeline_trace,
@@ -763,6 +763,27 @@ def _resolve_assistant_reply(reply: str | None, response_source: str) -> tuple[s
     return EMPTY_CHAT_RESPONSE_FALLBACK, "empty_response_fallback", True
 
 
+def _source_when_workflow_response_blocked(route: dict | None) -> str:
+    route = route or {}
+    workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or {}
+    llm_decision = route.get("llm_decision") or st.session_state.get("last_llm_decision") or {}
+    if workflow.get("workflow_action") == "complete" or workflow.get("workflow_complete"):
+        return "reasoning_response"
+    if llm_decision.get("should_use_llm") or llm_decision.get("response_mode") == "llm":
+        return "llm_response"
+    return "direct_conversation_response"
+
+
+def _workflow_response_source_for_current_route() -> str:
+    route = st.session_state.get("last_task_route") or {}
+    if not route:
+        return "workflow_response"
+    gate = workflow_response_gate(route)
+    if gate.get("workflow_response_allowed"):
+        return "workflow_response"
+    return _source_when_workflow_response_blocked(route)
+
+
 def _handle_chat_pipeline_exception(error: Exception) -> None:
     error_text = f"{type(error).__name__}: {error}"
     add_pipeline_event(
@@ -942,6 +963,7 @@ def _record_reasoning(user_message: str) -> dict:
 
 def _sync_route_intelligence_to_session(route: dict | None) -> None:
     route = route or {}
+    gate = workflow_response_gate(route)
     conversation_state = _ensure_conversation_state()
     business_context = route.get("business_context") or {}
     memory_context = route.get("conversation_memory") or {}
@@ -965,6 +987,7 @@ def _sync_route_intelligence_to_session(route: dict | None) -> None:
         },
     )
     _update_application_section("business_context", business_context)
+    _update_application_section("developer", gate)
 
 
 def _loaded_skill_names(route: dict | None) -> list[str]:
@@ -1056,6 +1079,11 @@ def _finalize_ai_pipeline_debug_trace(
 ) -> dict | None:
     final_reply, response_source, response_empty = _resolve_assistant_reply(final_reply, response_source)
     workflow_extra = dict(workflow_extra or {})
+    route = st.session_state.get("last_task_route") or {}
+    gate = workflow_response_gate(route)
+    if route and response_source == "workflow_response" and not gate.get("workflow_response_allowed"):
+        response_source = _source_when_workflow_response_blocked(route)
+    workflow_extra.update(gate)
     response_mode = workflow_extra.get("response_mode")
     if not response_mode:
         mode_decision = determine_response_mode(
@@ -3301,7 +3329,8 @@ def _handle_receipt_workflow(user_message: str) -> dict:
 
 
 def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) -> None:
-    reply, response_source, response_empty = _resolve_assistant_reply(reply, "workflow_response")
+    response_source = _workflow_response_source_for_current_route()
+    reply, response_source, response_empty = _resolve_assistant_reply(reply, response_source)
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
     st.session_state["chat_history"].append(assistant_message)

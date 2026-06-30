@@ -22,6 +22,15 @@ from brain.reasoning_engine import build_reasoning
 from brain.skill_loader import load_skills
 
 
+BYPASS_WORKFLOW_RESPONSE_INTENTS = {
+    "general_question",
+    "label_explanation",
+    "customer_reply",
+    "marketing_content",
+    "business_advice",
+    "unknown_with_question",
+}
+
 PLACEHOLDER_ENGINES = {
     "ocr_engine": None,
     "inventory_engine": None,
@@ -90,6 +99,50 @@ def _matched_intents(plan: dict | None, interpretation: dict | None, intent_reso
     return [str(intent) for intent in intents if intent not in (None, "", [], {})]
 
 
+def workflow_response_gate(task_route: dict | None) -> dict:
+    route = task_route or {}
+    workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
+    intent = (
+        workflow.get("detected_intent")
+        or ((route.get("detected_intent") or {}).get("detected_intent"))
+        or ((route.get("business_context") or {}).get("detected_intent"))
+    )
+    action = workflow.get("workflow_action")
+    missing_entities = list(workflow.get("missing_entities") or [])
+    completeness = workflow.get("entity_completeness") or {}
+    required = int(completeness.get("required") or len(workflow.get("required_entities") or []))
+    completed = int(completeness.get("completed") or len(workflow.get("completed_entities") or []))
+    is_complete = bool(
+        workflow.get("workflow_complete")
+        or (required > 0 and completed >= required)
+        or (required > 0 and float(completeness.get("percent") or 0) >= 1.0)
+    )
+
+    blocked_reason = None
+    if action in {"interrupt", "resume", "complete", "cancel"}:
+        blocked_reason = f"workflow_action_{action}"
+    elif intent in BYPASS_WORKFLOW_RESPONSE_INTENTS:
+        blocked_reason = f"intent_{intent}"
+    elif is_complete:
+        blocked_reason = "entity_completeness_complete"
+    elif action not in {"continue", "start_new"}:
+        blocked_reason = f"workflow_action_{action or 'missing'}"
+    elif not missing_entities:
+        blocked_reason = "missing_entities_empty"
+
+    allowed = blocked_reason is None
+    return {
+        "final_response_gate": "workflow_missing_entities" if allowed else "workflow_response_bypassed",
+        "workflow_response_allowed": allowed,
+        "workflow_response_blocked_reason": blocked_reason,
+    }
+
+
+def _with_response_gate(route: dict) -> dict:
+    gate = workflow_response_gate(route)
+    return {**route, **gate}
+
+
 def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
     business_intent = detect_business_intent(user_message)
@@ -102,7 +155,7 @@ def build_task_route(application_state, user_message) -> dict:
     )
     if planner_locked(state) and workflow_decision.get("workflow_action") not in {"interrupt", "start_new"}:
         workflow_state = active_workflow_state(state) or {}
-        return {
+        return _with_response_gate({
             "planner_output": {
                 "goal": str(user_message or "").strip(),
                 "task_type": workflow_state.get("workflow_name"),
@@ -150,7 +203,7 @@ def build_task_route(application_state, user_message) -> dict:
             "capability_available": True,
             "placeholders": dict(PLACEHOLDER_ENGINES),
             "planner_locked": True,
-        }
+        })
 
     existing_interpretation = state.get("conversation_understanding") or ((state.get("conversation") or {}).get("understanding")) or {}
     if existing_interpretation.get("raw_text") == str(user_message or ""):
@@ -280,7 +333,7 @@ def build_task_route(application_state, user_message) -> dict:
     llm_decision = decide_llm_usage(llm_reasoning_context)
     llm_needed = bool(llm_decision.get("should_use_llm"))
 
-    return {
+    return _with_response_gate({
         "planner_output": plan,
         "conversation_understanding": interpretation,
         "conversation_intelligence": conversation_intelligence,
@@ -313,7 +366,7 @@ def build_task_route(application_state, user_message) -> dict:
         "llm_needed": llm_needed,
         "capability_available": capability_available,
         "placeholders": dict(PLACEHOLDER_ENGINES),
-    }
+    })
 
 
 def developer_diagnostics(task_route: dict | None) -> dict:
@@ -377,4 +430,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "LLM Decision": route.get("llm_decision") or {},
         "LLM Needed": bool(route.get("llm_needed")),
         "Capability Available": bool(route.get("capability_available")),
+        "final_response_gate": route.get("final_response_gate") or workflow_response_gate(route).get("final_response_gate"),
+        "workflow_response_allowed": bool(route.get("workflow_response_allowed") if "workflow_response_allowed" in route else workflow_response_gate(route).get("workflow_response_allowed")),
+        "workflow_response_blocked_reason": route.get("workflow_response_blocked_reason") or workflow_response_gate(route).get("workflow_response_blocked_reason"),
     }
