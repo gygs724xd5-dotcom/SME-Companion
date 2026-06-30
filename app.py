@@ -83,6 +83,10 @@ from brain.promotion_engine import get_promotion_idea
 from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.response_intelligence_engine import guard_response, select_final_response, select_planner_first_response
+from brain.response_transformation_engine import (
+    build_response_memory,
+    transform_response,
+)
 from brain.response_mode_engine import determine_response_mode
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
@@ -673,6 +677,13 @@ DEFAULT_CONVERSATION_STATE = {
     "workflow_state_v2": {},
     "workflow_blocked_phrases": {},
     "conversation_os": {},
+    "last_generated_response": None,
+    "last_response_type": None,
+    "last_generation_context": {},
+    "last_variant_history": [],
+    "last_transformation_chain": [],
+    "transformation_history": [],
+    "response_memory": {},
 }
 
 
@@ -682,6 +693,11 @@ def _new_conversation_state() -> dict:
     state["workflow_state_v2"] = {}
     state["workflow_blocked_phrases"] = {}
     state["conversation_os"] = {}
+    state["last_generation_context"] = {}
+    state["last_variant_history"] = []
+    state["last_transformation_chain"] = []
+    state["transformation_history"] = []
+    state["response_memory"] = {}
     return state
 
 
@@ -1185,6 +1201,14 @@ def _finalize_ai_pipeline_debug_trace(
         "planner_skipped",
         "reuse_reason",
         "response_generation_mode",
+        "transformation_type",
+        "transformation_reason",
+        "transformation_source",
+        "transformation_chain",
+        "transformation_history",
+        "used_previous_response",
+        "rewrite_mode",
+        "translation_mode",
     ) if key in workflow_extra}}
     add_pipeline_event(
         "response",
@@ -2612,6 +2636,35 @@ def _update_conversation_state_after_assistant(reply: str, intent: str, topic: s
         state["greeted"] = True
 
 
+def _remember_generated_response(
+    reply: str,
+    *,
+    response_type: str | None = None,
+    generation_context: dict | None = None,
+    transformation_result: dict | None = None,
+) -> dict:
+    state = _ensure_conversation_state()
+    previous_memory = state.get("response_memory") or {
+        "last_generated_response": state.get("last_generated_response"),
+        "last_response_type": state.get("last_response_type"),
+        "last_generation_context": state.get("last_generation_context") or {},
+        "last_variant_history": state.get("last_variant_history") or [],
+        "last_transformation_chain": state.get("last_transformation_chain") or [],
+        "transformation_history": state.get("transformation_history") or [],
+    }
+    memory = build_response_memory(
+        reply,
+        response_type=response_type,
+        generation_context=generation_context,
+        previous_memory=previous_memory,
+        transformation_result=transformation_result,
+    )
+    state.update(memory)
+    state["response_memory"] = memory
+    _update_application_section("conversation", {**state, "response_memory": memory})
+    return memory
+
+
 def _one_question_correction_reply() -> str:
     state = _ensure_conversation_state()
     topic = state.get("current_topic") or "เรื่องก่อนหน้า"
@@ -3517,6 +3570,15 @@ def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) ->
     reply, response_source, response_empty = _resolve_assistant_reply(reply, response_source)
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
+    _remember_generated_response(
+        reply,
+        response_type=intent or "workflow_response",
+        generation_context={
+            "intent": intent,
+            "topic": topic,
+            "response_source": response_source,
+        },
+    )
     st.session_state["chat_history"].append(assistant_message)
     add_pipeline_event(
         "response",
@@ -3977,6 +4039,69 @@ def _show_chat_companion(
     _sync_chat_history_to_application_state()
     with st.chat_message("user"):
         _render_markdown(user_message)
+
+    transformation = transform_response(user_message, _sync_session_to_application_state())
+    if transformation.get("handled"):
+        reply = _clean_chat_reply(transformation.get("reply") or "")
+        reply, response_source, response_empty = _resolve_assistant_reply(reply, "response_transformation")
+        debug_trace = _new_ai_pipeline_debug_trace(user_message, {})
+        workflow_extra = {
+            "workflow_handler": "response_transformation_engine",
+            "response_mode": "transform_previous_response",
+            "reply_builder": "response_transformation_engine",
+            "natural_response": True,
+            "response_type": transformation.get("response_type"),
+            "response_source": transformation.get("response_source"),
+            "response_reason": transformation.get("response_reason"),
+            "transformation_type": transformation.get("transformation_type"),
+            "transformation_reason": transformation.get("transformation_reason"),
+            "transformation_source": transformation.get("transformation_source"),
+            "transformation_chain": transformation.get("transformation_chain") or [],
+            "transformation_history": transformation.get("transformation_history") or [],
+            "used_previous_response": transformation.get("used_previous_response"),
+            "rewrite_mode": transformation.get("rewrite_mode"),
+            "translation_mode": transformation.get("translation_mode"),
+            "conversation_style": transformation.get("conversation_style"),
+            "continuation_mode": transformation.get("continuation_mode"),
+            "direct_answer_mode": transformation.get("direct_answer_mode"),
+            "planner_skipped": transformation.get("planner_skipped"),
+            "reuse_reason": transformation.get("reuse_reason"),
+            "response_generation_mode": transformation.get("response_generation_mode"),
+        }
+        _update_conversation_state_after_assistant(
+            reply,
+            transformation.get("response_type") or "response_transformation",
+            _ensure_conversation_state().get("current_topic"),
+        )
+        _remember_generated_response(
+            reply,
+            response_type=transformation.get("response_type") or "response_transformation",
+            generation_context=transformation.get("last_generation_context") or {},
+            transformation_result=transformation,
+        )
+        st.session_state["chat_history"].append(
+            {"role": "assistant", "content": reply, "show_business_insights": False}
+        )
+        _sync_chat_history_to_application_state()
+        _finalize_ai_pipeline_debug_trace(debug_trace, response_source, reply, workflow_extra)
+        add_pipeline_event(
+            "response",
+            "response_transformation_engine",
+            "assistant message appended",
+            {"response_source": response_source, "last_response_empty": response_empty, **workflow_extra},
+        )
+        with st.chat_message("assistant"):
+            _render_assistant_message(reply)
+        add_pipeline_event(
+            "render",
+            "response_transformation_engine",
+            "assistant rendered",
+            {"response_source": response_source, "last_response_empty": response_empty},
+        )
+        st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "response_transformation_engine", "pipeline finalized")
+        finalize_pipeline_trace()
+        return
 
     locked_state = _sync_session_to_application_state()
     locked_workflow = conversation_os_active_workflow_state(locked_state)
