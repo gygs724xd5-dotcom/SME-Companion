@@ -463,6 +463,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Reasoning Confidence": (route.get("business_intelligence") or {}).get("confidence"),
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
         "skill_match_audit": (route.get("business_intelligence") or {}).get("skill_match_audit") or {},
+        "skill_match_audit_summary": (route.get("business_intelligence") or {}).get("skill_match_audit_summary") or {},
         "detected_intent": route.get("detected_intent") or ((route.get("llm_reasoning_context") or {}).get("detected_intent")) or {},
         "extracted_entities": route.get("extracted_entities") or ((route.get("llm_reasoning_context") or {}).get("extracted_entities")) or {},
         "workflow_action": workflow.get("workflow_action"),

@@ -115,6 +115,91 @@ def _suspicious_matches(ranked_matches: list[dict]) -> list[dict]:
     return suspicious
 
 
+def _suspicious_token_summary(ranked_matches: list[dict]) -> list[dict]:
+    summary: list[dict] = []
+    suspicious_types = {
+        "conversation_context",
+        "skill_metadata",
+        "bridge_context",
+        "derived",
+        "memory",
+        "domain",
+        "intent",
+    }
+    for match in ranked_matches or []:
+        for item in match.get("match_provenance") or []:
+            if item.get("matched_from_current_message"):
+                continue
+            if item.get("token_type") not in suspicious_types:
+                continue
+            if not (
+                item.get("matched_from_conversation_context")
+                or item.get("matched_from_memory")
+                or item.get("matched_from_skill_metadata")
+                or item.get("token_type") in {"derived", "intent", "domain"}
+            ):
+                continue
+            summary.append(
+                {
+                    "token": item.get("token"),
+                    "skill_id": match.get("skill_id"),
+                    "source_field": item.get("source_field"),
+                    "matched_from_current_message": bool(item.get("matched_from_current_message")),
+                    "score_contribution": item.get("score_contribution"),
+                }
+            )
+    return summary
+
+
+def _skill_match_audit_summary(ranked_matches: list[dict]) -> dict:
+    suspicious_tokens = _suspicious_token_summary(ranked_matches)
+    suspicious_by_skill: dict[str, list[dict]] = {}
+    for item in suspicious_tokens:
+        skill_id = str(item.get("skill_id") or "")
+        suspicious_by_skill.setdefault(skill_id, []).append(item)
+
+    top_ranked_skills: list[dict] = []
+    for match in (ranked_matches or [])[:5]:
+        skill_id = str(match.get("skill_id") or "")
+        current_message_match = match.get("current_message_match") or {}
+        context_match = match.get("context_match") or {}
+        intent_match = match.get("intent_match") or {}
+        skill_suspicious = suspicious_by_skill.get(skill_id, [])
+        top_ranked_skills.append(
+            {
+                "skill_id": match.get("skill_id"),
+                "score": match.get("score"),
+                "current_message_evidence": {
+                    "keywords": current_message_match.get("current_message_matched_keywords") or [],
+                    "aliases": current_message_match.get("current_message_matched_aliases") or [],
+                    "score": current_message_match.get("current_message_score"),
+                },
+                "context_evidence": {
+                    "tokens": context_match.get("context_tokens_used") or [],
+                    "sources": context_match.get("context_sources_used") or [],
+                    "suppressed": bool(context_match.get("context_suppressed")),
+                    "suppression_reason": context_match.get("context_suppression_reason"),
+                },
+                "suspicious_tokens": [item.get("token") for item in skill_suspicious],
+                "suspicious_token_sources": [
+                    {
+                        "token": item.get("token"),
+                        "source_field": item.get("source_field"),
+                    }
+                    for item in skill_suspicious
+                ],
+                "intent_score": intent_match.get("intent_score"),
+                "context_score": context_match.get("context_score"),
+                "why_ranked": match.get("reason"),
+            }
+        )
+
+    return {
+        "top_ranked_skills": top_ranked_skills,
+        "suspicious_tokens": suspicious_tokens,
+    }
+
+
 def _skill_match_audit(
     user_message: str,
     conversation_context: dict | None,
@@ -143,6 +228,7 @@ def _skill_match_audit(
         "top_skill_score": top.get("score"),
         "top_skill_reason": top.get("reason"),
         "suspicious_matches": _suspicious_matches(ranked_matches),
+        "skill_match_audit_summary": _skill_match_audit_summary(ranked_matches),
     }
 
 
@@ -189,6 +275,7 @@ def run_business_intelligence_bridge(
     try:
         matched_skill, broad_consulting, ranked_matches = _best_skill(user_message, conversation_context)
         skill_match_audit = _skill_match_audit(user_message, conversation_context, ranked_matches)
+        skill_match_audit_summary = skill_match_audit.get("skill_match_audit_summary") or {}
         if not matched_skill:
             return {
                 "bridge_used": False,
@@ -206,6 +293,7 @@ def run_business_intelligence_bridge(
                 "detected_intent": detected_intent,
                 "extracted_entities": extracted_entities,
                 "skill_match_audit": skill_match_audit,
+                "skill_match_audit_summary": skill_match_audit_summary,
             }
 
         reasoning = reason_business_message(
@@ -251,6 +339,7 @@ def run_business_intelligence_bridge(
             "detected_intent": detected_intent,
             "extracted_entities": extracted_entities,
             "skill_match_audit": skill_match_audit,
+            "skill_match_audit_summary": skill_match_audit_summary,
         }
         return {
             **business_payload,
@@ -274,6 +363,7 @@ def run_business_intelligence_bridge(
             "detected_intent": detected_intent,
             "extracted_entities": extracted_entities,
             "skill_match_audit": _skill_match_audit(user_message, conversation_context, []),
+            "skill_match_audit_summary": _skill_match_audit_summary([]),
             "bridge_error": f"{type(exc).__name__}: {exc}",
         }
 

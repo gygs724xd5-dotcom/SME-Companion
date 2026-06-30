@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from brain import pipeline_debugger
 from brain.business_intelligence_bridge import run_business_intelligence_bridge
-from brain.task_router import build_task_route
+from brain.task_router import build_task_route, developer_diagnostics
 from memory.application_state import application_state
 
 
@@ -55,6 +55,36 @@ class BusinessIntelligenceBridgeTest(unittest.TestCase):
         self.assertTrue(pricing_matches)
         self.assertTrue(any(item["source_field"] == "business_context.memory_tags" for item in pricing_matches))
 
+        summary = result["skill_match_audit_summary"]
+        self.assertEqual(summary, audit["skill_match_audit_summary"])
+        self.assertLessEqual(len(summary["top_ranked_skills"]), 5)
+        top_summary = summary["top_ranked_skills"][0]
+        self.assertEqual(
+            {
+                "skill_id",
+                "score",
+                "current_message_evidence",
+                "context_evidence",
+                "suspicious_tokens",
+                "suspicious_token_sources",
+                "intent_score",
+                "context_score",
+                "why_ranked",
+            },
+            set(top_summary.keys()),
+        )
+        self.assertTrue(top_summary["skill_id"])
+        self.assertIn("keywords", top_summary["current_message_evidence"])
+        self.assertIn("tokens", top_summary["context_evidence"])
+        suspicious_pricing = [
+            item for item in summary["suspicious_tokens"] if item["token"] == "pricing"
+        ]
+        self.assertTrue(suspicious_pricing)
+        self.assertTrue(all("skill_id" in item for item in suspicious_pricing))
+        self.assertTrue(all("source_field" in item for item in suspicious_pricing))
+        self.assertTrue(all("matched_from_current_message" in item for item in suspicious_pricing))
+        self.assertTrue(all("score_contribution" in item for item in suspicious_pricing))
+
     def test_task_router_injects_business_reasoning(self):
         route = build_task_route({}, "\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01\u0e27\u0e48\u0e32\u0e41\u0e1e\u0e07")
 
@@ -71,6 +101,12 @@ class BusinessIntelligenceBridgeTest(unittest.TestCase):
         self.assertTrue(planner["thinking_pattern"])
         self.assertTrue(planner["decision_tree"])
         self.assertTrue(planner["questions_to_ask"])
+        self.assertIn("skill_match_audit_summary", business)
+        self.assertNotIn("skill_match_audit_summary", planner.get("business_intelligence") or {})
+        self.assertNotIn("skill_match_audit", planner.get("business_intelligence") or {})
+        diagnostics = developer_diagnostics(route)
+        self.assertIn("skill_match_audit_summary", diagnostics)
+        self.assertEqual(diagnostics["skill_match_audit_summary"], business["skill_match_audit_summary"])
 
     def test_broad_business_message_routes_to_business_consulting(self):
         route = build_task_route({}, "\u0e2d\u0e22\u0e32\u0e01\u0e02\u0e32\u0e22\u0e40\u0e2a\u0e37\u0e49\u0e2d\u0e1c\u0e49\u0e32")
@@ -120,6 +156,7 @@ class BusinessIntelligenceBridgeTest(unittest.TestCase):
         self.assertTrue(key_state["business_reasoning"])
         self.assertGreaterEqual(key_state["reasoning_confidence"], 0.6)
         self.assertTrue(key_state["business_response_mode"])
+        self.assertTrue(key_state["skill_match_audit_summary"]["top_ranked_skills"])
         self.assertEqual(key_state["detected_intent"]["detected_intent"], "pricing_question")
         self.assertIn("extracted_entities", key_state["extracted_entities"])
 
