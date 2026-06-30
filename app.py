@@ -1162,6 +1162,12 @@ def _finalize_ai_pipeline_debug_trace(
             "legacy_response_reason": workflow_extra.get("legacy_response_reason"),
             "legacy_response_source_file": workflow_extra.get("legacy_response_source_file"),
             "legacy_response_source_function": workflow_extra.get("legacy_response_source_function"),
+            "conversation_style": workflow_extra.get("conversation_style"),
+            "continuation_mode": workflow_extra.get("continuation_mode"),
+            "direct_answer_mode": workflow_extra.get("direct_answer_mode"),
+            "planner_skipped": workflow_extra.get("planner_skipped"),
+            "reuse_reason": workflow_extra.get("reuse_reason"),
+            "response_generation_mode": workflow_extra.get("response_generation_mode"),
         },
     ).get("diagnostics") or {}
     workflow_extra.update(response_audit)
@@ -1173,6 +1179,12 @@ def _finalize_ai_pipeline_debug_trace(
         "variant_source",
         "composer_trace",
         "followup_chain",
+        "conversation_style",
+        "continuation_mode",
+        "direct_answer_mode",
+        "planner_skipped",
+        "reuse_reason",
+        "response_generation_mode",
     ) if key in workflow_extra}}
     add_pipeline_event(
         "response",
@@ -3130,6 +3142,12 @@ def _completed_workflow_followup_response(user_message: str, application_state: 
                 "composer_trace": composed.get("composer_trace") or [],
                 "followup_chain": decision.get("followup_chain") or [],
                 "calculation_trace": composed.get("calculation_trace") or {},
+                "conversation_style": "chatgpt_continuation",
+                "continuation_mode": "completed_workflow_followup",
+                "direct_answer_mode": True,
+                "planner_skipped": True,
+                "reuse_reason": "completed_cost_result_available",
+                "response_generation_mode": "completed_context_reuse",
             }
 
     workflow_state = completed_to_workflow_state(completed)
@@ -3161,6 +3179,12 @@ def _completed_workflow_followup_response(user_message: str, application_state: 
         "composer_trace": (composed or {}).get("composer_trace") or ["completed_workflow", "legacy_workflow_generator"],
         "followup_chain": decision.get("followup_chain") or [],
         "calculation_trace": (composed or {}).get("calculation_trace") or {},
+        "conversation_style": "chatgpt_continuation",
+        "continuation_mode": "completed_workflow_followup",
+        "direct_answer_mode": True,
+        "planner_skipped": True,
+        "reuse_reason": "completed_content_result_available" if workflow_id == V2_WORKFLOW_CONTENT_PLAN else "completed_workflow_context_available",
+        "response_generation_mode": "variant_generation" if decision.get("workflow_variant_mode") else "completed_context_reuse",
     }
 
 
@@ -4183,6 +4207,12 @@ def _show_chat_companion(
             "composer_trace": completed_followup.get("composer_trace") or [],
             "followup_chain": completed_followup.get("followup_chain") or [],
             "calculation_trace": completed_followup.get("calculation_trace") or {},
+            "conversation_style": completed_followup.get("conversation_style"),
+            "continuation_mode": completed_followup.get("continuation_mode"),
+            "direct_answer_mode": completed_followup.get("direct_answer_mode"),
+            "planner_skipped": completed_followup.get("planner_skipped"),
+            "reuse_reason": completed_followup.get("reuse_reason"),
+            "response_generation_mode": completed_followup.get("response_generation_mode"),
             "workflow_status": "COMPLETED",
             "workflow_complete": True,
             "workflow_released": True,

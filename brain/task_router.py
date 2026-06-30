@@ -554,6 +554,12 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "variant_source": route.get("variant_source"),
         "composer_trace": route.get("composer_trace") or [],
         "followup_chain": route.get("followup_chain") or [],
+        "conversation_style": route.get("conversation_style"),
+        "continuation_mode": route.get("continuation_mode"),
+        "direct_answer_mode": bool(route.get("direct_answer_mode")),
+        "planner_skipped": bool(route.get("planner_skipped")),
+        "reuse_reason": route.get("reuse_reason"),
+        "response_generation_mode": route.get("response_generation_mode"),
     }
 
     return {
@@ -604,6 +610,12 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "variant_source": route.get("variant_source") or response_audit_defaults.get("variant_source"),
         "composer_trace": route.get("composer_trace") or response_audit_defaults.get("composer_trace") or [],
         "followup_chain": route.get("followup_chain") or response_audit_defaults.get("followup_chain") or workflow.get("followup_chain") or [],
+        "conversation_style": route.get("conversation_style") or response_audit_defaults.get("conversation_style"),
+        "continuation_mode": route.get("continuation_mode") or response_audit_defaults.get("continuation_mode"),
+        "direct_answer_mode": bool(route.get("direct_answer_mode") or response_audit_defaults.get("direct_answer_mode")),
+        "planner_skipped": bool(route.get("planner_skipped") or response_audit_defaults.get("planner_skipped")),
+        "reuse_reason": route.get("reuse_reason") or response_audit_defaults.get("reuse_reason"),
+        "response_generation_mode": route.get("response_generation_mode") or response_audit_defaults.get("response_generation_mode"),
         "workflow_stage": workflow.get("workflow_stage"),
         "workflow_progress": workflow.get("workflow_progress") or {},
         "workflow_confidence": workflow.get("workflow_confidence"),

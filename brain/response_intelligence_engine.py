@@ -229,6 +229,12 @@ def select_final_response(candidates, routing_context: dict | None = None, diagn
         "llm_response_used": selected_source == "llm_response",
         "workflow_response_used": selected_source == "workflow_response",
         "reasoning_response_used": selected_source == "reasoning_response",
+        "conversation_style": diagnostics.get("conversation_style"),
+        "continuation_mode": diagnostics.get("continuation_mode"),
+        "direct_answer_mode": bool(diagnostics.get("direct_answer_mode")),
+        "planner_skipped": bool(diagnostics.get("planner_skipped")),
+        "reuse_reason": diagnostics.get("reuse_reason"),
+        "response_generation_mode": diagnostics.get("response_generation_mode"),
     }
     return {"selected_response": final_text, "selected_source": selected_source, "diagnostics": audit}
 

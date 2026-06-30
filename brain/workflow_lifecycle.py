@@ -43,8 +43,21 @@ _PRICING_TRIGGERS = (
 _VARIANT_TRIGGERS = _VARIANT_TRIGGERS + (
     "\u0e02\u0e2d\u0e2d\u0e35\u0e01\u0e41\u0e1a\u0e1a",
     "\u0e2d\u0e35\u0e01\u0e41\u0e1a\u0e1a",
+    "\u0e2d\u0e35\u0e01\u0e2d\u0e31\u0e19",
+    "\u0e2d\u0e35\u0e01\u0e42\u0e1e\u0e2a\u0e15\u0e4c",
+    "\u0e41\u0e1a\u0e1a\u0e43\u0e2b\u0e21\u0e48",
+    "\u0e41\u0e1a\u0e1a\u0e2a\u0e31\u0e49\u0e19",
+    "\u0e41\u0e1a\u0e1a\u0e22\u0e32\u0e27",
     "\u0e40\u0e2d\u0e32\u0e41\u0e1a\u0e1a\u0e2a\u0e31\u0e49\u0e19",
     "\u0e40\u0e2d\u0e32\u0e41\u0e1a\u0e1a\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19",
+    "\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19",
+    "\u0e2b\u0e23\u0e39",
+    "\u0e40\u0e1b\u0e47\u0e19\u0e01\u0e31\u0e19\u0e40\u0e2d\u0e07",
+    "\u0e02\u0e32\u0e22\u0e40\u0e01\u0e48\u0e07\u0e01\u0e27\u0e48\u0e32\u0e40\u0e14\u0e34\u0e21",
+    "new version",
+    "longer",
+    "luxury",
+    "friendly",
 )
 
 _PRICING_TRIGGERS = _PRICING_TRIGGERS + (
@@ -53,6 +66,9 @@ _PRICING_TRIGGERS = _PRICING_TRIGGERS + (
     "\u0e15\u0e31\u0e49\u0e07\u0e23\u0e32\u0e04\u0e32",
     "\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22",
     "\u0e01\u0e33\u0e44\u0e23",
+    "\u0e1a\u0e27\u0e01",
+    "\u0e16\u0e49\u0e32\u0e02\u0e32\u0e22",
+    "\u0e02\u0e32\u0e22",
     "profit",
     "markup",
 )
@@ -179,11 +195,12 @@ def classify_completed_workflow_followup(application_state: dict | None, user_me
         "workflow_transition_reason": None,
         "followup_chain": [],
     }
+
     if not completed or not normalized:
         return base
 
     workflow_id = completed.get("workflow_id")
-    if any(trigger in normalized for trigger in _VARIANT_TRIGGERS):
+    if workflow_id != WORKFLOW_COST_CALCULATION and any(trigger in normalized for trigger in _VARIANT_TRIGGERS):
         return {
             **base,
             "workflow_followup_mode": FOLLOWUP_MODE_REUSE_COMPLETED,
@@ -193,7 +210,14 @@ def classify_completed_workflow_followup(application_state: dict | None, user_me
             "followup_chain": ["completed_workflow", "variant_request"],
         }
 
-    if workflow_id == WORKFLOW_COST_CALCULATION and any(trigger in normalized for trigger in _PRICING_TRIGGERS):
+    pricing_pattern = re.search(
+        r"(\u0e01\u0e33\u0e44\u0e23|\u0e1a\u0e27\u0e01|\u0e02\u0e32\u0e22|\u0e23\u0e32\u0e04\u0e32|\u0e16\u0e49\u0e32\u0e02\u0e32\u0e22|profit|markup|price)\s*\d",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if workflow_id == WORKFLOW_COST_CALCULATION and (
+        any(trigger in normalized for trigger in _PRICING_TRIGGERS) or pricing_pattern
+    ):
         return {
             **base,
             "workflow_followup_mode": FOLLOWUP_MODE_REUSE_COMPLETED,
@@ -245,9 +269,14 @@ def completed_to_workflow_state(completed: dict | None) -> dict:
     )
 
 
+
 def variant_instruction_from_message(message: str | None) -> dict:
     normalized = str(message or "").strip().lower()
     return {
-        "short": bool(re.search(r"สั้น|short", normalized)),
-        "youth": bool(re.search(r"วัยรุ่น|teen|young", normalized)),
+        "short": bool(re.search(r"\u0e2a\u0e31\u0e49\u0e19|short", normalized)),
+        "long": bool(re.search(r"\u0e22\u0e32\u0e27|long", normalized)),
+        "youth": bool(re.search(r"\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19|teen|young", normalized)),
+        "luxury": bool(re.search(r"\u0e2b\u0e23\u0e39|luxury|premium", normalized)),
+        "friendly": bool(re.search(r"\u0e40\u0e1b\u0e47\u0e19\u0e01\u0e31\u0e19\u0e40\u0e2d\u0e07|friendly|casual", normalized)),
+        "stronger_sales": bool(re.search(r"\u0e02\u0e32\u0e22\u0e40\u0e01\u0e48\u0e07|sell|sales", normalized)),
     }
