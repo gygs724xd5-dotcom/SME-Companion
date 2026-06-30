@@ -74,7 +74,7 @@ from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
 from brain.promotion_engine import get_promotion_idea
 from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
-from brain.response_intelligence_engine import guard_response, select_planner_first_response
+from brain.response_intelligence_engine import guard_response, select_final_response, select_planner_first_response
 from brain.response_mode_engine import determine_response_mode
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
@@ -724,6 +724,7 @@ def _update_chat_developer_diagnostics(
     response_mode=CHAT_DIAGNOSTIC_UNSET,
     reply_builder=CHAT_DIAGNOSTIC_UNSET,
     natural_response=CHAT_DIAGNOSTIC_UNSET,
+    response_audit=CHAT_DIAGNOSTIC_UNSET,
 ) -> None:
     if last_chat_input is not CHAT_DIAGNOSTIC_UNSET:
         st.session_state["last_chat_input"] = last_chat_input
@@ -741,7 +742,10 @@ def _update_chat_developer_diagnostics(
         st.session_state["last_reply_builder"] = reply_builder
     if natural_response is not CHAT_DIAGNOSTIC_UNSET:
         st.session_state["last_natural_response"] = bool(natural_response)
+    if response_audit is not CHAT_DIAGNOSTIC_UNSET:
+        st.session_state["last_response_audit"] = response_audit or {}
     st.session_state["chat_history_count"] = len(st.session_state.get("chat_history", []))
+    response_audit_state = st.session_state.get("last_response_audit") or {}
     developer_state = {
         "last_chat_input": st.session_state.get("last_chat_input"),
         "last_response_source": st.session_state.get("last_response_source"),
@@ -752,6 +756,7 @@ def _update_chat_developer_diagnostics(
         "reply_builder": st.session_state.get("last_reply_builder"),
         "natural_response": st.session_state.get("last_natural_response"),
         "chat_history_count": st.session_state.get("chat_history_count", 0),
+        **response_audit_state,
     }
     _update_application_section("developer", developer_state)
 
@@ -1076,13 +1081,16 @@ def _finalize_ai_pipeline_debug_trace(
     response_source: str,
     final_reply: str | None,
     workflow_extra: dict | None = None,
+    response_candidates=None,
 ) -> dict | None:
     final_reply, response_source, response_empty = _resolve_assistant_reply(final_reply, response_source)
     workflow_extra = dict(workflow_extra or {})
     route = st.session_state.get("last_task_route") or {}
     gate = workflow_response_gate(route)
+    response_source_before_gate = response_source
     if route and response_source == "workflow_response" and not gate.get("workflow_response_allowed"):
         response_source = _source_when_workflow_response_blocked(route)
+    response_source_after_gate = response_source
     workflow_extra.update(gate)
     response_mode = workflow_extra.get("response_mode")
     if not response_mode:
@@ -1095,6 +1103,29 @@ def _finalize_ai_pipeline_debug_trace(
         workflow_extra["response_mode"] = response_mode
     workflow_extra.setdefault("reply_builder", "legacy_response_pipeline")
     workflow_extra.setdefault("natural_response", True)
+    audit_candidates = response_candidates or workflow_extra.pop("response_candidates", None) or [
+        {"source": response_source_before_gate, "text": final_reply}
+    ]
+    response_audit = select_final_response(
+        audit_candidates,
+        route,
+        {
+            "final_response_text": final_reply,
+            "response_source_before_gate": response_source_before_gate,
+            "response_source_after_gate": response_source_after_gate,
+            "selected_by": workflow_extra.get("workflow_handler")
+            or workflow_extra.get("response_guard")
+            or "_show_chat_companion",
+            "response_builder": workflow_extra.get("response_builder") or response_source_after_gate,
+            "reply_builder": workflow_extra.get("reply_builder"),
+            "response_gate_applied": response_source_before_gate != response_source_after_gate,
+            "legacy_response_used": workflow_extra.get("legacy_response_used"),
+            "legacy_response_reason": workflow_extra.get("legacy_response_reason"),
+            "legacy_response_source_file": workflow_extra.get("legacy_response_source_file"),
+            "legacy_response_source_function": workflow_extra.get("legacy_response_source_function"),
+        },
+    ).get("diagnostics") or {}
+    workflow_extra.update(response_audit)
     add_pipeline_event(
         "response",
         "_finalize_ai_pipeline_debug_trace",
@@ -1113,6 +1144,7 @@ def _finalize_ai_pipeline_debug_trace(
             response_mode=response_mode,
             reply_builder=workflow_extra.get("reply_builder"),
             natural_response=workflow_extra.get("natural_response"),
+            response_audit=response_audit,
         )
         return None
     source = "generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source
@@ -1122,6 +1154,8 @@ def _finalize_ai_pipeline_debug_trace(
     trace["reply_builder"] = workflow_extra.get("reply_builder")
     trace["natural_response"] = workflow_extra.get("natural_response")
     trace["final_response_preview"] = str(final_reply or "").strip()[:500]
+    trace["response_audit"] = response_audit
+    trace.update(response_audit)
     st.session_state["ai_pipeline_debug_trace"] = trace
     _update_chat_developer_diagnostics(
         response_source=source,
@@ -1130,6 +1164,7 @@ def _finalize_ai_pipeline_debug_trace(
         response_mode=response_mode,
         reply_builder=workflow_extra.get("reply_builder"),
         natural_response=workflow_extra.get("natural_response"),
+        response_audit=response_audit,
     )
     if st.session_state.get("developer_mode"):
         print("AI Pipeline Debug Trace:")
@@ -1201,6 +1236,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("last_chat_input", None)
     st.session_state.setdefault("last_response_source", None)
     st.session_state.setdefault("last_response_empty", False)
+    st.session_state.setdefault("last_response_audit", {})
     st.session_state.setdefault("last_pipeline_error", None)
     st.session_state.setdefault("last_llm_decision", None)
     st.session_state.setdefault("chat_history_count", 0)
@@ -3992,8 +4028,19 @@ def _show_chat_companion(
     _sync_route_intelligence_to_session(task_route)
     _update_ai_pipeline_debug_trace_from_route(debug_trace, task_route)
 
-    def finalize_debug(response_source: str, final_reply: str | None, workflow_extra: dict | None = None) -> None:
-        _finalize_ai_pipeline_debug_trace(debug_trace, response_source, final_reply, workflow_extra)
+    def finalize_debug(
+        response_source: str,
+        final_reply: str | None,
+        workflow_extra: dict | None = None,
+        response_candidates=None,
+    ) -> None:
+        _finalize_ai_pipeline_debug_trace(
+            debug_trace,
+            response_source,
+            final_reply,
+            workflow_extra,
+            response_candidates=response_candidates,
+        )
 
     if reasoning.get("action") in {"receipt_uploaded_ack", "receipt_ocr_pending"}:
         reply = _receipt_uploaded_reply(reasoning.get("action"))
@@ -4307,6 +4354,9 @@ def _show_chat_companion(
         conversation_mode=conversation_mode,
         show_business_insights=show_business_insights,
     )
+    response_candidates = [
+        {"source": "deterministic_response", "text": deterministic_response.get("reply")},
+    ]
     response = deterministic_response
     response_source = "planner_response"
     demo_ai_success = False
@@ -4419,6 +4469,7 @@ def _show_chat_companion(
             st.caption("ระบบใช้คำตอบพื้นฐานแทนผู้ช่วย AI ชั่วคราว")
         if llm_reply:
             llm_reply = clean_response(llm_reply)
+            response_candidates.append({"source": "llm_response", "text": llm_reply})
             response = {
                 **deterministic_response,
                 "reply": llm_reply,
@@ -4464,6 +4515,7 @@ def _show_chat_companion(
     )
     guarded_response = guard_response(response["reply"], task_route, st.session_state["chat_history"])
     if guarded_response.get("changed"):
+        response_candidates.append({"source": "guard_response", "text": guarded_response.get("reply")})
         response["reply"], response_source, response_empty = _resolve_assistant_reply(
             _clean_chat_reply(guarded_response.get("reply")),
             "response_guard",
@@ -4486,7 +4538,19 @@ def _show_chat_companion(
         state.get("current_topic"),
     )
     st.session_state["chat_history"].append(assistant_message)
-    finalize_debug(response_source, response["reply"])
+    finalize_debug(
+        response_source,
+        response["reply"],
+        {
+            "response_builder": "chat_companion_engine",
+            "reply_builder": "generate_chat_response",
+            "legacy_response_used": response_source == "planner_response",
+            "legacy_response_reason": "planner_response_from_generate_chat_response" if response_source == "planner_response" else None,
+            "legacy_response_source_file": "brain/chat_companion_engine.py" if response_source == "planner_response" else None,
+            "legacy_response_source_function": "generate_chat_response" if response_source == "planner_response" else None,
+        },
+        response_candidates=response_candidates,
+    )
     add_pipeline_event(
         "response",
         "_show_chat_companion",

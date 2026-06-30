@@ -14,6 +14,36 @@ from brain.workflow_readiness import (
 )
 
 
+RESPONSE_CANDIDATE_SOURCES = (
+    "workflow_response",
+    "reasoning_response",
+    "deterministic_response",
+    "direct_conversation_response",
+    "llm_response",
+    "legacy_response",
+    "guard_response",
+    "fallback_response",
+)
+
+SOURCE_ALIASES = {
+    "planner_response": "deterministic_response",
+    "planner_first_response": "deterministic_response",
+    "response_guard": "guard_response",
+    "generic_fallback": "fallback_response",
+    "empty_response_fallback": "fallback_response",
+}
+
+SOURCE_PRIORITY = (
+    "guard_response",
+    "workflow_response",
+    "reasoning_response",
+    "direct_conversation_response",
+    "llm_response",
+    "deterministic_response",
+    "legacy_response",
+    "fallback_response",
+)
+
 GENERIC_FALLBACK_MARKERS = (
     "\u0e40\u0e25\u0e48\u0e32\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e2d\u0e35\u0e01\u0e19\u0e34\u0e14",
     "\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23\u0e43\u0e2b\u0e49\u0e0a\u0e48\u0e27\u0e22\u0e40\u0e23\u0e37\u0e48\u0e2d\u0e07\u0e2d\u0e30\u0e44\u0e23",
@@ -35,6 +65,172 @@ WORKFLOW_TOPICS = {
     WORKFLOW_DASHBOARD_REQUEST: "\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14\u0e23\u0e49\u0e32\u0e19",
     WORKFLOW_RECEIPT_CAPTURE: "\u0e1a\u0e34\u0e25 / \u0e2a\u0e25\u0e34\u0e1b",
 }
+
+
+def _preview(text: str | None, limit: int = 180) -> str | None:
+    if text is None:
+        return None
+    compact = " ".join(str(text).strip().split())
+    return compact[:limit]
+
+
+def _canonical_source(source: str | None) -> str:
+    raw = str(source or "").strip()
+    if not raw:
+        return "fallback_response"
+    return SOURCE_ALIASES.get(raw, raw if raw in RESPONSE_CANDIDATE_SOURCES else raw)
+
+
+def _candidate_text(candidate: dict | str | None) -> str | None:
+    if isinstance(candidate, dict):
+        value = candidate.get("text")
+        if value is None:
+            value = candidate.get("reply")
+        if value is None:
+            value = candidate.get("response")
+        return None if value is None else str(value)
+    if candidate is None:
+        return None
+    return str(candidate)
+
+
+def _normalize_candidates(candidates) -> list[dict]:
+    raw_candidates: list[dict] = []
+    if isinstance(candidates, dict):
+        for source, candidate in candidates.items():
+            if isinstance(candidate, dict):
+                raw_candidates.append({"source": source, **candidate})
+            else:
+                raw_candidates.append({"source": source, "text": candidate})
+    else:
+        for candidate in candidates or []:
+            if isinstance(candidate, dict):
+                raw_candidates.append(dict(candidate))
+
+    by_source = {
+        source: {
+            "source": source,
+            "available": False,
+            "selected": False,
+            "blocked": False,
+            "blocked_reason": None,
+            "text_preview": None,
+        }
+        for source in RESPONSE_CANDIDATE_SOURCES
+    }
+    for candidate in raw_candidates:
+        source = _canonical_source(candidate.get("source"))
+        if source not in by_source:
+            by_source[source] = {
+                "source": source,
+                "available": False,
+                "selected": False,
+                "blocked": False,
+                "blocked_reason": None,
+                "text_preview": None,
+            }
+        text = _candidate_text(candidate)
+        available = bool(candidate.get("available", text not in (None, "")))
+        by_source[source].update(
+            {
+                "available": available,
+                "blocked": bool(candidate.get("blocked", False)),
+                "blocked_reason": candidate.get("blocked_reason"),
+                "text_preview": _preview(text),
+            }
+        )
+    return list(by_source.values())
+
+
+def select_final_response(candidates, routing_context: dict | None = None, diagnostics: dict | None = None) -> dict:
+    """Make the existing final response choice observable without changing text.
+
+    The app may already have selected a reply before calling this helper. When
+    diagnostics supplies that selected source/text, this function records it.
+    Otherwise it deterministically picks the first available unblocked candidate
+    by the current pipeline priority.
+    """
+    routing_context = routing_context or {}
+    diagnostics = dict(diagnostics or {})
+    normalized = _normalize_candidates(candidates)
+    gate = workflow_response_gate(routing_context)
+    before_gate = _canonical_source(
+        diagnostics.get("response_source_before_gate")
+        or diagnostics.get("selected_source")
+        or diagnostics.get("response_source")
+    )
+    after_gate = _canonical_source(diagnostics.get("response_source_after_gate") or before_gate)
+    final_text = diagnostics.get("final_response_text")
+    selected_source = after_gate
+    selected_by = diagnostics.get("selected_by") or "existing_response_pipeline"
+
+    if final_text in (None, ""):
+        for source in SOURCE_PRIORITY:
+            candidate = next((item for item in normalized if item.get("source") == source), None)
+            if candidate and candidate.get("available") and not candidate.get("blocked"):
+                selected_source = source
+                final_text = candidate.get("text_preview")
+                selected_by = "select_final_response_priority"
+                break
+
+    if selected_source == "workflow_response" and not gate.get("workflow_response_allowed"):
+        for candidate in normalized:
+            if candidate.get("source") == "workflow_response":
+                candidate["blocked"] = True
+                candidate["blocked_reason"] = gate.get("workflow_response_blocked_reason")
+
+    selected_candidate = next((item for item in normalized if item.get("source") == selected_source), None)
+    if selected_candidate is None:
+        selected_candidate = {
+            "source": selected_source,
+            "available": bool(final_text),
+            "selected": False,
+            "blocked": False,
+            "blocked_reason": None,
+            "text_preview": _preview(final_text),
+        }
+        normalized.append(selected_candidate)
+    selected_candidate["available"] = bool(selected_candidate.get("available") or final_text)
+    selected_candidate["selected"] = True
+    if final_text and not selected_candidate.get("text_preview"):
+        selected_candidate["text_preview"] = _preview(final_text)
+
+    reply_builder = diagnostics.get("reply_builder") or "unknown"
+    legacy_used = bool(
+        selected_source == "legacy_response"
+        or before_gate == "legacy_response"
+        or "legacy" in str(reply_builder)
+        or diagnostics.get("legacy_response_used")
+    )
+    legacy_reason = diagnostics.get("legacy_response_reason")
+    if legacy_used and not legacy_reason:
+        legacy_reason = "reply_builder" if "legacy" in str(reply_builder) else "selected_candidate"
+
+    audit = {
+        "final_response_origin": selected_source,
+        "final_response_text_preview": _preview(final_text),
+        "final_response_selector": "select_final_response",
+        "final_response_selected_by": selected_by,
+        "final_response_candidates": normalized,
+        "response_builder": diagnostics.get("response_builder") or selected_source,
+        "reply_builder": reply_builder,
+        "response_source_before_gate": before_gate,
+        "response_source_after_gate": after_gate,
+        "response_gate_applied": bool(
+            diagnostics.get("response_gate_applied")
+            or before_gate != after_gate
+            or gate.get("final_response_gate")
+        ),
+        "legacy_response_used": legacy_used,
+        "legacy_response_reason": legacy_reason,
+        "legacy_response_source_file": diagnostics.get("legacy_response_source_file"),
+        "legacy_response_source_function": diagnostics.get("legacy_response_source_function"),
+        "deterministic_response_used": selected_source == "deterministic_response",
+        "llm_response_used": selected_source == "llm_response",
+        "workflow_response_used": selected_source == "workflow_response",
+        "reasoning_response_used": selected_source == "reasoning_response",
+    }
+    return {"selected_response": final_text, "selected_source": selected_source, "diagnostics": audit}
 
 
 def is_generic_fallback(reply: str | None) -> bool:

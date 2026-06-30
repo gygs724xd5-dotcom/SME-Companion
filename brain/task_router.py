@@ -420,6 +420,27 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     loaded_skill_names = [skill.get("name") for skill in skills if skill.get("available")]
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
 
+    response_audit_defaults = {
+        "final_response_origin": route.get("final_response_origin"),
+        "final_response_text_preview": route.get("final_response_text_preview"),
+        "final_response_selector": route.get("final_response_selector"),
+        "final_response_selected_by": route.get("final_response_selected_by"),
+        "final_response_candidates": route.get("final_response_candidates") or [],
+        "response_builder": route.get("response_builder"),
+        "reply_builder": route.get("reply_builder"),
+        "response_source_before_gate": route.get("response_source_before_gate"),
+        "response_source_after_gate": route.get("response_source_after_gate"),
+        "response_gate_applied": bool(route.get("response_gate_applied")),
+        "legacy_response_used": bool(route.get("legacy_response_used")),
+        "legacy_response_reason": route.get("legacy_response_reason"),
+        "legacy_response_source_file": route.get("legacy_response_source_file"),
+        "legacy_response_source_function": route.get("legacy_response_source_function"),
+        "deterministic_response_used": bool(route.get("deterministic_response_used")),
+        "llm_response_used": bool(route.get("llm_response_used")),
+        "workflow_response_used": bool(route.get("workflow_response_used")),
+        "reasoning_response_used": bool(route.get("reasoning_response_used")),
+    }
+
     return {
         "Planner Output": route.get("planner_output") or {},
         "Conversation Understanding": route.get("conversation_understanding") or {},
@@ -482,4 +503,5 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "final_response_gate": route.get("final_response_gate") or workflow_response_gate(route).get("final_response_gate"),
         "workflow_response_allowed": bool(route.get("workflow_response_allowed") if "workflow_response_allowed" in route else workflow_response_gate(route).get("workflow_response_allowed")),
         "workflow_response_blocked_reason": route.get("workflow_response_blocked_reason") or workflow_response_gate(route).get("workflow_response_blocked_reason"),
+        **response_audit_defaults,
     }
