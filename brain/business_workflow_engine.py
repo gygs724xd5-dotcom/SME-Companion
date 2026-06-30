@@ -31,6 +31,7 @@ OVERRIDE_INTENTS = {
     "general_question",
     "label_explanation",
     "customer_reply",
+    "customer_says_expensive",
     "marketing_content",
     "business_advice",
     "unknown_with_question",
@@ -483,7 +484,7 @@ def _refine_intent(intent: str, message: str, entity_result: dict | None) -> str
 
 def _override_reason(intent: str, message: str) -> str | None:
     normalized = message.lower()
-    if intent == "customer_reply":
+    if intent in {"customer_reply", "customer_says_expensive"}:
         return "customer_reply intent overrides workflow"
     if intent == "label_explanation" or _is_label_explanation(normalized):
         return "label_explanation"

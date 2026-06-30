@@ -5,6 +5,24 @@ from typing import Any
 
 
 INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "label_explanation": (
+        "คืออะไร",
+        "หมายถึงอะไร",
+        "แปลว่าอะไร",
+        "what is",
+        "explain",
+    ),
+    "customer_says_expensive": (
+        "ลูกค้าบอกว่า",
+        "ลูกค้าถามว่า",
+        "ลูกค้าบ่นว่า",
+        "ควรตอบยังไง",
+        "แพงไป",
+        "แพง",
+        "ลดได้ไหม",
+        "too expensive",
+        "expensive",
+    ),
     "pricing_question": (
         "ราคาเท่าไร",
         "ราคาเท่าไหร่",
@@ -64,8 +82,12 @@ INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "customer_reply": (
         "ตอบลูกค้า",
         "ลูกค้าถาม",
+        "ลูกค้าถามว่า",
         "ลูกค้าบอก",
+        "ลูกค้าบอกว่า",
+        "ลูกค้าบ่นว่า",
         "ลูกค้าทัก",
+        "ควรตอบยังไง",
         "reply customer",
         "customer reply",
         "respond to customer",
@@ -89,16 +111,27 @@ INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 INTENT_ORDER = [
+    "label_explanation",
+    "customer_says_expensive",
+    "customer_reply",
     "profit_calculation",
     "pricing_question",
     "sales_summary",
     "cost_calculation",
     "inventory_check",
     "marketing_content",
-    "customer_reply",
     "product_question",
     "dashboard_request",
 ]
+
+CUSTOMER_REPLY_PATTERNS = (
+    "ลูกค้าบอกว่า",
+    "ลูกค้าถามว่า",
+    "ลูกค้าบ่นว่า",
+    "ควรตอบยังไง",
+)
+
+EXPENSIVE_PATTERNS = ("แพงไป", "แพง", "too expensive", "expensive")
 
 
 def _normalize_text(value: Any) -> str:
@@ -119,6 +152,29 @@ def detect_business_intent(user_message: str | None) -> dict:
             "detected_intent": "unknown",
             "intent_confidence": 0.0,
             "matched_intent_keywords": [],
+        }
+
+    normalized_message = _normalize_text(message)
+    if re.search(r"\b[a-z][a-z0-9_]{2,}\s+(?:คืออะไร|คือ|หมายถึงอะไร|แปลว่าอะไร|means?|what is)\b", normalized_message):
+        return {
+            "detected_intent": "label_explanation",
+            "intent_confidence": 0.94,
+            "matched_intent_keywords": [keyword for keyword in INTENT_KEYWORDS["label_explanation"] if _normalize_text(keyword) in normalized_message],
+        }
+
+    reply_matches = [pattern for pattern in CUSTOMER_REPLY_PATTERNS if pattern in normalized_message]
+    expensive_matches = [pattern for pattern in EXPENSIVE_PATTERNS if pattern in normalized_message]
+    if reply_matches and expensive_matches:
+        return {
+            "detected_intent": "customer_says_expensive",
+            "intent_confidence": 0.97,
+            "matched_intent_keywords": reply_matches + expensive_matches,
+        }
+    if reply_matches:
+        return {
+            "detected_intent": "customer_reply",
+            "intent_confidence": 0.9,
+            "matched_intent_keywords": reply_matches,
         }
 
     scored: list[tuple[float, str, list[str]]] = []

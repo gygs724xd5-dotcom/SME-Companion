@@ -71,6 +71,47 @@ class BusinessSkillMatcherTest(unittest.TestCase):
         self.assertGreaterEqual(ranked[0]["confidence"], 0.97)
         self.assertIn("\u0e41\u0e1e\u0e07", ranked[0]["matched_aliases"])
 
+    def test_previous_pricing_context_does_not_override_current_expensive_reply(self):
+        candidates = [
+            skill(
+                "01.001.customer_asks_price",
+                name="Customer asks price",
+                stage="Interest",
+                situation="A customer asks how much a product costs.",
+                examples="\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01\u0e27\u0e48\u0e32",
+                memory_tags="pricing_strategy",
+            ),
+            skill(
+                "01.002.customer_says_expensive",
+                name="Customer says expensive",
+                stage="Consideration",
+                situation="Customer objects to price.",
+                examples="\u0e41\u0e1e\u0e07\u0e08\u0e31\u0e07",
+            ),
+        ]
+        context = {
+            "business_context": {
+                "business_domain": "01 Sales",
+                "business_stage": "Interest",
+                "memory_tags": ["pricing_strategy"],
+                "current_message_intent": "customer_says_expensive",
+                "previous_context_intent": "pricing_question",
+                "intent_changed": True,
+                "context_isolation_applied": True,
+            }
+        }
+
+        ranked = rank_business_skills(
+            "\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01\u0e27\u0e48\u0e32\u0e0a\u0e39\u0e04\u0e23\u0e35\u0e21\u0e41\u0e1e\u0e07\u0e44\u0e1b \u0e04\u0e27\u0e23\u0e15\u0e2d\u0e1a\u0e22\u0e31\u0e07\u0e44\u0e07",
+            context,
+            candidates,
+        )
+
+        self.assertEqual(ranked[0]["skill_id"], "01.002.customer_says_expensive")
+        price_match = next(item for item in ranked if item["skill_id"] == "01.001.customer_asks_price")
+        self.assertEqual(price_match["components"]["conversation_context"], 0)
+        self.assertEqual(price_match["components"]["memory_tag"], 0)
+
     def test_business_context_improves_relevant_skill(self):
         candidates = [
             skill(

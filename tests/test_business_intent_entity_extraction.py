@@ -22,6 +22,25 @@ class BusinessIntentEntityExtractionTest(unittest.TestCase):
         self.assertIn(CHOUX_CREAM, entities["extracted_entities"]["product_or_service_names"])
         self.assertEqual(entities["missing_entities"], [])
 
+    def test_customer_expensive_reply_intent_and_entities_override_pricing_context(self):
+        message = f"\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01\u0e27\u0e48\u0e32{CHOUX_CREAM}\u0e41\u0e1e\u0e07\u0e44\u0e1b \u0e04\u0e27\u0e23\u0e15\u0e2d\u0e1a\u0e22\u0e31\u0e07\u0e44\u0e07"
+        intent = detect_business_intent(message)
+        entities = extract_business_entities(message, intent["detected_intent"])
+        extracted = entities["extracted_entities"]
+
+        self.assertIn(intent["detected_intent"], {"customer_reply", "customer_says_expensive"})
+        self.assertEqual(intent["detected_intent"], "customer_says_expensive")
+        self.assertEqual(extracted["product_or_service"], CHOUX_CREAM)
+        self.assertIn(CHOUX_CREAM, extracted["product_or_service_names"])
+        self.assertEqual(extracted["customer_phrase"], "\u0e41\u0e1e\u0e07\u0e44\u0e1b")
+        self.assertIn("\u0e41\u0e1e\u0e07\u0e44\u0e1b", extracted["customer_phrases"])
+
+    def test_pricing_unclear_explanation_is_not_pricing_question(self):
+        intent = detect_business_intent("pricing_unclear \u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23")
+
+        self.assertIn(intent["detected_intent"], {"label_explanation", "general_question"})
+        self.assertNotEqual(intent["detected_intent"], "pricing_question")
+
     def test_profit_calculation_extracts_product_price_cost_quantity(self):
         message = f"\u0e04\u0e33\u0e19\u0e27\u0e13\u0e01\u0e33\u0e44\u0e23 {CHOUX_CREAM} \u0e02\u0e32\u0e22 50 \u0e1a\u0e32\u0e17 \u0e15\u0e49\u0e19\u0e17\u0e38\u0e19 20 \u0e1a\u0e32\u0e17 \u0e08\u0e33\u0e19\u0e27\u0e19 10 \u0e0a\u0e34\u0e49\u0e19"
         intent = detect_business_intent(message)
@@ -68,6 +87,28 @@ class BusinessIntentEntityExtractionTest(unittest.TestCase):
         self.assertIn(CHOUX_CREAM, diagnostics["extracted_entities"]["extracted_entities"]["product_or_service_names"])
         self.assertEqual(route["business_context"]["detected_intent"], "pricing_question")
         self.assertEqual(route["llm_reasoning_context"]["detected_intent"]["detected_intent"], "pricing_question")
+
+    def test_task_route_isolates_previous_pricing_context_for_expensive_reply(self):
+        message = f"\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01\u0e27\u0e48\u0e32{CHOUX_CREAM}\u0e41\u0e1e\u0e07\u0e44\u0e1b \u0e04\u0e27\u0e23\u0e15\u0e2d\u0e1a\u0e22\u0e31\u0e07\u0e44\u0e07"
+        state = {
+            "conversation_memory": {"last_intent": "pricing_question"},
+            "business_context": {
+                "detected_intent": "pricing_question",
+                "business_domain": "01 Sales",
+                "business_stage": "Interest",
+                "memory_tags": ["pricing_strategy"],
+            },
+        }
+
+        route = build_task_route(state, message)
+        diagnostics = developer_diagnostics(route)
+
+        self.assertEqual(route["detected_intent"]["detected_intent"], "customer_says_expensive")
+        self.assertEqual(route["business_intelligence"]["top_skill"], "01.002.customer_says_expensive")
+        self.assertEqual(route["business_context"]["previous_context_intent"], "pricing_question")
+        self.assertTrue(route["business_context"]["intent_changed"])
+        self.assertTrue(route["business_context"]["context_isolation_applied"])
+        self.assertTrue(diagnostics["context_isolation_applied"])
 
     def test_normal_prompt_context_omits_internal_diagnostics(self):
         context = build_prompt_context(

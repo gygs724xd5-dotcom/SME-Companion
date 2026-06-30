@@ -26,6 +26,7 @@ BYPASS_WORKFLOW_RESPONSE_INTENTS = {
     "general_question",
     "label_explanation",
     "customer_reply",
+    "customer_says_expensive",
     "marketing_content",
     "business_advice",
     "unknown_with_question",
@@ -99,6 +100,36 @@ def _matched_intents(plan: dict | None, interpretation: dict | None, intent_reso
     return [str(intent) for intent in intents if intent not in (None, "", [], {})]
 
 
+def _previous_context_intent(state: dict | None, memory_context: dict | None = None) -> str | None:
+    state = state or {}
+    conversation = state.get("conversation") or {}
+    candidates = [
+        (memory_context or {}).get("last_intent"),
+        (memory_context or {}).get("previous_intent"),
+        (state.get("business_context") or {}).get("detected_intent"),
+        (conversation.get("business_context") or {}).get("detected_intent"),
+        conversation.get("last_intent"),
+        conversation.get("previous_intent"),
+    ]
+    for candidate in candidates:
+        if candidate not in (None, "", [], {}):
+            return str(candidate)
+    return None
+
+
+def _context_isolation_metadata(current_intent: str | None, previous_intent: str | None) -> dict:
+    current = str(current_intent or "unknown")
+    previous = str(previous_intent or "") if previous_intent else None
+    comparable = bool(previous and current not in {"unknown", ""} and previous not in {"unknown", ""})
+    changed = bool(comparable and current != previous)
+    return {
+        "current_message_intent": current,
+        "previous_context_intent": previous,
+        "intent_changed": changed,
+        "context_isolation_applied": changed,
+    }
+
+
 def workflow_response_gate(task_route: dict | None) -> dict:
     route = task_route or {}
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
@@ -155,6 +186,10 @@ def build_task_route(application_state, user_message) -> dict:
     )
     if planner_locked(state) and workflow_decision.get("workflow_action") not in {"interrupt", "start_new"}:
         workflow_state = active_workflow_state(state) or {}
+        isolation = _context_isolation_metadata(
+            business_intent.get("detected_intent"),
+            _previous_context_intent(state),
+        )
         return _with_response_gate({
             "planner_output": {
                 "goal": str(user_message or "").strip(),
@@ -178,6 +213,7 @@ def build_task_route(application_state, user_message) -> dict:
             "extracted_entities": entity_result,
             "business_workflow": workflow_decision,
             "business_context": {
+                **isolation,
                 "detected_intent": business_intent.get("detected_intent"),
                 "intent_confidence": business_intent.get("intent_confidence"),
                 "matched_intent_keywords": business_intent.get("matched_intent_keywords") or [],
@@ -196,12 +232,13 @@ def build_task_route(application_state, user_message) -> dict:
                 "workflow_intelligence": workflow_decision,
             },
             "reasoning_mode": "workflow",
-            "llm_reasoning_context": {"workflow_intelligence": workflow_decision},
+            "llm_reasoning_context": {"workflow_intelligence": workflow_decision, **isolation},
             "llm_decision": {"should_use_llm": False, "reason": "Planner locked by Conversation OS."},
             "workflow_ready": not bool(workflow_state.get("missing_fields")) or bool(workflow_decision.get("workflow_complete")),
             "llm_needed": False,
             "capability_available": True,
             "placeholders": dict(PLACEHOLDER_ENGINES),
+            **isolation,
             "planner_locked": True,
         })
 
@@ -211,6 +248,10 @@ def build_task_route(application_state, user_message) -> dict:
     else:
         interpretation = understand_conversation(user_message, state)
     memory_context = get_last_context(state)
+    isolation = _context_isolation_metadata(
+        business_intent.get("detected_intent"),
+        _previous_context_intent(state, memory_context),
+    )
     business_context = build_business_context(
         state,
         user_message,
@@ -219,6 +260,7 @@ def build_task_route(application_state, user_message) -> dict:
     )
     business_context = {
         **business_context,
+        **isolation,
         "detected_intent": business_intent.get("detected_intent"),
         "intent_confidence": business_intent.get("intent_confidence"),
         "matched_intent_keywords": business_intent.get("matched_intent_keywords") or [],
@@ -275,6 +317,7 @@ def build_task_route(application_state, user_message) -> dict:
             "business_context": business_context,
             "business_workflow": workflow_decision,
             "intent_resolution": intent_resolution,
+            **isolation,
             "intent": business_intent.get("detected_intent"),
             "detected_intent": business_intent.get("detected_intent"),
             "business_intent": business_intent,
@@ -329,6 +372,7 @@ def build_task_route(application_state, user_message) -> dict:
     llm_reasoning_context["detected_intent"] = business_intent
     llm_reasoning_context["extracted_entities"] = entity_result
     llm_reasoning_context["workflow_intelligence"] = workflow_decision
+    llm_reasoning_context.update(isolation)
     llm_reasoning_context["prompt_context_size"] = _prompt_context_size(llm_reasoning_context)
     llm_decision = decide_llm_usage(llm_reasoning_context)
     llm_needed = bool(llm_decision.get("should_use_llm"))
@@ -347,6 +391,7 @@ def build_task_route(application_state, user_message) -> dict:
         "context_confidence": business_context.get("confidence"),
         "context_conflicts": business_context.get("conflicts") or [],
         "stale_context_detected": bool(business_context.get("is_stale") or business_context.get("conflicts")),
+        **isolation,
         "selected_business_skill": _selected_business_skill(bridge_result, reasoning),
         "selected_business_domain": bridge_result.get("matched_domain"),
         "matched_intents": _matched_intents(plan, interpretation, intent_resolution, reasoning),
@@ -416,6 +461,10 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "context_confidence": route.get("context_confidence") or ((route.get("business_context") or {}).get("confidence")),
         "context_conflicts": route.get("context_conflicts") or ((route.get("business_context") or {}).get("conflicts")) or [],
         "stale_context_detected": bool(route.get("stale_context_detected") or ((route.get("business_context") or {}).get("is_stale"))),
+        "current_message_intent": route.get("current_message_intent") or ((route.get("business_context") or {}).get("current_message_intent")) or ((route.get("llm_reasoning_context") or {}).get("current_message_intent")),
+        "previous_context_intent": route.get("previous_context_intent") or ((route.get("business_context") or {}).get("previous_context_intent")) or ((route.get("llm_reasoning_context") or {}).get("previous_context_intent")),
+        "intent_changed": bool(route.get("intent_changed") or ((route.get("business_context") or {}).get("intent_changed")) or ((route.get("llm_reasoning_context") or {}).get("intent_changed"))),
+        "context_isolation_applied": bool(route.get("context_isolation_applied") or ((route.get("business_context") or {}).get("context_isolation_applied")) or ((route.get("llm_reasoning_context") or {}).get("context_isolation_applied"))),
         "selected_business_skill": route.get("selected_business_skill") or ((route.get("llm_reasoning_context") or {}).get("selected_business_skill")),
         "selected_business_domain": route.get("selected_business_domain") or ((route.get("llm_reasoning_context") or {}).get("selected_business_domain")),
         "matched_intents": route.get("matched_intents") or ((route.get("llm_reasoning_context") or {}).get("matched_intents")) or [],

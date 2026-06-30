@@ -203,6 +203,17 @@ def _context_memory_tags(conversation_context: dict | None) -> set[str]:
     return {tag for tag in tags if tag}
 
 
+def _context_isolation_applied(conversation_context: dict | None) -> bool:
+    context = conversation_context or {}
+    business_context = context.get("business_context") or {}
+    return bool(
+        context.get("context_isolation_applied")
+        or business_context.get("context_isolation_applied")
+        or context.get("intent_changed")
+        or business_context.get("intent_changed")
+    )
+
+
 def _matched_aliases(message: str, slug: str) -> list[str]:
     normalized_message = _normalize_text(message)
     aliases = SEMANTIC_ALIASES.get(slug, ())
@@ -270,17 +281,22 @@ def _component_scores(
 
     context = conversation_context or {}
     business_context = context.get("business_context") or {}
+    context_isolated = _context_isolation_applied(conversation_context)
     requested_domain = _normalize_text(business_context.get("business_domain"))
     skill_domain = _normalize_text(skill.get("business_domain"))
     business_domain_score = 0.0
-    if requested_domain and skill_domain and (requested_domain in skill_domain or skill_domain in requested_domain):
+    if context_isolated:
+        business_domain_score = 0.0
+    elif requested_domain and skill_domain and (requested_domain in skill_domain or skill_domain in requested_domain):
         business_domain_score = 1.0
     elif skill_domain and any(token in skill_domain for token in message_tokens):
         business_domain_score = 0.5
 
     context_text = _context_text(conversation_context)
     context_score = 0.0
-    if context_text:
+    if context_isolated:
+        context_score = 0.0
+    elif context_text:
         context_tokens = _tokens(context_text)
         context_score = _ratio(
             sum(1 for token in context_tokens if token in searchable_text),
@@ -290,7 +306,9 @@ def _component_scores(
     stage = _normalize_text(skill.get("conversation_stage"))
     stage_aliases = BUSINESS_STAGE_ALIASES.get(stage, ())
     business_stage_score = 0.0
-    if stage and stage in context_text:
+    if context_isolated:
+        business_stage_score = 0.0
+    elif stage and stage in context_text:
         business_stage_score = 1.0
     elif any(_normalize_text(alias) in normalized_message for alias in stage_aliases):
         business_stage_score = 0.8
@@ -298,7 +316,9 @@ def _component_scores(
     skill_memory_tags = {_normalize_text(tag) for tag in _split_list(skill.get("memory_tags"))}
     context_memory_tags = _context_memory_tags(conversation_context)
     memory_tag_score = 0.0
-    if context_memory_tags and skill_memory_tags:
+    if context_isolated:
+        memory_tag_score = 0.0
+    elif context_memory_tags and skill_memory_tags:
         memory_tag_score = _ratio(
             len(context_memory_tags.intersection(skill_memory_tags)),
             len(context_memory_tags),

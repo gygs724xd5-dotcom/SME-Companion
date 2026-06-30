@@ -56,6 +56,15 @@ REQUIRED_BY_INTENT = {
     "inventory_check": ("product_or_service",),
 }
 
+CUSTOMER_REPLY_TRAILERS = (
+    "ควรตอบยังไง",
+    "ตอบยังไง",
+    "ควรตอบอย่างไร",
+    "ตอบอย่างไร",
+)
+
+EXPENSIVE_PHRASES = ("แพงไป", "แพง")
+
 
 def _clean_dict(data: dict | None) -> dict:
     return {key: value for key, value in (data or {}).items() if value not in (None, "", [], {})}
@@ -122,8 +131,15 @@ def _extract_dates(message: str) -> list[str]:
 def _extract_customer_phrases(message: str) -> list[str]:
     phrases = []
     phrases.extend(re.findall(r"[\"“']([^\"”']{2,160})[\"”']", message))
-    for pattern in (r"ลูกค้า(?:ถาม|บอก|ทัก)ว่า?\s*(.{2,160})", r"customer says?\s*(.{2,160})"):
-        phrases.extend(match.strip() for match in re.findall(pattern, message, flags=re.IGNORECASE))
+    for pattern in (r"ลูกค้า(?:ถาม|บอก|บ่น|ทัก)ว่า?\s*(.{2,160})", r"customer says?\s*(.{2,160})"):
+        for match in re.findall(pattern, message, flags=re.IGNORECASE):
+            cleaned = str(match or "").strip()
+            for trailer in CUSTOMER_REPLY_TRAILERS:
+                cleaned = cleaned.split(trailer, 1)[0].strip()
+            phrases.append(cleaned)
+    for phrase in EXPENSIVE_PHRASES:
+        if phrase in message:
+            phrases.append(phrase)
     return _unique([phrase.strip() for phrase in phrases if phrase.strip()])
 
 
@@ -225,14 +241,20 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
         }
 
     prices, costs = _extract_money(message)
+    product_or_service_names = _extract_product_or_service_names(message)
+    customer_phrases = _extract_customer_phrases(message)
+    customer_phrase = next((phrase for phrase in EXPENSIVE_PHRASES if phrase in customer_phrases), None)
+    customer_phrase = customer_phrase or (customer_phrases[-1] if customer_phrases else None)
     entities = _clean_dict(
         {
-            "product_or_service_names": _extract_product_or_service_names(message),
+            "product_or_service_names": product_or_service_names,
+            "product_or_service": product_or_service_names[0] if product_or_service_names else None,
             "prices": prices,
             "costs": costs,
             "quantities": _extract_quantities(message),
             "dates": _extract_dates(message),
-            "customer_phrases": _extract_customer_phrases(message),
+            "customer_phrases": customer_phrases,
+            "customer_phrase": customer_phrase,
             "business_type_hints": _extract_business_type_hints(message),
             "comparison_or_simulation_values": _extract_simulation_values(message),
         }
