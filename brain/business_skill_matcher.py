@@ -5,6 +5,34 @@ from typing import Any
 
 
 DEFAULT_LIMIT = 5
+NON_BUSINESS_EXPLANATORY_INTENTS = {
+    "label_explanation",
+    "general_question",
+    "unknown_with_question",
+}
+
+STRONG_CURRENT_MESSAGE_BUSINESS_TERMS = (
+    "\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01",
+    "\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e16\u0e32\u0e21",
+    "\u0e15\u0e2d\u0e1a\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32",
+    "\u0e04\u0e27\u0e23\u0e15\u0e2d\u0e1a\u0e22\u0e31\u0e07\u0e44\u0e07",
+    "\u0e23\u0e32\u0e04\u0e32\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23",
+    "\u0e23\u0e32\u0e04\u0e32\u0e40\u0e17\u0e48\u0e32\u0e44\u0e2b\u0e23\u0e48",
+    "\u0e15\u0e31\u0e49\u0e07\u0e23\u0e32\u0e04\u0e32",
+    "\u0e01\u0e33\u0e44\u0e23",
+    "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19",
+    "\u0e22\u0e2d\u0e14\u0e02\u0e32\u0e22",
+    "customer says",
+    "customer asked",
+    "reply customer",
+    "respond to customer",
+    "how much",
+    "set price",
+    "profit",
+    "margin",
+    "cost",
+    "sales",
+)
 
 WEIGHTS = {
     "keyword": 0.22,
@@ -340,11 +368,46 @@ def _detected_intent(conversation_context: dict | None) -> str | None:
     context = conversation_context or {}
     business_context = context.get("business_context") or {}
     business_intent = context.get("business_intent") or {}
-    return (
-        business_intent.get("detected_intent")
-        or context.get("detected_intent")
-        or context.get("intent")
-        or business_context.get("detected_intent")
+    candidates = (
+        business_intent.get("detected_intent"),
+        context.get("detected_intent"),
+        context.get("intent"),
+        business_context.get("detected_intent"),
+    )
+    fallback = None
+    for candidate in candidates:
+        if candidate in (None, "", [], {}):
+            continue
+        value = str(candidate)
+        if value != "unknown":
+            return value
+        fallback = value
+    return fallback
+
+
+def _has_strong_current_message_business_evidence(user_message: str, conversation_context: dict | None) -> bool:
+    detected_intent = _detected_intent(conversation_context)
+    if detected_intent in {
+        "customer_reply",
+        "customer_says_expensive",
+        "pricing_question",
+        "profit_calculation",
+        "sales_summary",
+        "cost_calculation",
+        "inventory_check",
+        "marketing_content",
+        "business_advice",
+    }:
+        return True
+    normalized = str(user_message or "").strip().lower()
+    return any(term.lower() in normalized for term in STRONG_CURRENT_MESSAGE_BUSINESS_TERMS)
+
+
+def _should_bypass_skill_matching(user_message: str, conversation_context: dict | None) -> bool:
+    detected_intent = _detected_intent(conversation_context)
+    return bool(
+        detected_intent in NON_BUSINESS_EXPLANATORY_INTENTS
+        and not _has_strong_current_message_business_evidence(user_message, conversation_context)
     )
 
 
@@ -782,6 +845,8 @@ def rank_business_skills(
     """Rank candidate business skills without depending on the caller's retrieval strategy."""
     if not user_message or not candidate_skills:
         return []
+    if _should_bypass_skill_matching(user_message, conversation_context):
+        return []
 
     ranked = []
     for index, skill in enumerate(candidate_skills):
@@ -792,12 +857,15 @@ def rank_business_skills(
         confidence = _confidence(score, components)
         if confidence <= 0.0:
             continue
+        reason = _reason(skill, components)
+        if reason == "No strong business skill match.":
+            continue
         audit = _match_audit(user_message, conversation_context, skill, components)
         ranked.append(
             {
                 "skill_id": skill.get("skill_id") or "",
                 "score": confidence,
-                "reason": _reason(skill, components),
+                "reason": reason,
                 "matched_keywords": components["matched_keywords"],
                 "matched_aliases": components["matched_aliases"],
                 "match_provenance": audit["match_provenance"],

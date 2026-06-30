@@ -28,6 +28,38 @@ class BusinessIntelligenceBridgeTest(unittest.TestCase):
         self.assertEqual(result["matched_skill"]["skill_id"], "01.001.customer_asks_price")
         self.assertEqual(result["business_reasoning"]["skill_id"], "01.001.customer_asks_price")
 
+    def test_pricing_unclear_label_explanation_bypasses_business_skill_matching(self):
+        route = build_task_route({}, "pricing_unclear \u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23")
+        business = route["business_intelligence"]
+        diagnostics = developer_diagnostics(route)
+
+        self.assertEqual(route["detected_intent"]["detected_intent"], "label_explanation")
+        self.assertFalse(business["bridge_used"])
+        self.assertFalse(business["fallback_used"])
+        self.assertIsNone(business["matched_skill"])
+        self.assertEqual(business["matched_skills"], [])
+        self.assertIsNone(business["top_skill"])
+        self.assertEqual(business["top_confidence"], 0.0)
+        self.assertTrue(business["skill_matching_bypassed"])
+        self.assertTrue(diagnostics["skill_matching_bypassed"])
+        self.assertIn("label_explanation", diagnostics["skill_matching_bypass_reason"])
+
+    def test_sme_companion_general_question_bypasses_business_skill_matching(self):
+        route = build_task_route({}, "SME Companion \u0e04\u0e37\u0e2d\u0e2d\u0e30\u0e44\u0e23")
+        business = route["business_intelligence"]
+
+        self.assertIn(
+            business["detected_intent"],
+            {"label_explanation", "general_question", "unknown_with_question"},
+        )
+        self.assertFalse(business["bridge_used"])
+        self.assertFalse(business["fallback_used"])
+        self.assertIsNone(business["matched_skill"])
+        self.assertEqual(business["matched_skills"], [])
+        self.assertIsNone(business["top_skill"])
+        self.assertEqual(business["top_confidence"], 0.0)
+        self.assertTrue(business["skill_matching_bypassed"])
+
     def test_bridge_skill_match_audit_flags_context_pricing(self):
         context = {
             "business_context": {

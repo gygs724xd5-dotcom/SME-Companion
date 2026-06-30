@@ -11,6 +11,11 @@ from brain.response_mode_engine import BUSINESS_CONSULTING
 
 HIGH_CONFIDENCE_THRESHOLD = 0.6
 MIN_MATCHER_CONFIDENCE = 0.6
+NON_BUSINESS_EXPLANATORY_INTENTS = {
+    "label_explanation",
+    "general_question",
+    "unknown_with_question",
+}
 
 _BROAD_BUSINESS_TERMS = (
     "\u0e2d\u0e22\u0e32\u0e01\u0e02\u0e32\u0e22",
@@ -23,6 +28,29 @@ _BROAD_BUSINESS_TERMS = (
     "increase sales",
 )
 
+_STRONG_CURRENT_MESSAGE_BUSINESS_TERMS = (
+    "\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01",
+    "\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e16\u0e32\u0e21",
+    "\u0e15\u0e2d\u0e1a\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32",
+    "\u0e04\u0e27\u0e23\u0e15\u0e2d\u0e1a\u0e22\u0e31\u0e07\u0e44\u0e07",
+    "\u0e23\u0e32\u0e04\u0e32\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23",
+    "\u0e23\u0e32\u0e04\u0e32\u0e40\u0e17\u0e48\u0e32\u0e44\u0e2b\u0e23\u0e48",
+    "\u0e15\u0e31\u0e49\u0e07\u0e23\u0e32\u0e04\u0e32",
+    "\u0e01\u0e33\u0e44\u0e23",
+    "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19",
+    "\u0e22\u0e2d\u0e14\u0e02\u0e32\u0e22",
+    "customer says",
+    "customer asked",
+    "reply customer",
+    "respond to customer",
+    "how much",
+    "set price",
+    "profit",
+    "margin",
+    "cost",
+    "sales",
+)
+
 
 def _preview(value: Any, limit: int = 160) -> str:
     text = str(value or "").strip()
@@ -31,6 +59,55 @@ def _preview(value: Any, limit: int = 160) -> str:
 
 def _compact(data: dict | None) -> dict:
     return {key: value for key, value in (data or {}).items() if value not in (None, "", [], {})}
+
+
+def _detected_intent(conversation_context: dict | None) -> str | None:
+    context = conversation_context or {}
+    business_context = context.get("business_context") or {}
+    business_intent = context.get("business_intent") or {}
+    business_workflow = context.get("business_workflow") or {}
+    candidates = (
+        business_intent.get("detected_intent"),
+        context.get("detected_intent"),
+        business_context.get("detected_intent"),
+        business_workflow.get("detected_intent"),
+    )
+    fallback = None
+    for candidate in candidates:
+        if candidate in (None, "", [], {}):
+            continue
+        value = str(candidate)
+        if value != "unknown":
+            return value
+        fallback = value
+    return fallback
+
+
+def _has_strong_current_message_business_evidence(user_message: str, conversation_context: dict | None) -> bool:
+    detected_intent = _detected_intent(conversation_context)
+    if detected_intent in {
+        "customer_reply",
+        "customer_says_expensive",
+        "pricing_question",
+        "profit_calculation",
+        "sales_summary",
+        "cost_calculation",
+        "inventory_check",
+        "marketing_content",
+        "business_advice",
+    }:
+        return True
+    normalized = str(user_message or "").strip().lower()
+    return any(term.lower() in normalized for term in _STRONG_CURRENT_MESSAGE_BUSINESS_TERMS)
+
+
+def _should_bypass_skill_matching(user_message: str, conversation_context: dict | None) -> tuple[bool, str | None]:
+    detected_intent = _detected_intent(conversation_context)
+    if detected_intent not in NON_BUSINESS_EXPLANATORY_INTENTS:
+        return False, None
+    if _has_strong_current_message_business_evidence(user_message, conversation_context):
+        return False, None
+    return True, f"Bypassed business skill matching for non-business explanatory/general intent: {detected_intent}."
 
 
 def _skill_matches_domain(skill: dict[str, Any], domain: str | None) -> bool:
@@ -204,6 +281,9 @@ def _skill_match_audit(
     user_message: str,
     conversation_context: dict | None,
     ranked_matches: list[dict],
+    *,
+    bypassed: bool = False,
+    bypass_reason: str | None = None,
 ) -> dict:
     context = conversation_context or {}
     business_context = context.get("business_context") or {}
@@ -229,6 +309,8 @@ def _skill_match_audit(
         "top_skill_reason": top.get("reason"),
         "suspicious_matches": _suspicious_matches(ranked_matches),
         "skill_match_audit_summary": _skill_match_audit_summary(ranked_matches),
+        "skill_matching_bypassed": bool(bypassed),
+        "skill_matching_bypass_reason": bypass_reason,
     }
 
 
@@ -270,9 +352,43 @@ def run_business_intelligence_bridge(
     existing_plan = deepcopy(planner_output or {})
     context = conversation_context or {}
     business_context = context.get("business_context") or {}
-    detected_intent = context.get("detected_intent") or business_context.get("detected_intent")
+    detected_intent = _detected_intent(conversation_context)
     extracted_entities = context.get("extracted_entities") or business_context.get("extracted_entities") or {}
     try:
+        skill_matching_bypassed, skill_matching_bypass_reason = _should_bypass_skill_matching(
+            user_message,
+            conversation_context,
+        )
+        if skill_matching_bypassed:
+            skill_match_audit = _skill_match_audit(
+                user_message,
+                conversation_context,
+                [],
+                bypassed=True,
+                bypass_reason=skill_matching_bypass_reason,
+            )
+            skill_match_audit_summary = skill_match_audit.get("skill_match_audit_summary") or {}
+            return {
+                "bridge_used": False,
+                "fallback_used": False,
+                "planner_output": existing_plan,
+                "matched_skill": None,
+                "matched_domain": None,
+                "matched_skills": [],
+                "ranking_table": [],
+                "top_skill": None,
+                "top_confidence": 0.0,
+                "matching_reason": None,
+                "business_reasoning": None,
+                "confidence": 0.0,
+                "detected_intent": detected_intent,
+                "extracted_entities": extracted_entities,
+                "skill_match_audit": skill_match_audit,
+                "skill_match_audit_summary": skill_match_audit_summary,
+                "skill_matching_bypassed": True,
+                "skill_matching_bypass_reason": skill_matching_bypass_reason,
+            }
+
         matched_skill, broad_consulting, ranked_matches = _best_skill(user_message, conversation_context)
         skill_match_audit = _skill_match_audit(user_message, conversation_context, ranked_matches)
         skill_match_audit_summary = skill_match_audit.get("skill_match_audit_summary") or {}
@@ -294,6 +410,8 @@ def run_business_intelligence_bridge(
                 "extracted_entities": extracted_entities,
                 "skill_match_audit": skill_match_audit,
                 "skill_match_audit_summary": skill_match_audit_summary,
+                "skill_matching_bypassed": False,
+                "skill_matching_bypass_reason": None,
             }
 
         reasoning = reason_business_message(
@@ -340,6 +458,8 @@ def run_business_intelligence_bridge(
             "extracted_entities": extracted_entities,
             "skill_match_audit": skill_match_audit,
             "skill_match_audit_summary": skill_match_audit_summary,
+            "skill_matching_bypassed": False,
+            "skill_matching_bypass_reason": None,
         }
         return {
             **business_payload,
@@ -364,6 +484,8 @@ def run_business_intelligence_bridge(
             "extracted_entities": extracted_entities,
             "skill_match_audit": _skill_match_audit(user_message, conversation_context, []),
             "skill_match_audit_summary": _skill_match_audit_summary([]),
+            "skill_matching_bypassed": False,
+            "skill_matching_bypass_reason": None,
             "bridge_error": f"{type(exc).__name__}: {exc}",
         }
 

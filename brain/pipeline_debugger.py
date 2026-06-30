@@ -87,6 +87,8 @@ def _key_state(overrides: dict | None = None) -> dict:
         "last_response_empty": bool(_safe_get(session, "last_response_empty") or developer.get("last_response_empty")),
         "last_pipeline_error": _safe_get(session, "last_pipeline_error") or developer.get("last_pipeline_error"),
         "business_skill_search": bool(business_intelligence.get("bridge_used") or business_intelligence.get("fallback_used")),
+        "skill_matching_bypassed": bool(business_intelligence.get("skill_matching_bypassed")),
+        "skill_matching_bypass_reason": business_intelligence.get("skill_matching_bypass_reason"),
         "matched_skill": (business_intelligence.get("matched_skill") or {}).get("skill_id"),
         "matched_skills": business_intelligence.get("matched_skills") or [],
         "ranking_table": business_intelligence.get("ranking_table") or [],

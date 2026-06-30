@@ -178,7 +178,7 @@ class BusinessSkillMatcherTest(unittest.TestCase):
         self.assertIn("แพงไป", current_evidence)
         self.assertIn("ควรตอบยังไง", current_evidence)
 
-    def test_pricing_unclear_label_explanation_provenance_is_current_message(self):
+    def test_label_explanation_does_not_rank_weak_business_skills(self):
         candidates = [
             skill(
                 "01.001.customer_asks_price",
@@ -210,16 +210,7 @@ class BusinessSkillMatcherTest(unittest.TestCase):
 
         ranked = rank_business_skills("pricing_unclear คืออะไร", context, candidates)
 
-        self.assertEqual(ranked[0]["skill_id"], "99.001.pricing_unclear")
-        self.assertEqual(ranked[0]["intent_match"]["detected_intent"], "label_explanation")
-        pricing_unclear_records = [
-            item for item in ranked[0]["match_provenance"] if item["token"] == "pricing"
-        ]
-        self.assertTrue(pricing_unclear_records)
-        self.assertTrue(all(item["matched_from_current_message"] for item in pricing_unclear_records))
-
-        asks_price = next(item for item in ranked if item["skill_id"] == "01.001.customer_asks_price")
-        self.assertNotEqual(asks_price["skill_id"], ranked[0]["skill_id"])
+        self.assertEqual(ranked, [])
 
     def test_business_context_improves_relevant_skill(self):
         candidates = [
