@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION,
@@ -50,6 +52,29 @@ def _active_workflow(memory: dict | None) -> str | None:
 
 def _add(scores: dict[str, int], intent: str, amount: int) -> None:
     scores[intent] = min(99, scores.get(intent, 0) + amount)
+
+
+def _strong_cost_calculation_evidence(message: str, business_context: dict | None) -> bool:
+    context = business_context or {}
+    entities = context.get("extracted_entities") or {}
+    detected = context.get("detected_intent") or context.get("current_message_intent")
+    matched_keywords = [str(keyword) for keyword in context.get("matched_intent_keywords") or []]
+    text = str(message or "")
+    has_cost_intent = detected == "cost_calculation" or any(
+        keyword in {"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "\u0e17\u0e38\u0e19", "cost", "margin"}
+        for keyword in matched_keywords
+    )
+    has_numeric_cost_context = bool(
+        entities.get("costs")
+        or entities.get("prices")
+        or entities.get("quantities")
+        or re.search(r"\d", text)
+    )
+    has_quantity = bool(
+        entities.get("quantities")
+        or any(unit in text for unit in ["\u0e0a\u0e34\u0e49\u0e19", "pcs", "unit"])
+    )
+    return bool(has_cost_intent and has_numeric_cost_context and has_quantity)
 
 
 def _workflow_for_intent(intent: str, memory: dict | None) -> str | None:
@@ -141,6 +166,8 @@ def resolve_intent(
         _add(scores, "sales_planning", 35)
     if detected == "cost_question" or _contains_any(message, COST_TERMS):
         _add(scores, "cost_calculation", 62)
+    if _strong_cost_calculation_evidence(message, context):
+        _add(scores, "cost_calculation", 28)
     if detected == "continue_previous_workflow" or _contains_any(message, FOLLOW_UP_TERMS):
         _add(scores, "continue_previous_workflow", 62 if _active_workflow(memory) else 42)
     if _contains_any(message, VARIANT_TERMS + SHORTEN_TERMS + EMOJI_TERMS + TRANSLATE_TERMS + PROFESSIONAL_TERMS):
@@ -179,6 +206,18 @@ def resolve_intent(
         reverse=True,
     )
     winner = candidates[0] if candidates else {"intent": "general_business_help", "score": 35}
+    resolver_override = None
+    if _strong_cost_calculation_evidence(message, context):
+        score_by_intent = {item["intent"]: item["score"] for item in candidates}
+        cost_score = int(score_by_intent.get("cost_calculation") or 0)
+        pricing_score = int(score_by_intent.get("pricing_question") or 0)
+        if winner.get("intent") == "pricing_question" and cost_score >= pricing_score - 10:
+            winner = {"intent": "cost_calculation", "score": cost_score}
+            resolver_override = {
+                "from_intent": "pricing_question",
+                "to_intent": "cost_calculation",
+                "reason": "current message has cost_calculation intent with numeric cost/quantity evidence",
+            }
     confidence_score = max(0.0, min(0.99, winner["score"] / 100))
     if confidence_score >= 0.75:
         confidence = "HIGH"
@@ -198,4 +237,5 @@ def resolve_intent(
         "resolved_references": _reference_resolution(message, memory),
         "planner_message": _planner_message(resolved_intent, message, memory, context),
         "source": "conversation_intelligence",
+        "resolver_override": resolver_override,
     }

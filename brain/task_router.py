@@ -169,7 +169,115 @@ def workflow_response_gate(task_route: dict | None) -> dict:
     }
 
 
+def _workflow_id_from_business_workflow(workflow: dict | None) -> str | None:
+    state = (workflow or {}).get("workflow_state") or {}
+    return state.get("workflow_id") or state.get("workflow") or state.get("current_workflow")
+
+
+def _matched_skill_payload(route: dict | None) -> dict:
+    matched = ((route or {}).get("business_intelligence") or {}).get("matched_skill") or {}
+    if not isinstance(matched, dict):
+        return {}
+    return {
+        "skill_id": matched.get("skill_id"),
+        "match_score": matched.get("match_score"),
+        "matched_aliases": matched.get("matched_aliases") or [],
+        "matched_keywords": matched.get("matched_keywords") or [],
+    }
+
+
+def _intent_priority_audit(route: dict | None) -> dict:
+    route = route or {}
+    business_context = route.get("business_context") or {}
+    intent_resolution = route.get("intent_resolution") or {}
+    planner_output = route.get("planner_output") or {}
+    business_workflow = route.get("business_workflow") or {}
+    matched_skill = _matched_skill_payload(route)
+
+    current_message_intent = business_context.get("current_message_intent")
+    detected_intent = business_context.get("detected_intent")
+    resolved_intent = intent_resolution.get("resolved_intent")
+    resolved_workflow = intent_resolution.get("resolved_workflow")
+    planner_workflow = planner_output.get("workflow")
+    business_workflow_id = _workflow_id_from_business_workflow(business_workflow)
+
+    overrides = []
+    previous_intent = current_message_intent or detected_intent
+    previous_workflow = business_workflow_id
+    if previous_intent and resolved_intent and resolved_intent != previous_intent:
+        overrides.append(
+            {
+                "layer": "intent_resolver",
+                "field": "intent",
+                "from": previous_intent,
+                "to": resolved_intent,
+            }
+        )
+    if previous_workflow and resolved_workflow and resolved_workflow != previous_workflow:
+        overrides.append(
+            {
+                "layer": "intent_resolver",
+                "field": "workflow",
+                "from": previous_workflow,
+                "to": resolved_workflow,
+            }
+        )
+    if resolved_workflow and planner_workflow and planner_workflow != resolved_workflow:
+        overrides.append(
+            {
+                "layer": "planner",
+                "field": "workflow",
+                "from": resolved_workflow,
+                "to": planner_workflow,
+            }
+        )
+    elif previous_workflow and planner_workflow and planner_workflow != previous_workflow:
+        overrides.append(
+            {
+                "layer": "planner",
+                "field": "workflow",
+                "from": previous_workflow,
+                "to": planner_workflow,
+            }
+        )
+    if current_message_intent == "cost_calculation" and str(matched_skill.get("skill_id") or "").endswith("customer_asks_price"):
+        overrides.append(
+            {
+                "layer": "business_skill_matcher",
+                "field": "skill_id",
+                "from": current_message_intent,
+                "to": matched_skill.get("skill_id"),
+            }
+        )
+
+    return {
+        "current_message_text": (route.get("conversation_understanding") or {}).get("raw_text") or planner_output.get("goal") or route.get("user_message"),
+        "detected_intent": detected_intent,
+        "current_message_intent": current_message_intent,
+        "intent_resolution": {
+            "resolved_intent": resolved_intent,
+            "resolved_workflow": resolved_workflow,
+            "resolver_override": intent_resolution.get("resolver_override"),
+        },
+        "planner_output": {
+            "task_type": planner_output.get("task_type"),
+            "workflow": planner_workflow,
+        },
+        "business_workflow": {
+            "workflow_state": {
+                "workflow_id": business_workflow_id,
+            }
+        },
+        "matched_skill": matched_skill,
+        "intent_changed_between_layers": bool(overrides),
+        "workflow_changed_between_layers": any(item.get("field") == "workflow" for item in overrides),
+        "overrides": overrides,
+        "overrode_previous_layer": overrides[-1]["layer"] if overrides else None,
+    }
+
+
 def _with_response_gate(route: dict) -> dict:
+    route = {**route, "intent_priority_audit": _intent_priority_audit(route)}
     gate = workflow_response_gate(route)
     return {**route, **gate}
 
@@ -445,6 +553,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Planner Output": route.get("planner_output") or {},
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
+        "intent_priority_audit": route.get("intent_priority_audit") or _intent_priority_audit(route),
+        "intent_resolution": route.get("intent_resolution") or {},
         "Task Type": route.get("task_type"),
         "Selected Capability": (route.get("selected_capability") or {}).get("name"),
         "Loaded Skill": loaded_skill_names,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
 
 from brain.business_reasoning_engine import reason_business_message
@@ -99,6 +100,40 @@ def _has_strong_current_message_business_evidence(user_message: str, conversatio
         return True
     normalized = str(user_message or "").strip().lower()
     return any(term.lower() in normalized for term in _STRONG_CURRENT_MESSAGE_BUSINESS_TERMS)
+
+
+def _has_strong_cost_calculation_evidence(user_message: str, conversation_context: dict | None) -> bool:
+    context = conversation_context or {}
+    business_context = context.get("business_context") or {}
+    entities = context.get("extracted_entities") or business_context.get("extracted_entities") or {}
+    detected_intent = _detected_intent(conversation_context)
+    message = str(user_message or "")
+    matched_keywords = [
+        str(keyword)
+        for keyword in (
+            (context.get("business_intent") or {}).get("matched_intent_keywords")
+            or business_context.get("matched_intent_keywords")
+            or []
+        )
+    ]
+    has_cost_intent = detected_intent == "cost_calculation" or any(
+        keyword in {"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "\u0e17\u0e38\u0e19", "cost", "margin"}
+        for keyword in matched_keywords
+    )
+    has_numeric_evidence = bool(entities.get("costs") or entities.get("prices") or entities.get("quantities") or re.search(r"\d", message))
+    has_quantity = bool(entities.get("quantities") or any(unit in message for unit in ["\u0e0a\u0e34\u0e49\u0e19", "pcs", "unit"]))
+    return bool(has_cost_intent and has_numeric_evidence and has_quantity)
+
+
+def _should_suppress_price_skill_for_cost_message(
+    user_message: str,
+    conversation_context: dict | None,
+    matched_skill: dict | None,
+) -> bool:
+    if not matched_skill:
+        return False
+    skill_id = str(matched_skill.get("skill_id") or "")
+    return bool(skill_id.endswith("customer_asks_price") and _has_strong_cost_calculation_evidence(user_message, conversation_context))
 
 
 def _should_bypass_skill_matching(user_message: str, conversation_context: dict | None) -> tuple[bool, str | None]:
@@ -390,7 +425,17 @@ def run_business_intelligence_bridge(
             }
 
         matched_skill, broad_consulting, ranked_matches = _best_skill(user_message, conversation_context)
+        suppressed_skill = None
+        if _should_suppress_price_skill_for_cost_message(user_message, conversation_context, matched_skill):
+            suppressed_skill = {
+                "skill_id": matched_skill.get("skill_id"),
+                "reason": "suppressed customer_asks_price because current message has strong cost_calculation evidence",
+            }
+            matched_skill = None
+            broad_consulting = False
         skill_match_audit = _skill_match_audit(user_message, conversation_context, ranked_matches)
+        if suppressed_skill:
+            skill_match_audit["suppressed_top_skill"] = suppressed_skill
         skill_match_audit_summary = skill_match_audit.get("skill_match_audit_summary") or {}
         if not matched_skill:
             return {
@@ -412,6 +457,7 @@ def run_business_intelligence_bridge(
                 "skill_match_audit_summary": skill_match_audit_summary,
                 "skill_matching_bypassed": False,
                 "skill_matching_bypass_reason": None,
+                "suppressed_top_skill": suppressed_skill,
             }
 
         reasoning = reason_business_message(
