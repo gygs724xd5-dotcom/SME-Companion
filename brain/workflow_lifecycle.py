@@ -69,6 +69,9 @@ _PRICING_TRIGGERS = _PRICING_TRIGGERS + (
     "\u0e1a\u0e27\u0e01",
     "\u0e16\u0e49\u0e32\u0e02\u0e32\u0e22",
     "\u0e02\u0e32\u0e22",
+    "sell",
+    "selling price",
+    "sale price",
     "profit",
     "markup",
 )

@@ -3241,6 +3241,56 @@ def _completed_workflow_followup_response(user_message: str, application_state: 
     }
 
 
+def _completed_workflow_followup_debug_extra(completed_followup: dict | None) -> dict:
+    completed_followup = completed_followup or {}
+    return {
+        **(completed_followup.get("workflow_lifecycle") or {}),
+        "workflow_handler": "completed_workflow_followup",
+        "response_mode": completed_followup.get("response_mode"),
+        "reply_builder": completed_followup.get("reply_builder"),
+        "natural_response": completed_followup.get("natural_response"),
+        "response_type": completed_followup.get("response_type"),
+        "response_source": completed_followup.get("response_source"),
+        "response_reason": completed_followup.get("response_reason"),
+        "reuse_completed_workflow": completed_followup.get("reuse_completed_workflow"),
+        "variant_source": completed_followup.get("variant_source"),
+        "composer_trace": completed_followup.get("composer_trace") or [],
+        "followup_chain": completed_followup.get("followup_chain") or [],
+        "calculation_trace": completed_followup.get("calculation_trace") or {},
+        "conversation_style": completed_followup.get("conversation_style"),
+        "continuation_mode": completed_followup.get("continuation_mode"),
+        "direct_answer_mode": completed_followup.get("direct_answer_mode"),
+        "planner_skipped": completed_followup.get("planner_skipped"),
+        "reuse_reason": completed_followup.get("reuse_reason"),
+        "response_generation_mode": completed_followup.get("response_generation_mode"),
+        "workflow_status": "COMPLETED",
+        "workflow_complete": True,
+        "workflow_released": True,
+        "execution_reason": "completed workflow reused for follow-up",
+    }
+
+
+def _handle_completed_workflow_followup(
+    user_message: str,
+    *,
+    topic: str | None = None,
+) -> bool:
+    completed_followup = _completed_workflow_followup_response(user_message, _sync_session_to_application_state())
+    if not completed_followup:
+        return False
+
+    debug_trace = _new_ai_pipeline_debug_trace(user_message, {})
+    workflow_extra = _completed_workflow_followup_debug_extra(completed_followup)
+    _finalize_ai_pipeline_debug_trace(debug_trace, "workflow_response", completed_followup["reply"], workflow_extra)
+    _append_workflow_reply(
+        completed_followup["reply"],
+        completed_followup["intent"],
+        topic or _ensure_conversation_state().get("current_topic"),
+        response_source_override=completed_followup.get("response_source") or "completed_workflow",
+    )
+    return True
+
+
 def _workflow_llm_context(workflow_state: dict, profile: dict | None, user_message: str) -> dict:
     return {
         "current_workflow": workflow_state.get("workflow"),
@@ -3565,8 +3615,14 @@ def _handle_receipt_workflow(user_message: str) -> dict:
     return {"reply": reply, "intent": WORKFLOW_RECEIPT_CAPTURE}
 
 
-def _append_workflow_reply(reply: str, intent: str, topic: str | None = None) -> None:
-    response_source = _workflow_response_source_for_current_route()
+def _append_workflow_reply(
+    reply: str,
+    intent: str,
+    topic: str | None = None,
+    *,
+    response_source_override: str | None = None,
+) -> None:
+    response_source = response_source_override or _workflow_response_source_for_current_route()
     reply, response_source, response_empty = _resolve_assistant_reply(reply, response_source)
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
@@ -4220,6 +4276,9 @@ def _show_chat_companion(
             _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
             return
 
+    if _handle_completed_workflow_followup(user_message):
+        return
+
     understanding_state = _sync_session_to_application_state()
     add_pipeline_event("understanding", "understand_conversation", "understanding engine start")
     conversation_understanding = understand_conversation(user_message, understanding_state)
@@ -4315,41 +4374,6 @@ def _show_chat_companion(
             workflow_extra,
             response_candidates=response_candidates,
         )
-
-    completed_followup = _completed_workflow_followup_response(user_message, _sync_session_to_application_state())
-    if completed_followup:
-        workflow_extra = {
-            **(completed_followup.get("workflow_lifecycle") or {}),
-            "workflow_handler": "completed_workflow_followup",
-            "response_mode": completed_followup.get("response_mode"),
-            "reply_builder": completed_followup.get("reply_builder"),
-            "natural_response": completed_followup.get("natural_response"),
-            "response_type": completed_followup.get("response_type"),
-            "response_source": completed_followup.get("response_source"),
-            "response_reason": completed_followup.get("response_reason"),
-            "reuse_completed_workflow": completed_followup.get("reuse_completed_workflow"),
-            "variant_source": completed_followup.get("variant_source"),
-            "composer_trace": completed_followup.get("composer_trace") or [],
-            "followup_chain": completed_followup.get("followup_chain") or [],
-            "calculation_trace": completed_followup.get("calculation_trace") or {},
-            "conversation_style": completed_followup.get("conversation_style"),
-            "continuation_mode": completed_followup.get("continuation_mode"),
-            "direct_answer_mode": completed_followup.get("direct_answer_mode"),
-            "planner_skipped": completed_followup.get("planner_skipped"),
-            "reuse_reason": completed_followup.get("reuse_reason"),
-            "response_generation_mode": completed_followup.get("response_generation_mode"),
-            "workflow_status": "COMPLETED",
-            "workflow_complete": True,
-            "workflow_released": True,
-            "execution_reason": "completed workflow reused for follow-up",
-        }
-        finalize_debug("workflow_response", completed_followup["reply"], workflow_extra)
-        _append_workflow_reply(
-            completed_followup["reply"],
-            completed_followup["intent"],
-            state.get("current_topic"),
-        )
-        return
 
     if reasoning.get("action") in {"receipt_uploaded_ack", "receipt_ocr_pending"}:
         reply = _receipt_uploaded_reply(reasoning.get("action"))

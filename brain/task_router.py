@@ -19,7 +19,9 @@ from brain.intent_resolver import resolve_intent
 from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
 from brain.planner_engine import build_execution_plan
 from brain.reasoning_engine import build_reasoning
+from brain.response_transformation_engine import detect_response_transformation, transformation_source
 from brain.skill_loader import load_skills
+from brain.workflow_lifecycle import classify_completed_workflow_followup
 
 
 BYPASS_WORKFLOW_RESPONSE_INTENTS = {
@@ -282,8 +284,107 @@ def _with_response_gate(route: dict) -> dict:
     return {**route, **gate}
 
 
+def _planner_skipped_route(
+    user_message: str | None,
+    *,
+    reason: str,
+    response_source: str,
+    extra: dict | None = None,
+) -> dict:
+    return _with_response_gate({
+        "planner_output": {
+            "goal": str(user_message or "").strip(),
+            "task_type": "Conversation Continuation",
+            "workflow": None,
+            "required_skills": [],
+            "required_information": [],
+            "known_information": ["previous_response"],
+            "missing_information": [],
+            "can_execute": True,
+            "next_step": "skip_planner",
+            "priority": "high",
+            "estimated_response_mode": response_source,
+            "planner_skipped": True,
+        },
+        "conversation_understanding": {},
+        "conversation_intelligence": {},
+        "intent_resolution": {"resolved_intent": reason, "resolved_workflow": None},
+        "detected_intent": {},
+        "extracted_entities": {},
+        "business_workflow": {},
+        "business_context": {},
+        "conversation_memory": {},
+        "task_type": "Conversation Continuation",
+        "selected_capability": None,
+        "loaded_skills": [],
+        "reasoning": {"action": reason, "workflow_ready": False},
+        "reasoning_mode": "conversation_continuation",
+        "llm_reasoning_context": {},
+        "llm_decision": {"should_use_llm": False, "reason": "Planner skipped for response continuation."},
+        "workflow_ready": False,
+        "llm_needed": False,
+        "capability_available": True,
+        "placeholders": dict(PLACEHOLDER_ENGINES),
+        "planner_skipped": True,
+        "direct_answer_mode": True,
+        "continuation_mode": reason,
+        "response_source": response_source,
+        "response_generation_mode": response_source,
+        **(extra or {}),
+    })
+
+
+def _continuation_route_if_planner_should_skip(state: dict, user_message: str | None) -> dict | None:
+    transformation = detect_response_transformation(user_message)
+    source = transformation_source(state)
+    if transformation.get("is_transformation") and source.get("text"):
+        return _planner_skipped_route(
+            user_message,
+            reason="response_transformation",
+            response_source="response_transformation",
+            extra={
+                "transformation_type": transformation.get("transformation_type"),
+                "transformation_reason": transformation.get("transformation_reason"),
+                "transformation_source": source.get("source"),
+                "transformation_chain": source.get("transformation_chain") or [],
+                "transformation_history": source.get("transformation_history") or [],
+                "used_previous_response": True,
+                "rewrite_mode": transformation.get("rewrite_mode"),
+                "translation_mode": transformation.get("translation_mode"),
+                "reuse_reason": "previous_generated_response_available",
+            },
+        )
+
+    completed_followup = classify_completed_workflow_followup(state, user_message)
+    if completed_followup.get("reuse_completed_workflow"):
+        completed = completed_followup.get("completed_workflow") or {}
+        return _planner_skipped_route(
+            user_message,
+            reason="completed_workflow_followup",
+            response_source="completed_workflow",
+            extra={
+                "reuse_completed_workflow": True,
+                "reuse_reason": (
+                    "completed_cost_result_available"
+                    if completed.get("workflow_id") == "cost_calculation"
+                    else "completed_workflow_context_available"
+                ),
+                "followup_chain": completed_followup.get("followup_chain") or [],
+                "workflow_followup_mode": completed_followup.get("workflow_followup_mode"),
+                "workflow_variant_mode": completed_followup.get("workflow_variant_mode"),
+                "workflow_transition_reason": completed_followup.get("workflow_transition_reason"),
+            },
+        )
+
+    return None
+
+
 def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
+    continuation_route = _continuation_route_if_planner_should_skip(state, user_message)
+    if continuation_route:
+        return continuation_route
+
     business_intent = detect_business_intent(user_message)
     entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
     workflow_decision = decide_business_workflow(
@@ -522,6 +623,81 @@ def build_task_route(application_state, user_message) -> dict:
     })
 
 
+def _with_diagnostic_groups(diagnostics: dict) -> dict:
+    grouped = {
+        "Routing": {
+            "task_type": diagnostics.get("Task Type"),
+            "intent_priority_audit": diagnostics.get("intent_priority_audit"),
+            "intent_resolution": diagnostics.get("intent_resolution"),
+            "final_response_gate": diagnostics.get("final_response_gate"),
+            "workflow_response_allowed": diagnostics.get("workflow_response_allowed"),
+            "workflow_response_blocked_reason": diagnostics.get("workflow_response_blocked_reason"),
+            "current_message_intent": diagnostics.get("current_message_intent"),
+            "previous_context_intent": diagnostics.get("previous_context_intent"),
+            "intent_changed": diagnostics.get("intent_changed"),
+        },
+        "Conversation": {
+            "understanding": diagnostics.get("Conversation Understanding"),
+            "intelligence": diagnostics.get("Conversation Intelligence"),
+            "conversation_style": diagnostics.get("conversation_style"),
+            "continuation_mode": diagnostics.get("continuation_mode"),
+            "direct_answer_mode": diagnostics.get("direct_answer_mode"),
+            "reuse_reason": diagnostics.get("reuse_reason"),
+            "followup_chain": diagnostics.get("followup_chain"),
+        },
+        "Workflow": {
+            "workflow_action": diagnostics.get("workflow_action"),
+            "workflow_state": diagnostics.get("workflow_state"),
+            "workflow_status": diagnostics.get("workflow_status"),
+            "workflow_complete": diagnostics.get("workflow_complete"),
+            "workflow_released": diagnostics.get("workflow_released"),
+            "workflow_followup_mode": diagnostics.get("workflow_followup_mode"),
+            "workflow_variant_mode": diagnostics.get("workflow_variant_mode"),
+            "readiness_decision": diagnostics.get("Readiness Decision"),
+            "completion_decision": diagnostics.get("Completion Decision"),
+            "transition_decision": diagnostics.get("Transition Decision"),
+        },
+        "Transformation": {
+            "transformation_type": diagnostics.get("transformation_type"),
+            "transformation_reason": diagnostics.get("transformation_reason"),
+            "transformation_source": diagnostics.get("transformation_source"),
+            "transformation_chain": diagnostics.get("transformation_chain"),
+            "transformation_history": diagnostics.get("transformation_history"),
+            "used_previous_response": diagnostics.get("used_previous_response"),
+            "rewrite_mode": diagnostics.get("rewrite_mode"),
+            "translation_mode": diagnostics.get("translation_mode"),
+        },
+        "Planner": {
+            "planner_output": diagnostics.get("Planner Output"),
+            "planner_skipped": diagnostics.get("planner_skipped"),
+            "planner_locked": diagnostics.get("Planner Locked"),
+            "reasoning_mode": diagnostics.get("Reasoning Mode"),
+            "llm_decision": diagnostics.get("LLM Decision"),
+            "llm_needed": diagnostics.get("LLM Needed"),
+        },
+        "Memory": {
+            "reuse_completed_workflow": diagnostics.get("reuse_completed_workflow"),
+            "variant_source": diagnostics.get("variant_source"),
+            "context_source": diagnostics.get("context_source"),
+            "context_confidence": diagnostics.get("context_confidence"),
+            "context_conflicts": diagnostics.get("context_conflicts"),
+            "stale_context_detected": diagnostics.get("stale_context_detected"),
+        },
+        "Response": {
+            "response_type": diagnostics.get("response_type"),
+            "response_source": diagnostics.get("response_source"),
+            "response_reason": diagnostics.get("response_reason"),
+            "response_generation_mode": diagnostics.get("response_generation_mode"),
+            "final_response_origin": diagnostics.get("final_response_origin"),
+            "response_source_before_gate": diagnostics.get("response_source_before_gate"),
+            "response_source_after_gate": diagnostics.get("response_source_after_gate"),
+            "reply_builder": diagnostics.get("reply_builder"),
+            "natural_response": diagnostics.get("natural_response"),
+        },
+    }
+    return {**diagnostics, "diagnostic_groups": grouped}
+
+
 def developer_diagnostics(task_route: dict | None) -> dict:
     route = task_route or {}
     skills = route.get("loaded_skills") or []
@@ -570,7 +746,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "translation_mode": route.get("translation_mode"),
     }
 
-    return {
+    diagnostics = {
         "Planner Output": route.get("planner_output") or {},
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
@@ -696,3 +872,4 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "workflow_response_blocked_reason": route.get("workflow_response_blocked_reason") or workflow_response_gate(route).get("workflow_response_blocked_reason"),
         **response_audit_defaults,
     }
+    return _with_diagnostic_groups(diagnostics)
