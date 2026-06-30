@@ -13,6 +13,7 @@ from brain.workflow_readiness import (
     WORKFLOW_SALES_PLAN_7_DAY,
     is_workflow_ready,
 )
+from brain.workflow_lifecycle import attach_lifecycle_diagnostics
 
 
 REQUIRED_FIELDS = {
@@ -451,4 +452,8 @@ def update_workflow_state(
     else:
         state["step"] = WORKFLOW_START_STEPS.get(workflow, "collecting_fields")
         state["next_action"] = "ask_missing_field"
+    state = attach_lifecycle_diagnostics(
+        state,
+        transition_reason="workflow ready for execution" if state.get("is_ready") else "workflow collecting missing fields",
+    )
     return state, {**extracted, **direct_answer}

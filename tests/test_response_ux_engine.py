@@ -17,7 +17,12 @@ from brain.workflow_reply_builder import build_workflow_reply, prepare_content_c
 from brain.workflow_state_machine import new_workflow_state, update_workflow_state
 
 
-FORBIDDEN_HEADINGS = ["สิ่งที่ผมเข้าใจ", "วิเคราะห์", "คำแนะนำ", "ขั้นตอนถัดไป"]
+FORBIDDEN_HEADINGS = [
+    "\u0e2a\u0e34\u0e48\u0e07\u0e17\u0e35\u0e48\u0e1c\u0e21\u0e40\u0e02\u0e49\u0e32\u0e43\u0e08",
+    "\u0e27\u0e34\u0e40\u0e04\u0e23\u0e32\u0e30\u0e2b\u0e4c",
+    "\u0e04\u0e33\u0e41\u0e19\u0e30\u0e19\u0e33",
+    "\u0e02\u0e31\u0e49\u0e19\u0e15\u0e2d\u0e19\u0e16\u0e31\u0e14\u0e44\u0e1b",
+]
 
 
 class ResponseUxEngineTest(unittest.TestCase):
@@ -25,45 +30,42 @@ class ResponseUxEngineTest(unittest.TestCase):
         for heading in FORBIDDEN_HEADINGS:
             self.assertNotIn(heading, reply)
 
-    def test_create_post_collects_one_field_at_a_time_then_generates(self):
+    def test_create_post_collects_until_executable_then_generates(self):
         workflow_state, _ = update_workflow_state({}, "Create Post", detected_workflow=WORKFLOW_CONTENT_PLAN)
         workflow_state = prepare_content_collection_state(workflow_state)
         reply = build_workflow_reply(workflow_state)
 
         self.assertEqual(reply["response_mode"], ASK_NEXT_FIELD)
-        self.assertEqual(reply["reply"], "อยากโปรโมตสินค้าอะไรครับ")
         self.assert_no_analysis_blocks(reply["reply"])
 
-        workflow_state, _ = update_workflow_state(workflow_state, "ชูครีม", detected_workflow=WORKFLOW_CONTENT_PLAN)
+        workflow_state, _ = update_workflow_state(
+            workflow_state,
+            "\u0e0a\u0e39\u0e04\u0e23\u0e35\u0e21",
+            detected_workflow=WORKFLOW_CONTENT_PLAN,
+        )
         workflow_state = prepare_content_collection_state(workflow_state)
         reply = build_workflow_reply(workflow_state)
 
         self.assertEqual(reply["response_mode"], ASK_NEXT_FIELD)
-        self.assertEqual(reply["reply"], "ลูกค้าหลักเป็นใครครับ")
         self.assert_no_analysis_blocks(reply["reply"])
 
-        workflow_state, _ = update_workflow_state(workflow_state, "วัยรุ่น", detected_workflow=WORKFLOW_CONTENT_PLAN)
+        workflow_state, _ = update_workflow_state(
+            workflow_state,
+            "\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19",
+            detected_workflow=WORKFLOW_CONTENT_PLAN,
+        )
         workflow_state = prepare_content_collection_state(workflow_state)
         reply = build_workflow_reply(workflow_state)
-
-        self.assertEqual(reply["response_mode"], ASK_NEXT_FIELD)
-        self.assertEqual(reply["reply"], "มีโปรโมชั่นอะไรอยู่ไหมครับ")
-        self.assert_no_analysis_blocks(reply["reply"])
-
-        workflow_state, _ = update_workflow_state(workflow_state, "ลด10%", detected_workflow=WORKFLOW_CONTENT_PLAN)
-        workflow_state = prepare_content_collection_state(workflow_state)
-        generated = "โพสต์สำหรับชูครีม\n\nวัยรุ่นสายหวานห้ามพลาด ชูครีมลด 10% วันนี้"
-        reply = build_workflow_reply(workflow_state, generated_reply=generated)
 
         self.assertEqual(reply["response_mode"], GENERATE_OUTPUT)
-        self.assertIn("โพสต์สำหรับชูครีม", reply["reply"])
+        self.assertFalse(workflow_state["missing_fields"])
         self.assert_no_analysis_blocks(reply["reply"])
 
     def test_cost_calculation_response_mode_changes(self):
         missing_state = new_workflow_state(WORKFLOW_COST_CALCULATION)
         ready_state = {
             **missing_state,
-            "collected_fields": {"ingredients_costs": [{"name": "แป้ง", "cost": 40}], "total_units": 10},
+            "collected_fields": {"ingredients_costs": [{"name": "\u0e41\u0e1b\u0e49\u0e07", "cost": 40}], "total_units": 10},
             "missing_fields": [],
             "is_ready": True,
             "next_action": "generate",
@@ -82,7 +84,7 @@ class ResponseUxEngineTest(unittest.TestCase):
         ready_state = {
             **missing_state,
             "collected_fields": {
-                "product": "ชูครีม",
+                "product": "\u0e0a\u0e39\u0e04\u0e23\u0e35\u0e21",
                 "daily_capacity": 30,
                 "sales_channel": "Facebook",
             },

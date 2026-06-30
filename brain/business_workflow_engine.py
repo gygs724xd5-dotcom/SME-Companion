@@ -9,6 +9,11 @@ from brain.business_entity_extractor import REQUIRED_BY_INTENT
 from brain.conversation_manager import active_workflow_state, ensure_conversation_os_state
 from brain.workflow_registry import get_workflow_definition, get_workflow_registry
 from brain.workflow_state_machine import cost_calculation_trace
+from brain.workflow_lifecycle import (
+    STATUS_COLLECTING,
+    STATUS_COMPLETED,
+    STATUS_READY,
+)
 
 
 ACTION_CONTINUE = "continue"
@@ -254,6 +259,7 @@ def _build_payload(
     complete = bool(required_entities) and not missing_entities
     stage = _workflow_stage(workflow_state, complete, missing_entities)
     compact_state = _compact_workflow_state(workflow_state, workflow, completed_entities, missing_entities)
+    workflow_status = STATUS_COMPLETED if compact_state.get("workflow_status") == "END" else STATUS_READY if complete else STATUS_COLLECTING
     readiness_decision = {
         "workflow_id": workflow,
         "required_entities": required_entities,
@@ -275,6 +281,27 @@ def _build_payload(
     return {
         "workflow_action": workflow_action,
         "workflow_state": compact_state,
+        "workflow_status": workflow_status,
+        "workflow_completion_reason": "required entities complete" if complete else None,
+        "workflow_release_reason": compact_state.get("workflow_release_reason"),
+        "workflow_transition_reason": "execute before asking another field" if complete else "collect missing entities",
+        "workflow_followup_mode": compact_state.get("workflow_followup_mode"),
+        "workflow_variant_mode": compact_state.get("workflow_variant_mode"),
+        "workflow_released": bool(compact_state.get("workflow_released")),
+        "execution_reason": "workflow is executable" if complete else None,
+        "readiness_decision": {
+            "workflow_executable": complete,
+            "missing_fields": missing_entities,
+            "reason": "execute_before_collecting" if complete else "missing_entities_required",
+        },
+        "completion_decision": {
+            "workflow_complete": complete,
+            "reason": "required entities complete" if complete else None,
+        },
+        "transition_decision": {
+            "to": workflow_status,
+            "reason": "execute before asking another field" if complete else "collect missing entities",
+        },
         "workflow_stage": stage,
         "workflow_progress": progress,
         "workflow_confidence": round(max(0.0, min(0.99, workflow_confidence)), 2),
@@ -481,6 +508,18 @@ def _compact_workflow_state(
         "workflow_id": _workflow_id(state) or workflow,
         "workflow_name": state.get("workflow_name") or _workflow_name(workflow),
         "workflow_status": state.get("workflow_status"),
+        "workflow_lifecycle_status": state.get("workflow_lifecycle_status"),
+        "workflow_complete": bool(state.get("workflow_complete") or state.get("workflow_status") == "END"),
+        "workflow_released": bool(state.get("workflow_released")),
+        "workflow_completion_reason": state.get("workflow_completion_reason"),
+        "workflow_release_reason": state.get("workflow_release_reason"),
+        "workflow_transition_reason": state.get("workflow_transition_reason"),
+        "workflow_followup_mode": state.get("workflow_followup_mode"),
+        "workflow_variant_mode": state.get("workflow_variant_mode"),
+        "execution_reason": state.get("execution_reason"),
+        "readiness_decision": state.get("readiness_decision") or {},
+        "completion_decision": state.get("completion_decision") or {},
+        "transition_decision": state.get("transition_decision") or {},
         "current_step": state.get("current_step") or state.get("step"),
         "collected_fields": _collected_fields(state),
         "required_entities": list(_required_entities(workflow, "", state)),

@@ -55,6 +55,14 @@ from brain.workflow_state_machine import (
     detect_workflow_intent,
     update_workflow_state,
 )
+from brain.workflow_lifecycle import (
+    classify_completed_workflow_followup,
+    completed_to_workflow_state,
+    mark_completed,
+    mark_executing,
+    pricing_reply_from_completed_cost,
+    variant_instruction_from_message,
+)
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN as V2_WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION as V2_WORKFLOW_COST_CALCULATION,
@@ -1027,7 +1035,10 @@ def _selected_capability_name(route: dict | None):
 def _workflow_debug_state(extra: dict | None = None) -> dict:
     conversation_state = st.session_state.get("conversation_state") or {}
     workflow_state_v2 = conversation_state.get("workflow_state_v2") or {}
-    app_workflow = (_sync_session_to_application_state().get("workflow") or {})
+    app_state = _sync_session_to_application_state()
+    app_workflow = (app_state.get("workflow") or {})
+    os_diagnostics = conversation_os_developer_diagnostics(app_state)
+    completed_followup = classify_completed_workflow_followup(app_state, st.session_state.get("last_user_message") or "")
     state = {
         "current_workflow": conversation_state.get("current_workflow") or app_workflow.get("current_workflow"),
         "workflow_step": conversation_state.get("workflow_step") or app_workflow.get("workflow_step"),
@@ -1036,6 +1047,18 @@ def _workflow_debug_state(extra: dict | None = None) -> dict:
         "route": app_workflow.get("workflow") or conversation_state.get("current_workflow"),
         "step": app_workflow.get("step") or conversation_state.get("workflow_step"),
         "is_ready": bool(app_workflow.get("is_ready") or workflow_state_v2.get("is_ready")),
+        "workflow_status": workflow_state_v2.get("workflow_status") or os_diagnostics.get("workflow_status"),
+        "workflow_complete": bool(workflow_state_v2.get("workflow_complete") or os_diagnostics.get("Workflow Complete?")),
+        "workflow_released": bool(workflow_state_v2.get("workflow_released") or os_diagnostics.get("Workflow Released?")),
+        "workflow_completion_reason": workflow_state_v2.get("workflow_completion_reason") or os_diagnostics.get("workflow_completion_reason"),
+        "workflow_release_reason": workflow_state_v2.get("workflow_release_reason") or os_diagnostics.get("workflow_release_reason"),
+        "workflow_transition_reason": workflow_state_v2.get("workflow_transition_reason") or os_diagnostics.get("workflow_transition_reason"),
+        "workflow_followup_mode": workflow_state_v2.get("workflow_followup_mode") or completed_followup.get("workflow_followup_mode"),
+        "workflow_variant_mode": workflow_state_v2.get("workflow_variant_mode") or completed_followup.get("workflow_variant_mode"),
+        "execution_reason": workflow_state_v2.get("execution_reason"),
+        "readiness_decision": workflow_state_v2.get("readiness_decision") or {},
+        "completion_decision": workflow_state_v2.get("completion_decision") or {},
+        "transition_decision": workflow_state_v2.get("transition_decision") or {},
     }
     if extra:
         state.update(extra)
@@ -3066,6 +3089,47 @@ def _generate_workflow_reply(workflow_state: dict) -> str:
     return _workflow_missing_reply(workflow_state)
 
 
+def _completed_workflow_followup_response(user_message: str, application_state: dict | None) -> dict | None:
+    decision = classify_completed_workflow_followup(application_state, user_message)
+    if not decision.get("reuse_completed_workflow"):
+        return None
+    completed = decision.get("completed_workflow") or {}
+    workflow_id = completed.get("workflow_id")
+    if workflow_id == V2_WORKFLOW_COST_CALCULATION and decision.get("workflow_variant_mode") is None:
+        reply = pricing_reply_from_completed_cost(completed)
+        if reply:
+            return {
+                "reply": reply,
+                "intent": workflow_id,
+                "done": True,
+                "workflow_lifecycle": decision,
+                "response_mode": "generate_output",
+                "reply_builder": "workflow_completion_followup",
+                "natural_response": True,
+            }
+
+    workflow_state = completed_to_workflow_state(completed)
+    variant = variant_instruction_from_message(user_message)
+    if decision.get("workflow_variant_mode"):
+        workflow_state["workflow_variant_mode"] = decision.get("workflow_variant_mode")
+        if variant.get("short"):
+            workflow_state.setdefault("collected_fields", {})["tone"] = "Short"
+        if variant.get("youth"):
+            workflow_state.setdefault("collected_fields", {})["target_customer"] = "วัยรุ่น"
+    reply = _generate_workflow_reply(workflow_state)
+    if variant.get("short"):
+        reply = "\n".join([line for line in reply.splitlines() if line.strip()][:4])
+    return {
+        "reply": reply,
+        "intent": workflow_id,
+        "done": True,
+        "workflow_lifecycle": decision,
+        "response_mode": "generate_output",
+        "reply_builder": "workflow_completion_followup",
+        "natural_response": True,
+    }
+
+
 def _workflow_llm_context(workflow_state: dict, profile: dict | None, user_message: str) -> dict:
     return {
         "current_workflow": workflow_state.get("workflow"),
@@ -3183,12 +3247,15 @@ def _handle_state_machine_workflow(
     _sync_workflow_state_v2(workflow_state)
 
     if workflow_state.get("is_ready"):
+        workflow_state = mark_executing(workflow_state, "completion gate found workflow executable before asking another field")
+        _sync_workflow_state_v2(workflow_state)
         reply = _generate_workflow_reply(workflow_state)
         reply, llm_attempted = _maybe_improve_workflow_reply_with_llm(reply, workflow_state, profile, user_message)
         reply_result = build_workflow_reply(workflow_state, generated_reply=reply)
         reply = reply_result["reply"]
         workflow_state["next_action"] = "completed"
         workflow_state["step"] = "completed"
+        workflow_state = mark_completed(workflow_state, "workflow output generated")
         _sync_workflow_state_v2(workflow_state)
         result = {
             "reply": reply,
@@ -3256,10 +3323,20 @@ def _show_workflow_diagnostics() -> None:
             {
                 "Conversation OS": conversation_os_developer_diagnostics(_sync_session_to_application_state()),
                 "Current Workflow": workflow_state.get("workflow"),
+                "Workflow Status": workflow_state.get("workflow_status"),
                 "Workflow Step": workflow_state.get("step"),
+                "Workflow Complete?": bool(workflow_state.get("workflow_complete")),
+                "Workflow Released?": bool(workflow_state.get("workflow_released")),
+                "Workflow Transition": workflow_state.get("workflow_transition_reason"),
+                "Follow-up Mode": workflow_state.get("workflow_followup_mode"),
+                "Variant Mode": workflow_state.get("workflow_variant_mode"),
+                "Execution Reason": workflow_state.get("execution_reason"),
                 "Collected Fields": workflow_state.get("collected_fields") or {},
                 "Missing Fields": workflow_state.get("missing_fields") or [],
                 "Ready?": bool(workflow_state.get("is_ready")),
+                "Readiness Decision": workflow_state.get("readiness_decision") or {},
+                "Completion Decision": workflow_state.get("completion_decision") or {},
+                "Transition Decision": workflow_state.get("transition_decision") or {},
                 "LLM Decision": (_get_application_state().get("developer") or {}).get("llm_decision") or {},
             }
         )
@@ -3837,6 +3914,7 @@ def _show_chat_companion(
         return
 
     previous_user_message, assistant_reply = _latest_chat_context(st.session_state["chat_history"])
+    st.session_state["last_user_message"] = user_message
     st.session_state["chat_history"].append({"role": "user", "content": user_message})
     _sync_chat_history_to_application_state()
     with st.chat_message("user"):
@@ -4054,6 +4132,27 @@ def _show_chat_companion(
             workflow_extra,
             response_candidates=response_candidates,
         )
+
+    completed_followup = _completed_workflow_followup_response(user_message, _sync_session_to_application_state())
+    if completed_followup:
+        workflow_extra = {
+            **(completed_followup.get("workflow_lifecycle") or {}),
+            "workflow_handler": "completed_workflow_followup",
+            "response_mode": completed_followup.get("response_mode"),
+            "reply_builder": completed_followup.get("reply_builder"),
+            "natural_response": completed_followup.get("natural_response"),
+            "workflow_status": "COMPLETED",
+            "workflow_complete": True,
+            "workflow_released": True,
+            "execution_reason": "completed workflow reused for follow-up",
+        }
+        finalize_debug("workflow_response", completed_followup["reply"], workflow_extra)
+        _append_workflow_reply(
+            completed_followup["reply"],
+            completed_followup["intent"],
+            state.get("current_topic"),
+        )
+        return
 
     if reasoning.get("action") in {"receipt_uploaded_ack", "receipt_ocr_pending"}:
         reply = _receipt_uploaded_reply(reasoning.get("action"))

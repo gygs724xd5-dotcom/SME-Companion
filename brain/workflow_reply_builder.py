@@ -11,7 +11,7 @@ from brain.workflow_readiness import (
 )
 
 
-CONTENT_REQUIRED_FIELDS = ("product", "target_customer", "promotion")
+CONTENT_REQUIRED_FIELDS = ("product", "target_customer")
 CONTENT_OPTIONAL_DEFAULTS = {"tone": "Friendly"}
 
 WORKFLOW_REPLY_TEMPLATES = {

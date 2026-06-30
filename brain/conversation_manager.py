@@ -11,6 +11,12 @@ from brain.conversation_priority_engine import (
 )
 from brain.workflow_readiness import WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE
 from brain.workflow_state_machine import new_workflow_state, update_workflow_state
+from brain.workflow_lifecycle import (
+    STATUS_COMPLETED,
+    STATUS_EXECUTING,
+    STATUS_RELEASED,
+    attach_lifecycle_diagnostics,
+)
 
 
 CONVERSATION_MODES = {
@@ -213,6 +219,15 @@ def complete_workflow(application_state: dict | None, workflow_id: str | None = 
     if workflow_id and current.get("workflow_id") != workflow_id:
         return current
     workflow_state = _with_status(current, "END")
+    workflow_state = {
+        **workflow_state,
+        "workflow_lifecycle_status": STATUS_COMPLETED,
+        "workflow_status": "END",
+        "workflow_complete": True,
+        "workflow_completion_reason": "workflow executed and response generated",
+        "workflow_release_reason": "completed workflow released from active planner lock",
+        "workflow_released": True,
+    }
     _record_completion_memory(state, workflow_state)
     _set_active_workflow_state(state, workflow_state)
     _pop_or_unlock(state)
@@ -292,6 +307,22 @@ def developer_diagnostics(application_state: dict | None) -> dict:
         "Collected Fields": current.get("collected_fields") or {},
         "Missing Fields": current.get("missing_fields") or [],
         "Workflow Status": current.get("workflow_status"),
+        "workflow_status": current.get("workflow_lifecycle_status") or current.get("workflow_status"),
+        "workflow_completion_reason": current.get("workflow_completion_reason"),
+        "workflow_release_reason": current.get("workflow_release_reason") or os_state.get("workflow_release_reason"),
+        "workflow_transition_reason": current.get("workflow_transition_reason"),
+        "workflow_followup_mode": current.get("workflow_followup_mode"),
+        "workflow_variant_mode": current.get("workflow_variant_mode"),
+        "Workflow Complete?": bool(current.get("workflow_complete") or current.get("workflow_status") == "END"),
+        "Workflow Released?": bool(current.get("workflow_released") or (not os_state.get("active_workflow_id") and os_state.get("last_completed_workflow_id"))),
+        "Workflow Transition": current.get("workflow_transition_reason") or os_state.get("last_event"),
+        "Follow-up Mode": current.get("workflow_followup_mode"),
+        "Variant Mode": current.get("workflow_variant_mode"),
+        "Execution Reason": current.get("execution_reason"),
+        "Readiness Decision": current.get("readiness_decision") or {},
+        "Completion Decision": current.get("completion_decision") or {},
+        "Transition Decision": current.get("transition_decision") or {},
+        "Last Completed Workflow": os_state.get("last_completed_workflow_id"),
         "Resume Available": bool(current.get("resume_allowed")),
     }
 
@@ -346,7 +377,7 @@ def _workflow_os_payload(
     started_at: str | None = None,
 ) -> dict:
     timestamp = now_iso()
-    return {
+    payload = {
         "workflow_id": definition.workflow_id,
         "workflow_name": definition.workflow_name,
         "mode": _valid_mode(definition.mode),
@@ -363,14 +394,46 @@ def _workflow_os_payload(
         "store_id": store_id,
         "state_machine": dict(state_machine_state or {}),
     }
+    lifecycle_status = STATUS_EXECUTING if workflow_status == "EXECUTE" else None
+    payload.update(
+        attach_lifecycle_diagnostics(
+            {
+                **state_machine_state,
+                "workflow_status": lifecycle_status,
+                "missing_fields": payload["missing_fields"],
+            },
+            transition_reason="workflow started",
+        )
+    )
+    payload["workflow_status"] = workflow_status
+    payload["workflow_lifecycle_status"] = lifecycle_status or payload.get("workflow_status")
+    return payload
 
 
 def _merge_workflow_state(current: dict, state_machine_state: dict, *, workflow_status: str) -> dict:
     timestamp = now_iso()
+    lifecycle = attach_lifecycle_diagnostics(
+        {
+            **state_machine_state,
+            "workflow_status": STATUS_EXECUTING if workflow_status == "EXECUTE" else None,
+        },
+        transition_reason="workflow executable" if workflow_status == "EXECUTE" else "workflow collecting missing fields",
+    )
     return {
         **current,
         "current_step": state_machine_state.get("step"),
         "workflow_status": workflow_status,
+        "workflow_lifecycle_status": lifecycle.get("workflow_status"),
+        "workflow_complete": lifecycle.get("workflow_complete"),
+        "workflow_completion_reason": lifecycle.get("workflow_completion_reason"),
+        "workflow_release_reason": lifecycle.get("workflow_release_reason"),
+        "workflow_transition_reason": lifecycle.get("workflow_transition_reason"),
+        "workflow_followup_mode": lifecycle.get("workflow_followup_mode"),
+        "workflow_variant_mode": lifecycle.get("workflow_variant_mode"),
+        "execution_reason": lifecycle.get("execution_reason"),
+        "readiness_decision": lifecycle.get("readiness_decision") or {},
+        "completion_decision": lifecycle.get("completion_decision") or {},
+        "transition_decision": lifecycle.get("transition_decision") or {},
         "collected_fields": dict(state_machine_state.get("collected_fields") or {}),
         "missing_fields": list(state_machine_state.get("missing_fields") or []),
         "updated_at": timestamp,
@@ -408,6 +471,13 @@ def _with_status(workflow_state: dict, status: str) -> dict:
     updated = {**workflow_state, "workflow_status": status, "updated_at": now_iso()}
     if status in WORKFLOW_STATUS_DONE:
         updated["current_step"] = "completed" if status == "END" else status.lower()
+    if status == "END":
+        updated["workflow_lifecycle_status"] = STATUS_COMPLETED
+        updated["workflow_complete"] = True
+    elif status == "EXECUTE":
+        updated["workflow_lifecycle_status"] = STATUS_EXECUTING
+    elif status in {"CANCELLED", "TIMEOUT"}:
+        updated["workflow_lifecycle_status"] = STATUS_RELEASED
     return updated
 
 
@@ -431,11 +501,16 @@ def _pop_or_unlock(application_state: dict) -> None:
 
 def _unlock(application_state: dict, event: str) -> None:
     os_state = ensure_conversation_os_state(application_state)
+    previous_active = os_state.get("active_workflow_id")
     os_state["active_workflow_id"] = None
     os_state["planner_locked"] = False
     os_state["mode"] = "general_chat"
     os_state["updated_at"] = now_iso()
     os_state["last_event"] = event
+    if previous_active:
+        os_state["last_completed_workflow_id"] = previous_active if event == "workflow_completed" else os_state.get("last_completed_workflow_id")
+    if event == "workflow_completed":
+        os_state["workflow_release_reason"] = "completed workflow released from active planner lock"
     application_state["workflow"] = {
         **(application_state.get("workflow") or {}),
         "current_workflow": None,
@@ -454,6 +529,9 @@ def _record_completion_memory(application_state: dict, workflow_state: dict) -> 
         "workflow_name": workflow_state.get("workflow_name"),
         "completed_at": now_iso(),
         "collected_fields": dict(workflow_state.get("collected_fields") or {}),
+        "workflow_status": STATUS_RELEASED,
+        "workflow_completion_reason": workflow_state.get("workflow_completion_reason") or "workflow completed",
+        "workflow_release_reason": workflow_state.get("workflow_release_reason") or "completed workflow released from active planner lock",
         "owner_id": workflow_state.get("owner_id"),
         "store_id": workflow_state.get("store_id"),
     }
