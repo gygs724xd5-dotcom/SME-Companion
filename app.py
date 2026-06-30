@@ -51,6 +51,7 @@ from brain.conversation_workflow_engine import (
     detect_workflow,
 )
 from brain.workflow_state_machine import (
+    cost_calculation_trace,
     detect_workflow_intent,
     update_workflow_state,
 )
@@ -3016,11 +3017,11 @@ def _generate_sales_plan_7_day(workflow_state: dict) -> str:
 
 def _generate_cost_calculation(workflow_state: dict) -> str:
     fields = workflow_state.get("collected_fields") or {}
-    ingredients = fields.get("ingredients_costs") or []
-    total_units = float(fields.get("total_units") or 0)
+    trace = cost_calculation_trace(fields)
+    total_units = float(fields.get("total_units") or fields.get("quantity") or 0)
     selling_price = fields.get("selling_price")
-    total_cost = sum(float(item.get("cost") or 0) for item in ingredients)
-    cost_per_unit = total_cost / total_units if total_units else 0
+    total_cost = trace.get("computed_total_cost") or 0
+    cost_per_unit = trace.get("computed_cost_per_unit") or 0
     lines = [
         "คำนวณต้นทุนต่อชิ้น",
         "",

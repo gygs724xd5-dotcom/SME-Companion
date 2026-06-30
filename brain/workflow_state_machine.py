@@ -24,6 +24,90 @@ REQUIRED_FIELDS = {
     WORKFLOW_GENERAL_BUSINESS_HELP: [],
 }
 
+
+def _numeric_value(value) -> float | int | None:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, dict):
+        for key in ("amount", "cost", "value", "total"):
+            nested = _numeric_value(value.get(key))
+            if nested is not None:
+                return nested
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            nested = _numeric_value(item)
+            if nested is not None:
+                return nested
+        return None
+    try:
+        amount = float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    return int(amount) if amount.is_integer() else amount
+
+
+def _sum_ingredient_costs(items) -> float | int | None:
+    if not items:
+        return None
+    total = 0.0
+    found = False
+    for item in items or []:
+        amount = _numeric_value(item)
+        if amount is None:
+            continue
+        total += float(amount)
+        found = True
+    if not found:
+        return None
+    return int(total) if total.is_integer() else total
+
+
+def cost_calculation_trace(fields: dict | None) -> dict:
+    data = fields or {}
+    input_cost = _numeric_value(data.get("cost"))
+    input_unit_cost = _numeric_value(data.get("unit_cost"))
+    input_cost_per_unit = _numeric_value(data.get("cost_per_unit"))
+    input_quantity = _numeric_value(data.get("quantity"))
+    input_total_units = _numeric_value(data.get("total_units"))
+    input_total_cost = _numeric_value(data.get("total_cost"))
+    ingredient_total = _sum_ingredient_costs(data.get("ingredients_costs") or data.get("costs"))
+    quantity = input_total_units if input_total_units is not None else input_quantity
+    unit_cost = input_unit_cost if input_unit_cost is not None else input_cost_per_unit
+    total_cost = input_total_cost if input_total_cost is not None else ingredient_total
+
+    selected_formula = None
+    computed_total_cost = None
+    computed_cost_per_unit = None
+    if unit_cost is not None and quantity is not None:
+        selected_formula = "unit_cost_times_quantity"
+        computed_total_cost = float(unit_cost) * float(quantity)
+        computed_cost_per_unit = unit_cost
+    elif total_cost is not None and quantity is not None:
+        selected_formula = "total_cost_div_quantity"
+        computed_total_cost = total_cost
+        computed_cost_per_unit = float(total_cost) / float(quantity) if float(quantity) else None
+    elif input_cost is not None and quantity is not None:
+        selected_formula = "input_cost_div_quantity"
+        computed_total_cost = input_cost
+        computed_cost_per_unit = float(input_cost) / float(quantity) if float(quantity) else None
+
+    if isinstance(computed_total_cost, float) and computed_total_cost.is_integer():
+        computed_total_cost = int(computed_total_cost)
+    if isinstance(computed_cost_per_unit, float) and computed_cost_per_unit.is_integer():
+        computed_cost_per_unit = int(computed_cost_per_unit)
+
+    return {
+        "input_cost": input_cost,
+        "input_unit_cost": input_unit_cost,
+        "input_cost_per_unit": input_cost_per_unit,
+        "input_quantity": input_quantity,
+        "input_total_units": input_total_units,
+        "selected_formula": selected_formula,
+        "computed_total_cost": computed_total_cost,
+        "computed_cost_per_unit": computed_cost_per_unit,
+    }
+
 WORKFLOW_START_STEPS = {
     WORKFLOW_SALES_PLAN_7_DAY: "collecting_sales_plan_inputs",
     WORKFLOW_COST_CALCULATION: "collecting_cost_inputs",
@@ -144,6 +228,50 @@ def _missing_fields(workflow: str, fields: dict, required_fields: list[str] | No
     if workflow == WORKFLOW_CONTENT_PLAN:
         return [] if fields.get("product") or fields.get("business_type") else ["product_or_business_type"]
     return []
+
+
+def _missing_reason_by_field(required_fields: list[str], fields: dict, missing_fields: list[str]) -> dict:
+    reasons = {}
+    for field in required_fields or []:
+        checked = []
+        if field == "ingredients_costs":
+            checked = ["ingredients_costs", "cost", "unit_cost", "cost_per_unit"]
+        elif field == "total_units":
+            checked = ["total_units", "quantity"]
+        elif field == "daily_capacity_or_available_quantity":
+            checked = ["daily_capacity", "available_quantity"]
+        elif field == "selling_window_or_sales_channel":
+            checked = ["selling_window", "sales_channel"]
+        elif field == "product_or_business_type":
+            checked = ["product", "business_type"]
+        else:
+            checked = [field]
+        matched = [key for key in checked if fields.get(key) not in (None, "", [], {})]
+        reasons[field] = {
+            "status": "missing" if field in missing_fields else "completed",
+            "aliases_checked": checked,
+            "matched_aliases": matched,
+            "reason": "no alias had a value" if field in missing_fields else "matched alias value before readiness",
+        }
+    return reasons
+
+
+def _attach_workflow_diagnostics(state: dict) -> dict:
+    required = list(state.get("required_fields") or [])
+    completed = [field for field in required if field not in (state.get("missing_fields") or [])]
+    state["readiness_required_fields"] = required
+    state["readiness_completed_fields"] = completed
+    state["readiness_missing_fields"] = list(state.get("missing_fields") or [])
+    state["missing_reason_by_field"] = _missing_reason_by_field(required, state.get("collected_fields") or {}, state.get("missing_fields") or [])
+    if state.get("workflow") == WORKFLOW_COST_CALCULATION:
+        trace = cost_calculation_trace(state.get("collected_fields") or {})
+        state["calculation_trace"] = trace
+        fields = dict(state.get("collected_fields") or {})
+        for key, value in trace.items():
+            if value not in (None, "", [], {}):
+                fields[key] = value
+        state["collected_fields"] = fields
+    return state
 
 
 _TARGET_CUSTOMER_SHORT_ANSWERS = {
@@ -313,6 +441,7 @@ def update_workflow_state(
     }
     state["missing_fields"] = _missing_fields(workflow, collected_fields, required_fields)
     state["is_ready"] = is_workflow_ready(state) or (bool(required_fields) and not state["missing_fields"])
+    state = _attach_workflow_diagnostics(state)
     if workflow in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE}:
         state["step"] = WORKFLOW_START_STEPS.get(workflow, "route")
         state["next_action"] = "route"

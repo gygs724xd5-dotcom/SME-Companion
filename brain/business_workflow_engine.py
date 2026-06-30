@@ -8,6 +8,7 @@ from typing import Any
 from brain.business_entity_extractor import REQUIRED_BY_INTENT
 from brain.conversation_manager import active_workflow_state, ensure_conversation_os_state
 from brain.workflow_registry import get_workflow_definition, get_workflow_registry
+from brain.workflow_state_machine import cost_calculation_trace
 
 
 ACTION_CONTINUE = "continue"
@@ -253,6 +254,24 @@ def _build_payload(
     complete = bool(required_entities) and not missing_entities
     stage = _workflow_stage(workflow_state, complete, missing_entities)
     compact_state = _compact_workflow_state(workflow_state, workflow, completed_entities, missing_entities)
+    readiness_decision = {
+        "workflow_id": workflow,
+        "required_entities": required_entities,
+        "completed_entities": completed_entities,
+        "missing_entities": missing_entities,
+        "workflow_complete": complete,
+        "reason_by_field": _readiness_reason_by_field(required_entities, current_entities, missing_entities),
+    }
+    if workflow == "COST_CALCULATION":
+        readiness_decision.update(
+            {
+                "readiness_required_fields": required_entities,
+                "readiness_completed_fields": completed_entities,
+                "readiness_missing_fields": missing_entities,
+                "missing_reason_by_field": _readiness_reason_by_field(required_entities, current_entities, missing_entities),
+            }
+        )
+    calculation = cost_calculation_trace(current_entities) if workflow == "COST_CALCULATION" else {}
     return {
         "workflow_action": workflow_action,
         "workflow_state": compact_state,
@@ -272,14 +291,20 @@ def _build_payload(
         "extracted_entities": deepcopy(current_entities),
         "raw_missing_entities": list((entity_result or {}).get("missing_entities") or []),
         "entity_mapping_trace": mapping_trace,
-        "workflow_readiness_decision": {
-            "workflow_id": workflow,
-            "required_entities": required_entities,
-            "completed_entities": completed_entities,
-            "missing_entities": missing_entities,
-            "workflow_complete": complete,
-            "reason_by_field": _readiness_reason_by_field(required_entities, current_entities, missing_entities),
-        },
+        "workflow_readiness_decision": readiness_decision,
+        "calculation_trace": calculation,
+        "input_cost": calculation.get("input_cost"),
+        "input_unit_cost": calculation.get("input_unit_cost"),
+        "input_cost_per_unit": calculation.get("input_cost_per_unit"),
+        "input_quantity": calculation.get("input_quantity"),
+        "input_total_units": calculation.get("input_total_units"),
+        "selected_formula": calculation.get("selected_formula"),
+        "computed_total_cost": calculation.get("computed_total_cost"),
+        "computed_cost_per_unit": calculation.get("computed_cost_per_unit"),
+        "readiness_required_fields": required_entities,
+        "readiness_completed_fields": completed_entities,
+        "readiness_missing_fields": missing_entities,
+        "missing_reason_by_field": readiness_decision.get("reason_by_field") or {},
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -397,7 +422,7 @@ def _has_entity(entity: str, values: dict | None) -> bool:
         "product_or_business_type": ("product_or_business_type", "product", "business_type", "product_or_service_names"),
         "price": ("price", "prices", "selling_price"),
         "cost": ("cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
-        "quantity": ("quantity", "quantities", "total_units", "units", "daily_capacity", "available_quantity"),
+        "quantity": ("quantity", "quantities", "total_units", "units"),
         "date": ("date", "dates"),
         "daily_capacity_or_available_quantity": ("daily_capacity_or_available_quantity", "daily_capacity", "available_quantity", "quantities"),
         "selling_window_or_sales_channel": ("selling_window_or_sales_channel", "selling_window", "sales_channel"),
@@ -425,7 +450,7 @@ def _entity_aliases(entity: str) -> tuple[str, ...]:
         "product_or_business_type": ("product_or_business_type", "product", "business_type", "product_or_service_names"),
         "price": ("price", "prices", "selling_price"),
         "cost": ("cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
-        "quantity": ("quantity", "quantities", "total_units", "units", "daily_capacity", "available_quantity"),
+        "quantity": ("quantity", "quantities", "total_units", "units"),
         "date": ("date", "dates"),
         "daily_capacity_or_available_quantity": ("daily_capacity_or_available_quantity", "daily_capacity", "available_quantity", "quantities"),
         "selling_window_or_sales_channel": ("selling_window_or_sales_channel", "selling_window", "sales_channel"),
