@@ -1,0 +1,109 @@
+import unittest
+
+from brain.business_context_engine import build_business_context, sanitize_user_context_text
+from llm.prompt_context_builder import build_prompt_context
+
+
+CHOUX_CREAM = "\u0e0a\u0e39\u0e04\u0e23\u0e35\u0e21"
+BAKERY = "\u0e40\u0e1a\u0e40\u0e01\u0e2d\u0e23\u0e35\u0e48"
+
+
+class BusinessContextNormalizationTest(unittest.TestCase):
+    def test_choux_cream_does_not_become_cosmetic_store(self):
+        context = build_business_context({}, CHOUX_CREAM)
+
+        self.assertEqual(context.get("current_product"), CHOUX_CREAM)
+        self.assertNotEqual(context.get("business_type"), "cosmetic_store")
+        self.assertEqual(context.get("source"), "current_message")
+
+    def test_bakery_overrides_old_cosmetic_store(self):
+        state = {
+            "business_context": {
+                "business_type": "cosmetic_store",
+                "current_product": "cream",
+                "current_discussion_topic": "cosmetic_store",
+            }
+        }
+
+        context = build_business_context(state, f"{CHOUX_CREAM} / {BAKERY}")
+
+        self.assertEqual(context.get("business_type"), "bakery")
+        self.assertEqual(context.get("current_product"), CHOUX_CREAM)
+        self.assertEqual(context.get("source"), "current_message")
+        self.assertFalse(context.get("is_stale"))
+        self.assertIn(
+            {"field": "business_type", "source": "conversation_memory", "value": "cosmetic_store"},
+            context.get("conflicts"),
+        )
+
+    def test_choux_cream_price_question_preserves_product(self):
+        state = {"business_context": {"current_product": "cream", "current_discussion_topic": "old pricing"}}
+
+        context = build_business_context(state, f"{CHOUX_CREAM}\u0e23\u0e32\u0e04\u0e32\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23")
+
+        self.assertEqual(context.get("current_product"), CHOUX_CREAM)
+        self.assertEqual(context.get("current_discussion_topic"), "pricing")
+        self.assertNotEqual(context.get("current_discussion_topic"), "old pricing")
+
+    def test_old_business_memory_does_not_override_current_message(self):
+        state = {
+            "business_memory": {
+                "events": [
+                    {"payload": {"business_type": "cosmetic_store", "current_product": "cream"}},
+                ]
+            }
+        }
+
+        context = build_business_context(state, BAKERY)
+
+        self.assertEqual(context.get("business_type"), "bakery")
+        self.assertEqual(context.get("source"), "current_message")
+        self.assertIn(
+            {"field": "business_type", "source": "business_memory", "value": "cosmetic_store"},
+            context.get("conflicts"),
+        )
+
+    def test_context_priority_order_uses_workflow_before_store_profile_and_memory(self):
+        state = {
+            "workflow": {
+                "workflow_state_v2": {
+                    "workflow": "CONTENT_PLAN",
+                    "step": "collecting_content_inputs",
+                    "collected_fields": {"product": CHOUX_CREAM, "business_type": "bakery"},
+                }
+            },
+            "store": {"store_type": "cosmetic_store", "product": "cream"},
+            "business_context": {"business_type": "fashion_shop", "current_product": "shirt"},
+            "business_memory": {"events": [{"payload": {"business_type": "tea_shop", "current_product": "tea"}}]},
+        }
+
+        context = build_business_context(state, "\u0e04\u0e23\u0e35\u0e21")
+
+        self.assertEqual(context.get("business_type"), "bakery")
+        self.assertEqual(context.get("current_product"), CHOUX_CREAM)
+        self.assertEqual(context.get("source"), "workflow")
+
+    def test_internal_labels_are_sanitized(self):
+        text = sanitize_user_context_text("pricing_unclear cosmetic_store customer_says_expensive workflow_response")
+
+        self.assertEqual(text, "")
+
+    def test_prompt_context_omits_raw_conflicting_memory_by_default(self):
+        context = build_business_context(
+            {"business_context": {"business_type": "cosmetic_store", "current_product": "cream"}},
+            BAKERY,
+        )
+        prompt_context = build_prompt_context(
+            {"business_memory": {"events": [{"payload": {"business_type": "cosmetic_store"}}]}},
+            planner={"goal": BAKERY, "task_type": "General Business Help"},
+            business_context=context,
+            business_memory={"events": [{"payload": {"business_type": "cosmetic_store"}}]},
+        )
+
+        self.assertNotIn("business_memory", prompt_context)
+        self.assertNotIn("cosmetic_store", str(prompt_context))
+        self.assertIn("prompt_context_size", prompt_context)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 import re
 
+from brain.business_context_engine import sanitize_user_context_text
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION,
@@ -78,7 +79,7 @@ def _business_context_reply(business_context: dict) -> str | None:
     business_type = (business_context or {}).get("business_type")
     if not business_type:
         return None
-    label = str(business_type).replace("_", " ")
+    label = sanitize_user_context_text(business_type) or "\u0e1b\u0e23\u0e30\u0e40\u0e20\u0e17\u0e23\u0e49\u0e32\u0e19\u0e19\u0e35\u0e49"
     return (
         "\u0e23\u0e31\u0e1a\u0e17\u0e23\u0e32\u0e1a\u0e04\u0e23\u0e31\u0e1a "
         f"\u0e1c\u0e21\u0e08\u0e33\u0e44\u0e27\u0e49\u0e27\u0e48\u0e32\u0e23\u0e49\u0e32\u0e19\u0e19\u0e35\u0e49\u0e40\u0e1b\u0e47\u0e19 {label}\n\n"

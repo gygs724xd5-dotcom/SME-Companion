@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+import json
 
 from brain.conversation_manager import active_workflow_state, planner_locked
-from brain.business_context_engine import build_business_context
+from brain.business_context_engine import build_business_context, sanitize_user_context_text
 from brain.business_intelligence_bridge import (
     inject_business_intelligence,
     run_business_intelligence_bridge,
@@ -59,6 +60,10 @@ def _reasoning_mode(plan: dict, reasoning: dict) -> str:
     if plan.get("estimated_response_mode"):
         return str(plan.get("estimated_response_mode"))
     return "unknown"
+
+
+def _prompt_context_size(context: dict | None) -> int:
+    return len(json.dumps(context or {}, ensure_ascii=False, default=str))
 
 
 def build_task_route(application_state, user_message) -> dict:
@@ -179,10 +184,18 @@ def build_task_route(application_state, user_message) -> dict:
         loaded_skill=[_serialize_skill(skill) for skill in loaded_skills],
         conversation_intent=interpretation.get("legacy_intent") or interpretation.get("detected_intent"),
         conversation_summary=memory_context,
-        business_context=business_context,
+        business_context=sanitize_user_context_text(business_context),
         store_profile=(enriched_state.get("store") or {}),
         current_task=plan.get("task_type"),
     )
+    llm_reasoning_context["normalized_business_context"] = sanitize_user_context_text(business_context)
+    llm_reasoning_context["context_source"] = business_context.get("source")
+    llm_reasoning_context["context_confidence"] = business_context.get("confidence")
+    llm_reasoning_context["context_conflicts"] = business_context.get("conflicts") or []
+    llm_reasoning_context["stale_context_detected"] = bool(
+        business_context.get("is_stale") or business_context.get("conflicts")
+    )
+    llm_reasoning_context["prompt_context_size"] = _prompt_context_size(llm_reasoning_context)
     llm_decision = decide_llm_usage(llm_reasoning_context)
     llm_needed = bool(llm_decision.get("should_use_llm"))
 
@@ -192,6 +205,12 @@ def build_task_route(application_state, user_message) -> dict:
         "conversation_intelligence": conversation_intelligence,
         "intent_resolution": intent_resolution,
         "business_context": business_context,
+        "normalized_business_context": business_context,
+        "context_source": business_context.get("source"),
+        "context_confidence": business_context.get("confidence"),
+        "context_conflicts": business_context.get("conflicts") or [],
+        "stale_context_detected": bool(business_context.get("is_stale") or business_context.get("conflicts")),
+        "prompt_context_size": llm_reasoning_context.get("prompt_context_size"),
         "conversation_memory": memory_context,
         "business_intelligence": bridge_result,
         "task_type": plan.get("task_type"),
@@ -234,6 +253,12 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Business Reasoning": (route.get("business_intelligence") or {}).get("business_reasoning") or {},
         "Reasoning Confidence": (route.get("business_intelligence") or {}).get("confidence"),
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
+        "normalized_business_context": route.get("normalized_business_context") or route.get("business_context") or {},
+        "context_source": route.get("context_source") or ((route.get("business_context") or {}).get("source")),
+        "context_confidence": route.get("context_confidence") or ((route.get("business_context") or {}).get("confidence")),
+        "context_conflicts": route.get("context_conflicts") or ((route.get("business_context") or {}).get("conflicts")) or [],
+        "stale_context_detected": bool(route.get("stale_context_detected") or ((route.get("business_context") or {}).get("is_stale"))),
+        "prompt_context_size": route.get("prompt_context_size") or ((route.get("llm_reasoning_context") or {}).get("prompt_context_size")),
         "Bridge Used": bool((route.get("business_intelligence") or {}).get("bridge_used")),
         "Fallback Used": bool((route.get("business_intelligence") or {}).get("fallback_used")),
         "Reasoning Mode": route.get("reasoning_mode"),

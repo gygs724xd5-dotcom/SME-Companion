@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+from brain.business_context_engine import sanitize_user_context_text
+
 
 PLACEHOLDER_CONTEXT_SOURCES = {
     "ocr_engine": None,
@@ -10,6 +14,8 @@ PLACEHOLDER_CONTEXT_SOURCES = {
     "financial_agent": None,
     "inventory_agent": None,
 }
+
+DEFAULT_PROMPT_BUDGET_CHARS = 6000
 
 
 def _compact_dict(data: dict | None, allowed_keys: list[str] | None = None) -> dict:
@@ -30,6 +36,104 @@ def _recent_conversation(conversation: dict | None, limit: int = 6) -> list[dict
             continue
         compact.append(_compact_dict(message, ["role", "content"]))
     return compact
+
+
+def _context_size(context: dict) -> int:
+    return len(json.dumps(context, ensure_ascii=False, default=str))
+
+
+def _planner_summary(planner: dict | None) -> dict:
+    return _compact_dict(
+        planner or {},
+        [
+            "goal",
+            "task_type",
+            "workflow",
+            "required_information",
+            "known_information",
+            "missing_information",
+            "can_execute",
+            "next_step",
+            "priority",
+            "estimated_response_mode",
+            "business_response_mode",
+        ],
+    )
+
+
+def _normalized_business_context(business_context: dict | None, *, show_business_insights: bool = False) -> dict:
+    context = business_context or {}
+    allowed = [
+        "business_type",
+        "current_product",
+        "current_discussion_topic",
+        "source",
+        "confidence",
+        "is_stale",
+        "customer_type",
+    ]
+    if show_business_insights:
+        allowed.extend(["conflicts", "internal_labels", "current_goal", "current_problem"])
+    compact = _compact_dict(context, allowed)
+    return sanitize_user_context_text(compact)
+
+
+def _business_memory_summary(business_memory: dict | list | None, *, show_business_insights: bool = False) -> dict:
+    if not show_business_insights:
+        return {}
+    if isinstance(business_memory, dict):
+        events = business_memory.get("events") or []
+    elif isinstance(business_memory, list):
+        events = business_memory
+    else:
+        events = []
+    compact_events = []
+    for event in events[-3:]:
+        if not isinstance(event, dict):
+            continue
+        compact_events.append(
+            sanitize_user_context_text(
+                _compact_dict(event, ["event_type", "topic", "summary", "created_at", "payload"])
+            )
+        )
+    return _compact_dict({"recent_events": compact_events})
+
+
+def _conversation_summary(conversation: dict | None, *, short_question: bool = False) -> dict:
+    limit = 2 if short_question else 6
+    summary = {
+        "recent_messages": _recent_conversation(conversation, limit=limit),
+        "current_topic": (conversation or {}).get("current_topic"),
+        "last_intent": (conversation or {}).get("last_intent"),
+    }
+    if not short_question:
+        summary["memory"] = (conversation or {}).get("conversation_memory")
+    return sanitize_user_context_text(_compact_dict(summary))
+
+
+def _enforce_prompt_budget(context: dict, budget_chars: int) -> dict:
+    if _context_size(context) <= budget_chars:
+        return context
+    trimmed = dict(context)
+    if isinstance(trimmed.get("loaded_skill"), list):
+        trimmed["loaded_skill"] = [
+            _compact_dict(skill if isinstance(skill, dict) else {}, ["name", "available", "path"])
+            for skill in trimmed["loaded_skill"]
+        ]
+    elif isinstance(trimmed.get("loaded_skill"), dict):
+        trimmed["loaded_skill"] = _compact_dict(trimmed["loaded_skill"], ["name", "available", "path"])
+    if _context_size(trimmed) <= budget_chars:
+        return trimmed
+    conversation = trimmed.get("conversation_summary") or {}
+    if isinstance(conversation, dict):
+        conversation["recent_messages"] = (conversation.get("recent_messages") or [])[-2:]
+        conversation.pop("memory", None)
+        trimmed["conversation_summary"] = conversation
+    if _context_size(trimmed) <= budget_chars:
+        return trimmed
+    trimmed.pop("business_memory", None)
+    trimmed.pop("future_context_sources", None)
+    return trimmed
 
 
 def _skill_summary(loaded_skill: dict | list | None) -> dict | list | None:
@@ -79,18 +183,23 @@ def build_prompt_context(
     current_task: str | None = None,
     llm_decision: dict | None = None,
     developer_mode: bool = False,
+    show_business_insights: bool = False,
+    prompt_budget_chars: int = DEFAULT_PROMPT_BUDGET_CHARS,
 ) -> dict:
     state = application_state or {}
     store = store_profile if store_profile is not None else state.get("store")
     conversation = conversation_memory if conversation_memory is not None else state.get("conversation")
     workflow = workflow_state if workflow_state is not None else state.get("workflow")
+    selected_business_context = business_context or state.get("business_context") or {}
+    planner_goal = str((planner or {}).get("goal") or "")
+    short_question = bool(planner_goal and len(planner_goal) <= 80 and len(planner_goal.split()) <= 8)
 
     context = {
         "application_state": _compact_dict(
             state.get("ui") or {},
             ["demo_mode"],
         ),
-        "planner_output": planner or {},
+        "planner_output": _planner_summary(planner),
         "workflow": _compact_dict(
             workflow or {},
             [
@@ -108,18 +217,19 @@ def build_prompt_context(
                 "instruction",
             ],
         ),
-        "business_context": business_context or state.get("business_context") or {},
-        "conversation_summary": {
-            "recent_messages": _recent_conversation(conversation),
-            "current_topic": (conversation or {}).get("current_topic"),
-            "last_intent": (conversation or {}).get("last_intent"),
-            "memory": (conversation or {}).get("conversation_memory"),
-        },
+        "business_context": _normalized_business_context(
+            selected_business_context,
+            show_business_insights=show_business_insights,
+        ),
+        "conversation_summary": _conversation_summary(conversation, short_question=short_question),
         "store_profile": _compact_dict(
             store or {},
             ["store_name", "store_type", "product", "target_customer", "tone"],
         ),
-        "business_memory": business_memory or {},
+        "business_memory": _business_memory_summary(
+            business_memory if business_memory is not None else state.get("business_memory"),
+            show_business_insights=show_business_insights,
+        ),
         "current_goal": current_goal or {},
         "missing_information": (planner or {}).get("missing_information") or (workflow or {}).get("missing_fields") or [],
         "current_task": current_task or (planner or {}).get("task_type"),
@@ -166,4 +276,8 @@ def build_prompt_context(
         )
 
     context["future_context_sources"] = dict(PLACEHOLDER_CONTEXT_SOURCES)
-    return {key: value for key, value in context.items() if value not in (None, "", [], {})}
+    compact_context = {key: value for key, value in context.items() if value not in (None, "", [], {})}
+    compact_context["prompt_context_size"] = _context_size(compact_context)
+    compact_context = _enforce_prompt_budget(compact_context, max(1000, int(prompt_budget_chars or DEFAULT_PROMPT_BUDGET_CHARS)))
+    compact_context["prompt_context_size"] = _context_size(compact_context)
+    return compact_context
