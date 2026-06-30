@@ -116,6 +116,23 @@ def _extract_quantities(message: str) -> list[dict]:
     return _unique(quantities)
 
 
+def _extract_unit_cost(message: str) -> dict | None:
+    pattern = (
+        r"(?P<amount>\d[\d,]*(?:\.\d+)?)\s*"
+        r"(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)\s*"
+        r"(?:\u0e15\u0e48\u0e2d|/)\s*"
+        r"(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|pcs?|units?)"
+    )
+    match = re.search(pattern, message, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return {
+        "amount": _to_number(match.group("amount")),
+        "currency": "THB",
+        "raw": match.group(0).strip(),
+    }
+
+
 def _extract_dates(message: str) -> list[str]:
     dates = []
     lowered = message.lower()
@@ -241,6 +258,19 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
         }
 
     prices, costs = _extract_money(message)
+    unit_cost = _extract_unit_cost(message) if detected_intent == "cost_calculation" else None
+    normalization_trace = []
+    if unit_cost:
+        costs = _unique([*costs, unit_cost])
+        normalization_trace.append(
+            {
+                "field": "cost",
+                "aliases": ["price", "unit_cost", "cost_per_unit"],
+                "source": "unit_cost_pattern: amount + บาทต่อชิ้น",
+                "raw": unit_cost.get("raw"),
+                "value": unit_cost.get("amount"),
+            }
+        )
     product_or_service_names = _extract_product_or_service_names(message)
     customer_phrases = _extract_customer_phrases(message)
     customer_phrase = next((phrase for phrase in EXPENSIVE_PHRASES if phrase in customer_phrases), None)
@@ -251,12 +281,16 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
             "product_or_service": product_or_service_names[0] if product_or_service_names else None,
             "prices": prices,
             "costs": costs,
+            "cost": unit_cost.get("amount") if unit_cost else None,
+            "unit_cost": unit_cost.get("amount") if unit_cost else None,
+            "cost_per_unit": unit_cost.get("amount") if unit_cost else None,
             "quantities": _extract_quantities(message),
             "dates": _extract_dates(message),
             "customer_phrases": customer_phrases,
             "customer_phrase": customer_phrase,
             "business_type_hints": _extract_business_type_hints(message),
             "comparison_or_simulation_values": _extract_simulation_values(message),
+            "entity_mapping_trace": normalization_trace,
         }
     )
     missing = _missing_entities(detected_intent, entities)

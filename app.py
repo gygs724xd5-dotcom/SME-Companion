@@ -784,9 +784,21 @@ def _workflow_response_source_for_current_route() -> str:
     if not route:
         return "workflow_response"
     gate = workflow_response_gate(route)
+    blocked_source = _source_when_workflow_response_blocked(route)
+
+    print("========== WORKFLOW RESPONSE GATE TRACE ==========")
+    print("workflow_response_allowed:", gate.get("workflow_response_allowed"))
+    print("blocked_reason:", gate.get("workflow_response_blocked_reason"))
+    print("blocked_fallback_source:", blocked_source)
+    print("business_workflow:", route.get("business_workflow"))
+    print("intent_resolution:", route.get("intent_resolution"))
+    print("planner_output:", route.get("planner_output"))
+    print("=================================================")
+
     if gate.get("workflow_response_allowed"):
         return "workflow_response"
-    return _source_when_workflow_response_blocked(route)
+
+    return blocked_source
 
 
 def _handle_chat_pipeline_exception(error: Exception) -> None:

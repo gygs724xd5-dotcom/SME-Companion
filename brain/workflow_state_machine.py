@@ -115,6 +115,10 @@ def _field_has_value(field: str, fields: dict) -> bool:
         return bool(fields.get("daily_capacity") or fields.get("available_quantity"))
     if field == "selling_window_or_sales_channel":
         return bool(fields.get("selling_window") or fields.get("sales_channel"))
+    if field == "ingredients_costs":
+        return bool(fields.get("ingredients_costs") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit"))
+    if field == "total_units":
+        return bool(fields.get("total_units") or fields.get("quantity"))
     return bool(fields.get(field))
 
 
@@ -132,9 +136,9 @@ def _missing_fields(workflow: str, fields: dict, required_fields: list[str] | No
         return missing
     if workflow == WORKFLOW_COST_CALCULATION:
         missing = []
-        if not fields.get("ingredients_costs"):
+        if not (fields.get("ingredients_costs") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit")):
             missing.append("ingredients_costs")
-        if not fields.get("total_units"):
+        if not (fields.get("total_units") or fields.get("quantity")):
             missing.append("total_units")
         return missing
     if workflow == WORKFLOW_CONTENT_PLAN:

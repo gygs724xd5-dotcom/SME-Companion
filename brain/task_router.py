@@ -590,6 +590,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "required_entities": workflow.get("required_entities") or [],
         "completed_entities": workflow.get("completed_entities") or [],
         "missing_entities": workflow.get("missing_entities") or [],
+        "entity_mapping_trace": workflow.get("entity_mapping_trace") or [],
+        "workflow_readiness_decision": workflow.get("workflow_readiness_decision") or {},
         "entity_completeness": workflow.get("entity_completeness") or {},
         "normalized_business_context": route.get("normalized_business_context") or route.get("business_context") or {},
         "context_source": route.get("context_source") or ((route.get("business_context") or {}).get("source")),

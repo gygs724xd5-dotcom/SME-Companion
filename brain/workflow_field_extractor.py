@@ -90,7 +90,16 @@ def _extract_cost_fields(message: str) -> dict:
     ingredients = []
     total_units = None
     selling_price = None
+    unit_cost = None
     text = str(message or "")
+
+    unit_cost_match = re.search(
+        r"(" + _NUMBER_PATTERN + r")\s*(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)\s*(?:\u0e15\u0e48\u0e2d|/)\s*(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|pcs?|units?)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if unit_cost_match:
+        unit_cost = _to_number(unit_cost_match.group(1))
 
     unit_match = re.search(
         r"(?:\u0e02\u0e32\u0e22\u0e27\u0e31\u0e19\u0e25\u0e30|\u0e27\u0e31\u0e19\u0e25\u0e30)\s*("
@@ -101,6 +110,16 @@ def _extract_cost_fields(message: str) -> dict:
     )
     if unit_match:
         total_units = _to_number(unit_match.group(1))
+
+    quantity_matches = list(
+        re.finditer(
+            r"(" + _NUMBER_PATTERN + r")\s*(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|pcs?|units?)",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+    if quantity_matches:
+        total_units = _to_number(quantity_matches[-1].group(1))
 
     cost_match = re.search(r"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\s*(" + _NUMBER_PATTERN + r")", text, flags=re.IGNORECASE)
     if cost_match:
@@ -146,6 +165,10 @@ def _extract_cost_fields(message: str) -> dict:
     fields = {}
     if ingredients:
         fields["ingredients_costs"] = ingredients
+    if unit_cost:
+        fields["cost"] = unit_cost
+        fields["unit_cost"] = unit_cost
+        fields["cost_per_unit"] = unit_cost
     if total_units:
         fields["total_units"] = total_units
     if selling_price:

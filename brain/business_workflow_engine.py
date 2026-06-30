@@ -245,6 +245,7 @@ def _build_payload(
     current_entities: dict,
 ) -> dict:
     workflow = _workflow_id(workflow_state) or _intent_to_workflow(detected_intent)
+    current_entities, mapping_trace = _normalize_workflow_entities(workflow, current_entities, user_message)
     required_entities = list(_required_entities(workflow, detected_intent, workflow_state))
     completed_entities = _completed_entities(workflow_state, current_entities, required_entities, user_message)
     missing_entities = [entity for entity in required_entities if entity not in completed_entities]
@@ -268,8 +269,17 @@ def _build_payload(
         "entity_completeness": progress,
         "next_question": None if complete else smart_question_for_missing(missing_entities),
         "detected_intent": detected_intent,
-        "extracted_entities": deepcopy((entity_result or {}).get("extracted_entities") or {}),
+        "extracted_entities": deepcopy(current_entities),
         "raw_missing_entities": list((entity_result or {}).get("missing_entities") or []),
+        "entity_mapping_trace": mapping_trace,
+        "workflow_readiness_decision": {
+            "workflow_id": workflow,
+            "required_entities": required_entities,
+            "completed_entities": completed_entities,
+            "missing_entities": missing_entities,
+            "workflow_complete": complete,
+            "reason_by_field": _readiness_reason_by_field(required_entities, current_entities, missing_entities),
+        },
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -314,19 +324,112 @@ def _completed_entities(workflow_state: dict | None, current_entities: dict, req
     return [entity for entity in required_entities if entity in completed]
 
 
+def _normalize_workflow_entities(workflow: str | None, entities: dict | None, user_message: str = "") -> tuple[dict, list[dict]]:
+    data = deepcopy(entities or {})
+    trace = list(data.get("entity_mapping_trace") or [])
+    if workflow != "COST_CALCULATION":
+        return data, trace
+
+    unit_cost = _unit_cost_from_message(user_message)
+    if unit_cost not in (None, "", [], {}):
+        for field in ("cost", "unit_cost", "cost_per_unit"):
+            if data.get(field) in (None, "", [], {}):
+                data[field] = unit_cost
+        if not data.get("costs"):
+            data["costs"] = [{"amount": unit_cost, "currency": "THB", "raw": "บาทต่อชิ้น"}]
+        trace.append(
+            {
+                "field": "cost",
+                "aliases": ["price", "unit_cost", "cost_per_unit"],
+                "source": "workflow_normalization: amount + บาทต่อชิ้น",
+                "value": unit_cost,
+            }
+        )
+
+    quantity = _quantity_from_entities_or_message(data, user_message)
+    if quantity not in (None, "", [], {}):
+        for field in ("quantity", "total_units"):
+            if data.get(field) in (None, "", [], {}):
+                data[field] = quantity
+        trace.append(
+            {
+                "field": "quantity",
+                "aliases": ["quantities", "total_units", "units"],
+                "source": "workflow_normalization: quantity/unit pattern",
+                "value": quantity,
+            }
+        )
+    data["entity_mapping_trace"] = trace
+    return data, trace
+
+
+def _unit_cost_from_message(message: str) -> float | int | None:
+    match = re.search(
+        r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)\s*(?:\u0e15\u0e48\u0e2d|/)\s*(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|pcs?|units?)",
+        str(message or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    amount = float(match.group(1).replace(",", ""))
+    return int(amount) if amount.is_integer() else amount
+
+
+def _quantity_from_entities_or_message(entities: dict, message: str) -> float | int | None:
+    for item in entities.get("quantities") or []:
+        if isinstance(item, dict) and item.get("amount") not in (None, "", [], {}):
+            return item.get("amount")
+    match = re.search(
+        r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|pcs?|units?)",
+        str(message or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    amount = float(match.group(1).replace(",", ""))
+    return int(amount) if amount.is_integer() else amount
+
+
 def _has_entity(entity: str, values: dict | None) -> bool:
     data = values or {}
     aliases = {
         "product": ("product", "product_or_service", "product_or_service_names", "business_type", "product_name"),
         "product_or_business_type": ("product_or_business_type", "product", "business_type", "product_or_service_names"),
         "price": ("price", "prices", "selling_price"),
-        "cost": ("cost", "costs", "ingredients_costs", "unit_cost"),
+        "cost": ("cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
         "quantity": ("quantity", "quantities", "total_units", "units", "daily_capacity", "available_quantity"),
         "date": ("date", "dates"),
         "daily_capacity_or_available_quantity": ("daily_capacity_or_available_quantity", "daily_capacity", "available_quantity", "quantities"),
         "selling_window_or_sales_channel": ("selling_window_or_sales_channel", "selling_window", "sales_channel"),
     }.get(entity, (entity,))
     return any(data.get(alias) not in (None, "", [], {}) for alias in aliases)
+
+
+def _readiness_reason_by_field(required_entities: list[str], entities: dict, missing_entities: list[str]) -> dict:
+    reasons = {}
+    for entity in required_entities:
+        aliases = _entity_aliases(entity)
+        matched_aliases = [alias for alias in aliases if (entities or {}).get(alias) not in (None, "", [], {})]
+        reasons[entity] = {
+            "status": "missing" if entity in missing_entities else "completed",
+            "aliases_checked": list(aliases),
+            "matched_aliases": matched_aliases,
+            "reason": "no alias had a value" if entity in missing_entities else "matched alias value before readiness",
+        }
+    return reasons
+
+
+def _entity_aliases(entity: str) -> tuple[str, ...]:
+    return {
+        "product": ("product", "product_or_service", "product_or_service_names", "business_type", "product_name"),
+        "product_or_business_type": ("product_or_business_type", "product", "business_type", "product_or_service_names"),
+        "price": ("price", "prices", "selling_price"),
+        "cost": ("cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
+        "quantity": ("quantity", "quantities", "total_units", "units", "daily_capacity", "available_quantity"),
+        "date": ("date", "dates"),
+        "daily_capacity_or_available_quantity": ("daily_capacity_or_available_quantity", "daily_capacity", "available_quantity", "quantities"),
+        "selling_window_or_sales_channel": ("selling_window_or_sales_channel", "selling_window", "sales_channel"),
+    }.get(entity, (entity,))
 
 
 def _collected_fields(workflow_state: dict | None) -> dict:
@@ -415,6 +518,7 @@ def _intent_to_workflow(intent: str | None) -> str | None:
 def _synthetic_workflow_state(intent: str, entities: dict) -> dict:
     workflow = _intent_to_workflow(intent)
     definition = get_workflow_definition(workflow)
+    required_entities = REQUIRED_ENTITIES_BY_WORKFLOW.get(workflow, REQUIRED_ENTITIES_BY_INTENT.get(intent, ()))
     return {
         "__synthetic": True,
         "workflow_id": workflow,
@@ -422,7 +526,7 @@ def _synthetic_workflow_state(intent: str, entities: dict) -> dict:
         "workflow_status": "COLLECT",
         "current_step": "collecting_entities",
         "collected_fields": _entities_to_fields(entities),
-        "required_entities": list(REQUIRED_ENTITIES_BY_INTENT.get(intent, ())),
+        "required_entities": list(required_entities),
     }
 
 
@@ -435,8 +539,18 @@ def _entities_to_fields(entities: dict | None) -> dict:
         fields["price"] = data["prices"][0]
     if data.get("costs"):
         fields["cost"] = data["costs"][0]
+    if data.get("cost"):
+        fields["cost"] = data["cost"]
+    if data.get("unit_cost"):
+        fields["unit_cost"] = data["unit_cost"]
+    if data.get("cost_per_unit"):
+        fields["cost_per_unit"] = data["cost_per_unit"]
     if data.get("quantities"):
         fields["quantity"] = data["quantities"][0]
+    if data.get("quantity"):
+        fields["quantity"] = data["quantity"]
+    if data.get("total_units"):
+        fields["total_units"] = data["total_units"]
     if data.get("dates"):
         fields["date"] = data["dates"][0]
     return fields

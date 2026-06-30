@@ -37,6 +37,28 @@ class IntentResolutionPriorityAuditTest(unittest.TestCase):
         self.assertNotEqual(audit["matched_skill"]["skill_id"], "01.001.customer_asks_price")
         self.assertFalse(audit["intent_changed_between_layers"])
 
+    def test_cost_calculation_unit_cost_phrase_completes_cost_mapping(self):
+        message = "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19 \u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32 35 \u0e1a\u0e32\u0e17\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19 100 \u0e0a\u0e34\u0e49\u0e19 \u0e23\u0e32\u0e04\u0e32\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23"
+
+        route = build_task_route({}, message)
+        workflow = route["business_workflow"]
+        entities = workflow["extracted_entities"]
+        diagnostics = developer_diagnostics(route)
+
+        self.assertEqual(workflow["workflow_state"]["workflow_id"], "COST_CALCULATION")
+        self.assertEqual(entities["cost"], 35)
+        self.assertEqual(entities["unit_cost"], 35)
+        self.assertEqual(entities["quantity"], 100)
+        self.assertEqual(entities["total_units"], 100)
+        self.assertNotIn("cost", workflow["missing_entities"])
+        self.assertNotIn("cost", diagnostics["missing_entities"])
+        self.assertNotEqual(workflow["next_question"], "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19\u0e01\u0e35\u0e48\u0e1a\u0e32\u0e17\u0e04\u0e23\u0e31\u0e1a")
+        self.assertTrue(diagnostics["entity_mapping_trace"])
+        self.assertEqual(
+            diagnostics["workflow_readiness_decision"]["reason_by_field"]["cost"]["matched_aliases"][0],
+            "cost",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
