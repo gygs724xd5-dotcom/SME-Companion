@@ -112,6 +112,115 @@ class BusinessSkillMatcherTest(unittest.TestCase):
         self.assertEqual(price_match["components"]["conversation_context"], 0)
         self.assertEqual(price_match["components"]["memory_tag"], 0)
 
+    def test_expensive_reply_provenance_traces_stale_pricing_source(self):
+        candidates = [
+            skill(
+                "01.001.customer_asks_price",
+                name="Customer asks price",
+                stage="Interest",
+                situation="A customer asks how much a product costs.",
+                examples="ราคาเท่าไร",
+                memory_tags="pricing_strategy",
+            ),
+            skill(
+                "01.002.customer_says_expensive",
+                name="Customer says expensive",
+                stage="Consideration",
+                situation="Customer objects to price.",
+                examples="ลูกค้าบอกว่า\nแพงไป\nควรตอบยังไง",
+            ),
+            skill(
+                "02.002.create_promotion",
+                name="Create promotion",
+                domain="02 Marketing",
+                stage="Consideration",
+                memory_tags="pricing_strategy",
+            ),
+        ]
+        context = {
+            "business_context": {
+                "business_domain": "01 Sales",
+                "business_stage": "Interest",
+                "memory_tags": ["pricing_strategy"],
+                "detected_intent": "customer_says_expensive",
+                "matched_intent_keywords": ["ลูกค้าบอกว่า", "แพงไป", "ควรตอบยังไง"],
+            },
+            "business_intent": {
+                "detected_intent": "customer_says_expensive",
+                "intent_confidence": 0.97,
+                "matched_intent_keywords": ["ลูกค้าบอกว่า", "แพงไป", "ควรตอบยังไง"],
+            },
+        }
+
+        ranked = rank_business_skills(
+            "ลูกค้าบอกว่าชูครีมแพงไป ควรตอบยังไง",
+            context,
+            candidates,
+        )
+
+        for item in ranked:
+            self.assertIn("match_provenance", item)
+            self.assertIn("current_message_match", item)
+            self.assertIn("context_match", item)
+            self.assertIn("intent_match", item)
+
+        price_match = next(item for item in ranked if item["skill_id"] == "01.001.customer_asks_price")
+        pricing_records = [
+            item for item in price_match["match_provenance"] if item["token"] == "pricing"
+        ]
+        self.assertTrue(pricing_records)
+        self.assertTrue(any(item["source_field"] == "business_context.memory_tags" for item in pricing_records))
+        self.assertTrue(all(not item["matched_from_current_message"] for item in pricing_records))
+
+        expensive_match = next(item for item in ranked if item["skill_id"] == "01.002.customer_says_expensive")
+        current_evidence = set(expensive_match["current_message_match"]["current_message_matched_keywords"])
+        self.assertIn("ลูกค้าบอกว่า", current_evidence)
+        self.assertIn("แพงไป", current_evidence)
+        self.assertIn("ควรตอบยังไง", current_evidence)
+
+    def test_pricing_unclear_label_explanation_provenance_is_current_message(self):
+        candidates = [
+            skill(
+                "01.001.customer_asks_price",
+                name="Customer asks price",
+                situation="A customer asks about pricing.",
+                intent="pricing question",
+                memory_tags="pricing",
+            ),
+            skill(
+                "99.001.pricing_unclear",
+                name="pricing_unclear label explanation",
+                domain="Developer Intelligence",
+                situation="Explain what the pricing_unclear diagnostic label means.",
+                intent="label explanation",
+                examples="pricing_unclear คืออะไร",
+            ),
+        ]
+        context = {
+            "business_intent": {
+                "detected_intent": "label_explanation",
+                "intent_confidence": 0.94,
+                "matched_intent_keywords": ["คืออะไร"],
+            },
+            "business_context": {
+                "detected_intent": "label_explanation",
+                "matched_intent_keywords": ["คืออะไร"],
+            },
+        }
+
+        ranked = rank_business_skills("pricing_unclear คืออะไร", context, candidates)
+
+        self.assertEqual(ranked[0]["skill_id"], "99.001.pricing_unclear")
+        self.assertEqual(ranked[0]["intent_match"]["detected_intent"], "label_explanation")
+        pricing_unclear_records = [
+            item for item in ranked[0]["match_provenance"] if item["token"] == "pricing"
+        ]
+        self.assertTrue(pricing_unclear_records)
+        self.assertTrue(all(item["matched_from_current_message"] for item in pricing_unclear_records))
+
+        asks_price = next(item for item in ranked if item["skill_id"] == "01.001.customer_asks_price")
+        self.assertNotEqual(asks_price["skill_id"], ranked[0]["skill_id"])
+
     def test_business_context_improves_relevant_skill(self):
         candidates = [
             skill(

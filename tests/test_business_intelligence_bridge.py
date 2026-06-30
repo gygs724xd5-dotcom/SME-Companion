@@ -28,6 +28,33 @@ class BusinessIntelligenceBridgeTest(unittest.TestCase):
         self.assertEqual(result["matched_skill"]["skill_id"], "01.001.customer_asks_price")
         self.assertEqual(result["business_reasoning"]["skill_id"], "01.001.customer_asks_price")
 
+    def test_bridge_skill_match_audit_flags_context_pricing(self):
+        context = {
+            "business_context": {
+                "business_domain": "01 Sales",
+                "business_stage": "Interest",
+                "memory_tags": ["pricing_strategy"],
+                "detected_intent": "customer_says_expensive",
+                "matched_intent_keywords": ["ลูกค้าบอกว่า", "แพงไป", "ควรตอบยังไง"],
+            },
+            "business_intent": {
+                "detected_intent": "customer_says_expensive",
+                "intent_confidence": 0.97,
+                "matched_intent_keywords": ["ลูกค้าบอกว่า", "แพงไป", "ควรตอบยังไง"],
+            },
+        }
+
+        result = run_business_intelligence_bridge("ลูกค้าบอกว่าชูครีมแพงไป ควรตอบยังไง", context, {})
+
+        audit = result["skill_match_audit"]
+        self.assertEqual(audit["current_message"], "ลูกค้าบอกว่าชูครีมแพงไป ควรตอบยังไง")
+        self.assertEqual(audit["detected_intent"], "customer_says_expensive")
+        pricing_matches = [
+            item for item in audit["suspicious_matches"] if item["token"] == "pricing"
+        ]
+        self.assertTrue(pricing_matches)
+        self.assertTrue(any(item["source_field"] == "business_context.memory_tags" for item in pricing_matches))
+
     def test_task_router_injects_business_reasoning(self):
         route = build_task_route({}, "\u0e25\u0e39\u0e01\u0e04\u0e49\u0e32\u0e1a\u0e2d\u0e01\u0e27\u0e48\u0e32\u0e41\u0e1e\u0e07")
 

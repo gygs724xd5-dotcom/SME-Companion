@@ -24,6 +24,11 @@ _BROAD_BUSINESS_TERMS = (
 )
 
 
+def _preview(value: Any, limit: int = 160) -> str:
+    text = str(value or "").strip()
+    return text[:limit]
+
+
 def _compact(data: dict | None) -> dict:
     return {key: value for key, value in (data or {}).items() if value not in (None, "", [], {})}
 
@@ -72,6 +77,75 @@ def _skill_by_match(candidate_skills: list[dict], match: dict | None) -> dict | 
     return None
 
 
+def _suspicious_matches(ranked_matches: list[dict]) -> list[dict]:
+    suspicious: list[dict] = []
+    suspicious_types = {
+        "conversation_context",
+        "skill_metadata",
+        "bridge_context",
+        "derived",
+        "memory",
+        "domain",
+        "intent",
+    }
+    for match in ranked_matches or []:
+        for item in match.get("match_provenance") or []:
+            if item.get("matched_from_current_message"):
+                continue
+            if item.get("token_type") not in suspicious_types:
+                continue
+            if not (
+                item.get("matched_from_conversation_context")
+                or item.get("matched_from_memory")
+                or item.get("matched_from_skill_metadata")
+                or item.get("token_type") in {"derived", "intent", "domain"}
+            ):
+                continue
+            suspicious.append(
+                {
+                    "skill_id": match.get("skill_id"),
+                    "token": item.get("token"),
+                    "token_type": item.get("token_type"),
+                    "source_field": item.get("source_field"),
+                    "source_value_preview": item.get("source_value_preview"),
+                    "score_contribution": item.get("score_contribution"),
+                    "reason": "Matched token did not appear in the current message and came from context, metadata, memory, intent, domain, or a derived source.",
+                }
+            )
+    return suspicious
+
+
+def _skill_match_audit(
+    user_message: str,
+    conversation_context: dict | None,
+    ranked_matches: list[dict],
+) -> dict:
+    context = conversation_context or {}
+    business_context = context.get("business_context") or {}
+    business_intent = context.get("business_intent") or {}
+    top = ranked_matches[0] if ranked_matches else {}
+    return {
+        "current_message": _preview(user_message),
+        "detected_intent": (
+            business_intent.get("detected_intent")
+            or context.get("detected_intent")
+            or business_context.get("detected_intent")
+        ),
+        "previous_context_intent": context.get("previous_context_intent") or business_context.get("previous_context_intent"),
+        "intent_changed": bool(context.get("intent_changed") or business_context.get("intent_changed")),
+        "context_isolation_applied": bool(
+            context.get("context_isolation_applied")
+            or business_context.get("context_isolation_applied")
+            or context.get("intent_changed")
+            or business_context.get("intent_changed")
+        ),
+        "top_skill_id": top.get("skill_id"),
+        "top_skill_score": top.get("score"),
+        "top_skill_reason": top.get("reason"),
+        "suspicious_matches": _suspicious_matches(ranked_matches),
+    }
+
+
 def _best_skill(user_message: str, conversation_context: dict | None) -> tuple[dict | None, bool, list[dict]]:
     candidate_skills = _candidate_skills(user_message, conversation_context)
     ranked_matches = rank_business_skills(
@@ -114,6 +188,7 @@ def run_business_intelligence_bridge(
     extracted_entities = context.get("extracted_entities") or business_context.get("extracted_entities") or {}
     try:
         matched_skill, broad_consulting, ranked_matches = _best_skill(user_message, conversation_context)
+        skill_match_audit = _skill_match_audit(user_message, conversation_context, ranked_matches)
         if not matched_skill:
             return {
                 "bridge_used": False,
@@ -130,6 +205,7 @@ def run_business_intelligence_bridge(
                 "confidence": 0.0,
                 "detected_intent": detected_intent,
                 "extracted_entities": extracted_entities,
+                "skill_match_audit": skill_match_audit,
             }
 
         reasoning = reason_business_message(
@@ -174,6 +250,7 @@ def run_business_intelligence_bridge(
             "broad_consulting": bool(broad_consulting),
             "detected_intent": detected_intent,
             "extracted_entities": extracted_entities,
+            "skill_match_audit": skill_match_audit,
         }
         return {
             **business_payload,
@@ -196,6 +273,7 @@ def run_business_intelligence_bridge(
             "confidence": 0.0,
             "detected_intent": detected_intent,
             "extracted_entities": extracted_entities,
+            "skill_match_audit": _skill_match_audit(user_message, conversation_context, []),
             "bridge_error": f"{type(exc).__name__}: {exc}",
         }
 
