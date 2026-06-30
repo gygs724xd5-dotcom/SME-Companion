@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 import json
 
+from brain.business_workflow_engine import decide_business_workflow
 from brain.conversation_manager import active_workflow_state, planner_locked
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
 from brain.business_entity_extractor import extract_business_entities
@@ -93,7 +94,13 @@ def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
     business_intent = detect_business_intent(user_message)
     entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
-    if planner_locked(state):
+    workflow_decision = decide_business_workflow(
+        user_message,
+        business_intent=business_intent,
+        entity_result=entity_result,
+        application_state=state,
+    )
+    if planner_locked(state) and workflow_decision.get("workflow_action") not in {"interrupt", "start_new"}:
         workflow_state = active_workflow_state(state) or {}
         return {
             "planner_output": {
@@ -109,12 +116,14 @@ def build_task_route(application_state, user_message) -> dict:
                 "priority": "high",
                 "estimated_response_mode": "workflow",
                 "planner_locked": True,
+                "workflow_intelligence": workflow_decision,
             },
             "conversation_understanding": {},
             "conversation_intelligence": {},
             "intent_resolution": {"resolved_intent": "continue_previous_workflow", "resolved_workflow": workflow_state.get("workflow_id")},
             "detected_intent": business_intent,
             "extracted_entities": entity_result,
+            "business_workflow": workflow_decision,
             "business_context": {
                 "detected_intent": business_intent.get("detected_intent"),
                 "intent_confidence": business_intent.get("intent_confidence"),
@@ -122,16 +131,21 @@ def build_task_route(application_state, user_message) -> dict:
                 "extracted_entities": entity_result.get("extracted_entities") or {},
                 "missing_entities": entity_result.get("missing_entities") or [],
                 "entity_confidence": entity_result.get("entity_confidence"),
+                "workflow_intelligence": workflow_decision,
             },
             "conversation_memory": {},
             "task_type": workflow_state.get("workflow_name"),
             "selected_capability": None,
             "loaded_skills": [],
-            "reasoning": {"action": "continue_active_workflow", "workflow_ready": not bool(workflow_state.get("missing_fields"))},
+            "reasoning": {
+                "action": "continue_active_workflow",
+                "workflow_ready": not bool(workflow_state.get("missing_fields")) or bool(workflow_decision.get("workflow_complete")),
+                "workflow_intelligence": workflow_decision,
+            },
             "reasoning_mode": "workflow",
-            "llm_reasoning_context": {},
+            "llm_reasoning_context": {"workflow_intelligence": workflow_decision},
             "llm_decision": {"should_use_llm": False, "reason": "Planner locked by Conversation OS."},
-            "workflow_ready": not bool(workflow_state.get("missing_fields")),
+            "workflow_ready": not bool(workflow_state.get("missing_fields")) or bool(workflow_decision.get("workflow_complete")),
             "llm_needed": False,
             "capability_available": True,
             "placeholders": dict(PLACEHOLDER_ENGINES),
@@ -158,6 +172,7 @@ def build_task_route(application_state, user_message) -> dict:
         "extracted_entities": entity_result.get("extracted_entities") or {},
         "missing_entities": entity_result.get("missing_entities") or [],
         "entity_confidence": entity_result.get("entity_confidence"),
+        "workflow_intelligence": workflow_decision,
     }
     intent_resolution = resolve_intent(interpretation, memory_context, business_context)
     memory_context = remember_turn(
@@ -185,8 +200,19 @@ def build_task_route(application_state, user_message) -> dict:
         "business_context": business_context,
         "intent_resolution": intent_resolution,
     }
+    routing_state = enriched_state
+    if workflow_decision.get("workflow_action") == "interrupt":
+        routing_state = dict(enriched_state)
+        routing_state["workflow"] = {}
+        conversation = dict(routing_state.get("conversation") or {})
+        os_state = dict(conversation.get("conversation_os") or {})
+        os_state["planner_locked"] = False
+        os_state["active_workflow_id"] = None
+        conversation["conversation_os"] = os_state
+        routing_state["conversation"] = conversation
     planner_message = intent_resolution.get("planner_message") or interpretation.get("planner_message") or user_message
-    plan = build_execution_plan(enriched_state, planner_message)
+    plan = build_execution_plan(routing_state, planner_message)
+    plan["workflow_intelligence"] = workflow_decision
     bridge_result = run_business_intelligence_bridge(
         user_message,
         {
@@ -194,6 +220,7 @@ def build_task_route(application_state, user_message) -> dict:
             "conversation_intelligence": conversation_intelligence,
             "conversation_memory": memory_context,
             "business_context": business_context,
+            "business_workflow": workflow_decision,
             "intent_resolution": intent_resolution,
             "intent": business_intent.get("detected_intent"),
             "detected_intent": business_intent.get("detected_intent"),
@@ -248,6 +275,7 @@ def build_task_route(application_state, user_message) -> dict:
     llm_reasoning_context["matched_intents"] = _matched_intents(plan, interpretation, intent_resolution, reasoning)
     llm_reasoning_context["detected_intent"] = business_intent
     llm_reasoning_context["extracted_entities"] = entity_result
+    llm_reasoning_context["workflow_intelligence"] = workflow_decision
     llm_reasoning_context["prompt_context_size"] = _prompt_context_size(llm_reasoning_context)
     llm_decision = decide_llm_usage(llm_reasoning_context)
     llm_needed = bool(llm_decision.get("should_use_llm"))
@@ -259,6 +287,7 @@ def build_task_route(application_state, user_message) -> dict:
         "intent_resolution": intent_resolution,
         "detected_intent": business_intent,
         "extracted_entities": entity_result,
+        "business_workflow": workflow_decision,
         "business_context": business_context,
         "normalized_business_context": business_context,
         "context_source": business_context.get("source"),
@@ -291,6 +320,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     route = task_route or {}
     skills = route.get("loaded_skills") or []
     loaded_skill_names = [skill.get("name") for skill in skills if skill.get("available")]
+    workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
 
     return {
         "Planner Output": route.get("planner_output") or {},
@@ -315,6 +345,19 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
         "detected_intent": route.get("detected_intent") or ((route.get("llm_reasoning_context") or {}).get("detected_intent")) or {},
         "extracted_entities": route.get("extracted_entities") or ((route.get("llm_reasoning_context") or {}).get("extracted_entities")) or {},
+        "workflow_action": workflow.get("workflow_action"),
+        "workflow_state": workflow.get("workflow_state") or {},
+        "workflow_stage": workflow.get("workflow_stage"),
+        "workflow_progress": workflow.get("workflow_progress") or {},
+        "workflow_confidence": workflow.get("workflow_confidence"),
+        "workflow_complete": bool(workflow.get("workflow_complete")),
+        "workflow_interrupted": bool(workflow.get("workflow_interrupted")),
+        "workflow_resume_available": bool(workflow.get("workflow_resume_available")),
+        "workflow_reason": workflow.get("workflow_reason"),
+        "required_entities": workflow.get("required_entities") or [],
+        "completed_entities": workflow.get("completed_entities") or [],
+        "missing_entities": workflow.get("missing_entities") or [],
+        "entity_completeness": workflow.get("entity_completeness") or {},
         "normalized_business_context": route.get("normalized_business_context") or route.get("business_context") or {},
         "context_source": route.get("context_source") or ((route.get("business_context") or {}).get("source")),
         "context_confidence": route.get("context_confidence") or ((route.get("business_context") or {}).get("confidence")),

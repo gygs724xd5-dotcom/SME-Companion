@@ -125,6 +125,55 @@ def _business_intent_entity_context(
     )
 
 
+def _workflow_intelligence_context(
+    business_context: dict | None,
+    planner: dict | None,
+    reasoning: dict | None,
+    workflow_state: dict | None,
+) -> dict:
+    source = (
+        (business_context or {}).get("workflow_intelligence")
+        or (planner or {}).get("workflow_intelligence")
+        or (reasoning or {}).get("workflow_intelligence")
+        or (workflow_state or {}).get("workflow_intelligence")
+        or {}
+    )
+    return _compact_dict(source, ["workflow_action", "workflow_stage", "workflow_progress"])
+
+
+def _workflow_diagnostics(
+    business_context: dict | None,
+    planner: dict | None,
+    reasoning: dict | None,
+    workflow_state: dict | None,
+) -> dict:
+    source = (
+        (business_context or {}).get("workflow_intelligence")
+        or (planner or {}).get("workflow_intelligence")
+        or (reasoning or {}).get("workflow_intelligence")
+        or (workflow_state or {}).get("workflow_intelligence")
+        or {}
+    )
+    return _compact_dict(
+        source,
+        [
+            "workflow_action",
+            "workflow_state",
+            "workflow_stage",
+            "workflow_progress",
+            "workflow_confidence",
+            "workflow_complete",
+            "workflow_interrupted",
+            "workflow_resume_available",
+            "workflow_reason",
+            "required_entities",
+            "completed_entities",
+            "missing_entities",
+            "entity_completeness",
+        ],
+    )
+
+
 def _business_memory_summary(business_memory: dict | list | None, *, show_business_insights: bool = False) -> dict:
     if not show_business_insights:
         return {}
@@ -428,6 +477,12 @@ def build_prompt_context(
             planner,
             reasoning,
         ),
+        "workflow_context": _workflow_intelligence_context(
+            selected_business_context,
+            planner,
+            reasoning,
+            workflow,
+        ),
         "conversation_summary": _conversation_summary(conversation, short_question=short_question),
         "store_profile": _compact_dict(
             store or {},
@@ -481,6 +536,14 @@ def build_prompt_context(
             developer,
             ["developer_mode", "current_action", "llm_decision", "llm_latency_ms", "token_usage"],
         )
+        workflow_diagnostics = _workflow_diagnostics(
+            selected_business_context,
+            planner,
+            reasoning,
+            workflow,
+        )
+        if workflow_diagnostics:
+            context["workflow_diagnostics"] = workflow_diagnostics
 
     context["loaded_skill"] = _select_relevant_skill(loaded_skill, reasoning, planner)
     if developer_mode:

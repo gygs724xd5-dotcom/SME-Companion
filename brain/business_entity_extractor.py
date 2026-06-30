@@ -194,13 +194,33 @@ def _missing_entities(intent: str | None, entities: dict) -> list[str]:
     return missing
 
 
+def _completed_entities(intent: str | None, entities: dict) -> list[str]:
+    required = list(REQUIRED_BY_INTENT.get(str(intent or "unknown"), ()))
+    missing = set(_missing_entities(intent, entities))
+    return [field for field in required if field not in missing]
+
+
+def _entity_completeness(required: list[str], completed: list[str]) -> dict:
+    total = len(required)
+    done = len(completed)
+    return {
+        "completed": done,
+        "required": total,
+        "percent": 1.0 if total == 0 else round(done / total, 2),
+    }
+
+
 def extract_business_entities(user_message: str | None, detected_intent: str | None = None) -> dict:
     """Extract compact structured entities from the current business message."""
     message = str(user_message or "").strip()
     if not message:
+        required = list(REQUIRED_BY_INTENT.get(str(detected_intent or "unknown"), ()))
         return {
             "extracted_entities": {},
-            "missing_entities": list(REQUIRED_BY_INTENT.get(str(detected_intent or "unknown"), ())),
+            "required_entities": required,
+            "completed_entities": [],
+            "missing_entities": required,
+            "entity_completeness": _entity_completeness(required, []),
             "entity_confidence": 0.0,
         }
 
@@ -218,14 +238,19 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
         }
     )
     missing = _missing_entities(detected_intent, entities)
+    required = list(REQUIRED_BY_INTENT.get(str(detected_intent or "unknown"), ()))
+    completed = _completed_entities(detected_intent, entities)
     extracted_field_count = len(entities)
-    required_count = len(REQUIRED_BY_INTENT.get(str(detected_intent or "unknown"), ()))
+    required_count = len(required)
     confidence = min(0.95, 0.35 + (0.1 * extracted_field_count))
     if required_count:
         confidence += 0.25 * (required_count - len(missing)) / required_count
     return {
         "extracted_entities": entities,
+        "required_entities": required,
+        "completed_entities": completed,
         "missing_entities": missing,
+        "entity_completeness": _entity_completeness(required, completed),
         "entity_confidence": round(min(0.98, confidence), 2),
             "extracted_at": datetime.now(timezone.utc).isoformat(),
     }
