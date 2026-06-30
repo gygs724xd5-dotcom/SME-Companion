@@ -4,12 +4,13 @@ from copy import deepcopy
 from typing import Any
 
 from brain.business_reasoning_engine import reason_business_message
-from brain.business_skill_loader import get_business_skill, search_business_skills
+from brain.business_skill_loader import get_business_skill, load_all_business_skills, search_business_skills
+from brain.business_skill_matcher import rank_business_skills
 from brain.response_mode_engine import BUSINESS_CONSULTING
 
 
 HIGH_CONFIDENCE_THRESHOLD = 0.6
-MIN_DIRECT_MATCH_SCORE = 2
+MIN_MATCHER_CONFIDENCE = 0.6
 
 _BROAD_BUSINESS_TERMS = (
     "\u0e2d\u0e22\u0e32\u0e01\u0e02\u0e32\u0e22",
@@ -27,18 +28,73 @@ def _compact(data: dict | None) -> dict:
     return {key: value for key, value in (data or {}).items() if value not in (None, "", [], {})}
 
 
-def _best_skill(user_message: str, conversation_context: dict | None) -> tuple[dict | None, bool]:
+def _skill_matches_domain(skill: dict[str, Any], domain: str | None) -> bool:
+    if not domain:
+        return True
+    normalized_domain = str(domain or "").strip().lower()
+    skill_domain = str(skill.get("business_domain") or "").strip().lower()
+    source_path = str(skill.get("source_path") or "").strip().lower()
+    return normalized_domain in skill_domain or normalized_domain in source_path
+
+
+def _candidate_skills(user_message: str, conversation_context: dict | None) -> list[dict]:
     business_context = (conversation_context or {}).get("business_context") or {}
     domain = business_context.get("business_domain")
-    results = search_business_skills(user_message, domain=domain)
-    if results and int(results[0].get("match_score") or 0) >= MIN_DIRECT_MATCH_SCORE:
-        return results[0], False
+    search_results = search_business_skills(user_message, domain=domain)
+    candidates_by_id = {
+        str(skill.get("skill_id") or ""): skill
+        for skill in search_results
+        if skill.get("skill_id")
+    }
+    if len(candidates_by_id) < 3:
+        for skill in load_all_business_skills():
+            if not _skill_matches_domain(skill, domain):
+                continue
+            skill_id = str(skill.get("skill_id") or "")
+            if skill_id and skill_id not in candidates_by_id:
+                candidates_by_id[skill_id] = skill
+    return list(candidates_by_id.values())
+
+
+def _skill_by_match(candidate_skills: list[dict], match: dict | None) -> dict | None:
+    if not match:
+        return None
+    match_id = str(match.get("skill_id") or "")
+    for skill in candidate_skills:
+        if str(skill.get("skill_id") or "") == match_id:
+            enriched = dict(skill)
+            enriched["match_score"] = match.get("score")
+            enriched["match_confidence"] = match.get("confidence")
+            enriched["matching_reason"] = match.get("reason")
+            enriched["matched_keywords"] = match.get("matched_keywords") or []
+            enriched["matched_aliases"] = match.get("matched_aliases") or []
+            return enriched
+    return None
+
+
+def _best_skill(user_message: str, conversation_context: dict | None) -> tuple[dict | None, bool, list[dict]]:
+    candidate_skills = _candidate_skills(user_message, conversation_context)
+    ranked_matches = rank_business_skills(
+        user_message,
+        conversation_context,
+        candidate_skills,
+        limit=5,
+    )
+    if ranked_matches and float(ranked_matches[0].get("confidence") or 0.0) >= MIN_MATCHER_CONFIDENCE:
+        return _skill_by_match(candidate_skills, ranked_matches[0]), False, ranked_matches
 
     normalized = str(user_message or "").strip().lower()
     if any(term.lower() in normalized for term in _BROAD_BUSINESS_TERMS):
-        return get_business_skill("close_sale"), True
+        fallback_skill = get_business_skill("close_sale")
+        fallback_matches = rank_business_skills(
+            user_message,
+            conversation_context,
+            [fallback_skill] if fallback_skill else [],
+            limit=1,
+        )
+        return fallback_skill, True, fallback_matches
 
-    return None, False
+    return None, False, ranked_matches
 
 
 def run_business_intelligence_bridge(
@@ -53,7 +109,7 @@ def run_business_intelligence_bridge(
     """
     existing_plan = deepcopy(planner_output or {})
     try:
-        matched_skill, broad_consulting = _best_skill(user_message, conversation_context)
+        matched_skill, broad_consulting, ranked_matches = _best_skill(user_message, conversation_context)
         if not matched_skill:
             return {
                 "bridge_used": False,
@@ -61,6 +117,11 @@ def run_business_intelligence_bridge(
                 "planner_output": existing_plan,
                 "matched_skill": None,
                 "matched_domain": None,
+                "matched_skills": ranked_matches,
+                "ranking_table": ranked_matches,
+                "top_skill": None,
+                "top_confidence": 0.0,
+                "matching_reason": None,
                 "business_reasoning": None,
                 "confidence": 0.0,
             }
@@ -71,6 +132,8 @@ def run_business_intelligence_bridge(
             conversation_context,
         )
         confidence = float(reasoning.get("confidence") or 0.0)
+        top_match = ranked_matches[0] if ranked_matches else {}
+        top_confidence = float(top_match.get("confidence") or matched_skill.get("match_confidence") or confidence)
         response_mode = BUSINESS_CONSULTING if broad_consulting else reasoning.get("response_mode")
         business_payload = {
             "matched_skill": _compact(
@@ -79,10 +142,18 @@ def run_business_intelligence_bridge(
                     "skill_name": matched_skill.get("skill_name"),
                     "business_domain": matched_skill.get("business_domain"),
                     "match_score": matched_skill.get("match_score"),
+                    "matched_keywords": matched_skill.get("matched_keywords"),
+                    "matched_aliases": matched_skill.get("matched_aliases"),
+                    "matching_reason": matched_skill.get("matching_reason"),
                     "source_path": matched_skill.get("source_path"),
                 }
             ),
             "matched_domain": matched_skill.get("business_domain"),
+            "matched_skills": ranked_matches,
+            "ranking_table": ranked_matches,
+            "top_skill": matched_skill.get("skill_id"),
+            "top_confidence": top_confidence,
+            "matching_reason": matched_skill.get("matching_reason") or top_match.get("reason"),
             "business_reasoning": reasoning,
             "business_principle": reasoning.get("business_principle"),
             "thinking_pattern": reasoning.get("thinking_pattern"),
@@ -91,7 +162,7 @@ def run_business_intelligence_bridge(
             "response_mode": response_mode,
             "workflow": reasoning.get("workflow"),
             "memory_tags": reasoning.get("memory_tags") or [],
-            "confidence": confidence,
+            "confidence": max(confidence, top_confidence),
             "bridge_used": True,
             "fallback_used": False,
             "broad_consulting": bool(broad_consulting),
@@ -108,6 +179,11 @@ def run_business_intelligence_bridge(
             "planner_output": existing_plan,
             "matched_skill": None,
             "matched_domain": None,
+            "matched_skills": [],
+            "ranking_table": [],
+            "top_skill": None,
+            "top_confidence": 0.0,
+            "matching_reason": None,
             "business_reasoning": None,
             "confidence": 0.0,
             "bridge_error": f"{type(exc).__name__}: {exc}",
@@ -128,6 +204,11 @@ def inject_business_intelligence(
         {
             "matched_skill": bridge.get("matched_skill"),
             "matched_domain": bridge.get("matched_domain"),
+            "matched_skills": bridge.get("matched_skills"),
+            "ranking_table": bridge.get("ranking_table"),
+            "top_skill": bridge.get("top_skill"),
+            "top_confidence": bridge.get("top_confidence"),
+            "matching_reason": bridge.get("matching_reason"),
             "business_principle": bridge.get("business_principle"),
             "thinking_pattern": bridge.get("thinking_pattern"),
             "decision_tree": bridge.get("decision_tree"),
