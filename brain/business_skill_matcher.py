@@ -172,15 +172,22 @@ def _skill_text(skill: dict[str, Any]) -> str:
 def _context_text(conversation_context: dict | None) -> str:
     context = conversation_context or {}
     business_context = context.get("business_context") or {}
+    extracted_entities = context.get("extracted_entities") or business_context.get("extracted_entities") or {}
     parts = [
         context.get("current_workflow"),
         context.get("response_mode"),
         context.get("intent"),
+        context.get("detected_intent"),
+        business_context.get("detected_intent"),
         business_context.get("business_domain"),
         business_context.get("business_stage"),
         business_context.get("business_goal"),
         business_context.get("customer_segment"),
         business_context.get("memory_tags"),
+        business_context.get("business_intent"),
+        extracted_entities.get("product_or_service_names") if isinstance(extracted_entities, dict) else None,
+        extracted_entities.get("customer_phrases") if isinstance(extracted_entities, dict) else None,
+        extracted_entities.get("business_type_hints") if isinstance(extracted_entities, dict) else None,
         context.get("memory_tags"),
     ]
     return _normalize_text(" ".join(str(part or "") for part in parts))

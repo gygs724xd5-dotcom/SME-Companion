@@ -93,8 +93,9 @@ class BusinessIntelligenceBridgeTest(unittest.TestCase):
         self.assertTrue(key_state["business_reasoning"])
         self.assertGreaterEqual(key_state["reasoning_confidence"], 0.6)
         self.assertTrue(key_state["business_response_mode"])
+        self.assertEqual(key_state["detected_intent"]["detected_intent"], "pricing_question")
+        self.assertIn("extracted_entities", key_state["extracted_entities"])
 
 
 if __name__ == "__main__":
     unittest.main()
-

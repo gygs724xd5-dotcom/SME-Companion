@@ -94,6 +94,37 @@ def _normalized_business_context(business_context: dict | None, *, show_business
     return sanitize_user_context_text(compact)
 
 
+def _business_intent_entity_context(
+    business_context: dict | None,
+    planner: dict | None,
+    reasoning: dict | None,
+) -> dict:
+    context = business_context or {}
+    planner_intelligence = (planner or {}).get("business_intelligence") or {}
+    reasoning = reasoning or {}
+    detected_intent = (
+        context.get("detected_intent")
+        or planner_intelligence.get("detected_intent")
+        or reasoning.get("detected_intent")
+    )
+    extracted_entities = (
+        context.get("extracted_entities")
+        or planner_intelligence.get("extracted_entities")
+        or reasoning.get("extracted_entities")
+        or {}
+    )
+    return _compact_dict(
+        {
+            "detected_intent": detected_intent,
+            "intent_confidence": context.get("intent_confidence"),
+            "matched_intent_keywords": context.get("matched_intent_keywords"),
+            "extracted_entities": extracted_entities,
+            "missing_entities": context.get("missing_entities"),
+            "entity_confidence": context.get("entity_confidence"),
+        }
+    )
+
+
 def _business_memory_summary(business_memory: dict | list | None, *, show_business_insights: bool = False) -> dict:
     if not show_business_insights:
         return {}
@@ -304,6 +335,8 @@ def _diagnostics(
         "selected_business_skill": _business_skill_name(reasoning, planner),
         "selected_business_domain": _business_domain(reasoning, planner),
         "matched_intents": _matched_intents(planner, reasoning, llm_decision),
+        "detected_intent": selected_business_context.get("detected_intent"),
+        "extracted_entities": selected_business_context.get("extracted_entities") or {},
         "context_source": selected_business_context.get("source"),
         "context_confidence": selected_business_context.get("confidence"),
         "context_conflicts": selected_business_context.get("conflicts") or [],
@@ -389,6 +422,11 @@ def build_prompt_context(
         "business_context": _normalized_business_context(
             selected_business_context,
             show_business_insights=show_business_insights,
+        ),
+        "business_intent_entities": _business_intent_entity_context(
+            selected_business_context,
+            planner,
+            reasoning,
         ),
         "conversation_summary": _conversation_summary(conversation, short_question=short_question),
         "store_profile": _compact_dict(

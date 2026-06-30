@@ -108,6 +108,10 @@ def run_business_intelligence_bridge(
     bridge dependency raises, callers can keep using the existing planner result.
     """
     existing_plan = deepcopy(planner_output or {})
+    context = conversation_context or {}
+    business_context = context.get("business_context") or {}
+    detected_intent = context.get("detected_intent") or business_context.get("detected_intent")
+    extracted_entities = context.get("extracted_entities") or business_context.get("extracted_entities") or {}
     try:
         matched_skill, broad_consulting, ranked_matches = _best_skill(user_message, conversation_context)
         if not matched_skill:
@@ -124,6 +128,8 @@ def run_business_intelligence_bridge(
                 "matching_reason": None,
                 "business_reasoning": None,
                 "confidence": 0.0,
+                "detected_intent": detected_intent,
+                "extracted_entities": extracted_entities,
             }
 
         reasoning = reason_business_message(
@@ -166,6 +172,8 @@ def run_business_intelligence_bridge(
             "bridge_used": True,
             "fallback_used": False,
             "broad_consulting": bool(broad_consulting),
+            "detected_intent": detected_intent,
+            "extracted_entities": extracted_entities,
         }
         return {
             **business_payload,
@@ -186,6 +194,8 @@ def run_business_intelligence_bridge(
             "matching_reason": None,
             "business_reasoning": None,
             "confidence": 0.0,
+            "detected_intent": detected_intent,
+            "extracted_entities": extracted_entities,
             "bridge_error": f"{type(exc).__name__}: {exc}",
         }
 
@@ -219,6 +229,8 @@ def inject_business_intelligence(
             "confidence": bridge.get("confidence"),
             "bridge_used": bridge.get("bridge_used"),
             "fallback_used": bridge.get("fallback_used"),
+            "detected_intent": bridge.get("detected_intent"),
+            "extracted_entities": bridge.get("extracted_entities"),
         }
     )
     plan["business_reasoning"] = bridge.get("business_reasoning")

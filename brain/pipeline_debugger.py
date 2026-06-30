@@ -66,6 +66,7 @@ def _key_state(overrides: dict | None = None) -> dict:
     route = _safe_get(session, "last_task_route", {}) or developer.get("task_route") or {}
     planner = route.get("planner_output") or {}
     business_intelligence = route.get("business_intelligence") or planner.get("business_intelligence") or {}
+    business_context = route.get("business_context") or {}
 
     state = {
         "active_workflow_id": (
@@ -99,6 +100,8 @@ def _key_state(overrides: dict | None = None) -> dict:
         "business_reasoning": business_intelligence.get("business_reasoning") or {},
         "reasoning_confidence": business_intelligence.get("confidence"),
         "business_response_mode": business_intelligence.get("response_mode"),
+        "detected_intent": route.get("detected_intent") or business_intelligence.get("detected_intent") or business_context.get("detected_intent"),
+        "extracted_entities": route.get("extracted_entities") or business_intelligence.get("extracted_entities") or business_context.get("extracted_entities") or {},
         "bridge_used": bool(business_intelligence.get("bridge_used")),
         "fallback_used": bool(business_intelligence.get("fallback_used")),
     }

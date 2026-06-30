@@ -5,10 +5,12 @@ import json
 
 from brain.conversation_manager import active_workflow_state, planner_locked
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
+from brain.business_entity_extractor import extract_business_entities
 from brain.business_intelligence_bridge import (
     inject_business_intelligence,
     run_business_intelligence_bridge,
 )
+from brain.business_intent_engine import detect_business_intent
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
 from brain.conversation_understanding_engine import understand_conversation
@@ -89,6 +91,8 @@ def _matched_intents(plan: dict | None, interpretation: dict | None, intent_reso
 
 def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
+    business_intent = detect_business_intent(user_message)
+    entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
     if planner_locked(state):
         workflow_state = active_workflow_state(state) or {}
         return {
@@ -109,7 +113,16 @@ def build_task_route(application_state, user_message) -> dict:
             "conversation_understanding": {},
             "conversation_intelligence": {},
             "intent_resolution": {"resolved_intent": "continue_previous_workflow", "resolved_workflow": workflow_state.get("workflow_id")},
-            "business_context": {},
+            "detected_intent": business_intent,
+            "extracted_entities": entity_result,
+            "business_context": {
+                "detected_intent": business_intent.get("detected_intent"),
+                "intent_confidence": business_intent.get("intent_confidence"),
+                "matched_intent_keywords": business_intent.get("matched_intent_keywords") or [],
+                "extracted_entities": entity_result.get("extracted_entities") or {},
+                "missing_entities": entity_result.get("missing_entities") or [],
+                "entity_confidence": entity_result.get("entity_confidence"),
+            },
             "conversation_memory": {},
             "task_type": workflow_state.get("workflow_name"),
             "selected_capability": None,
@@ -137,6 +150,15 @@ def build_task_route(application_state, user_message) -> dict:
         understanding=interpretation,
         conversation_memory=memory_context,
     )
+    business_context = {
+        **business_context,
+        "detected_intent": business_intent.get("detected_intent"),
+        "intent_confidence": business_intent.get("intent_confidence"),
+        "matched_intent_keywords": business_intent.get("matched_intent_keywords") or [],
+        "extracted_entities": entity_result.get("extracted_entities") or {},
+        "missing_entities": entity_result.get("missing_entities") or [],
+        "entity_confidence": entity_result.get("entity_confidence"),
+    }
     intent_resolution = resolve_intent(interpretation, memory_context, business_context)
     memory_context = remember_turn(
         memory_context,
@@ -173,6 +195,11 @@ def build_task_route(application_state, user_message) -> dict:
             "conversation_memory": memory_context,
             "business_context": business_context,
             "intent_resolution": intent_resolution,
+            "intent": business_intent.get("detected_intent"),
+            "detected_intent": business_intent.get("detected_intent"),
+            "business_intent": business_intent,
+            "extracted_entities": entity_result.get("extracted_entities") or {},
+            "missing_entities": entity_result.get("missing_entities") or [],
             "store_profile": enriched_state.get("store") or {},
         },
         plan,
@@ -219,6 +246,8 @@ def build_task_route(application_state, user_message) -> dict:
     llm_reasoning_context["selected_business_skill"] = _selected_business_skill(bridge_result, reasoning)
     llm_reasoning_context["selected_business_domain"] = bridge_result.get("matched_domain")
     llm_reasoning_context["matched_intents"] = _matched_intents(plan, interpretation, intent_resolution, reasoning)
+    llm_reasoning_context["detected_intent"] = business_intent
+    llm_reasoning_context["extracted_entities"] = entity_result
     llm_reasoning_context["prompt_context_size"] = _prompt_context_size(llm_reasoning_context)
     llm_decision = decide_llm_usage(llm_reasoning_context)
     llm_needed = bool(llm_decision.get("should_use_llm"))
@@ -228,6 +257,8 @@ def build_task_route(application_state, user_message) -> dict:
         "conversation_understanding": interpretation,
         "conversation_intelligence": conversation_intelligence,
         "intent_resolution": intent_resolution,
+        "detected_intent": business_intent,
+        "extracted_entities": entity_result,
         "business_context": business_context,
         "normalized_business_context": business_context,
         "context_source": business_context.get("source"),
@@ -282,6 +313,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Business Reasoning": (route.get("business_intelligence") or {}).get("business_reasoning") or {},
         "Reasoning Confidence": (route.get("business_intelligence") or {}).get("confidence"),
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
+        "detected_intent": route.get("detected_intent") or ((route.get("llm_reasoning_context") or {}).get("detected_intent")) or {},
+        "extracted_entities": route.get("extracted_entities") or ((route.get("llm_reasoning_context") or {}).get("extracted_entities")) or {},
         "normalized_business_context": route.get("normalized_business_context") or route.get("business_context") or {},
         "context_source": route.get("context_source") or ((route.get("business_context") or {}).get("source")),
         "context_confidence": route.get("context_confidence") or ((route.get("business_context") or {}).get("confidence")),
