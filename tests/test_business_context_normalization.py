@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
 from llm.prompt_context_builder import build_prompt_context
@@ -103,6 +104,110 @@ class BusinessContextNormalizationTest(unittest.TestCase):
         self.assertNotIn("business_memory", prompt_context)
         self.assertNotIn("cosmetic_store", str(prompt_context))
         self.assertIn("prompt_context_size", prompt_context)
+
+    def test_prompt_context_is_smaller_than_previous_large_context_shape(self):
+        history = [
+            {"role": "user", "content": "ช่วยคิดโพสต์ขายชูครีม " * 40},
+            {"role": "assistant", "content": "ได้ครับ " * 80},
+        ] * 5
+        loaded_skills = [
+            {"name": "content_creation", "available": True, "path": "skills/content.md", "content": "long skill " * 300},
+            {"name": "sales_plan", "available": True, "path": "skills/sales.md", "content": "other skill " * 300},
+        ]
+        previous_large_context = {
+            "conversation_summary": {"recent_messages": history[-6:], "memory": {"raw": "memory " * 400}},
+            "loaded_skill": loaded_skills,
+            "future_context_sources": {"business_memory": None, "inventory_agent": None},
+        }
+
+        prompt_context = build_prompt_context(
+            {"conversation": {"chat_history": history}},
+            planner={"goal": "ช่วยคิดโพสต์ขายชูครีม", "task_type": "Content Plan"},
+            loaded_skill=loaded_skills,
+            reasoning={"matched_skill": {"skill_id": "content_creation"}},
+            prompt_budget_chars=20000,
+        )
+
+        self.assertLess(
+            prompt_context["prompt_context_size"],
+            len(json.dumps(previous_large_context, ensure_ascii=False, default=str)),
+        )
+
+    def test_prompt_context_removes_duplicate_recent_messages(self):
+        duplicate = {"role": "user", "content": "ช่วยคิดโพสต์ขายชูครีม"}
+        prompt_context = build_prompt_context(
+            {"conversation": {"chat_history": [duplicate, duplicate, duplicate]}},
+            planner={"goal": "ช่วยคิดโพสต์ขายชูครีม", "task_type": "Content Plan"},
+        )
+
+        recent = prompt_context["conversation_summary"]["recent_messages"]
+        self.assertEqual(len(recent), 1)
+
+    def test_prompt_context_diagnostics_are_developer_only(self):
+        normal_context = build_prompt_context(
+            {},
+            planner={"goal": BAKERY, "task_type": "General Business Help"},
+            business_context={"source": "current_message", "confidence": 0.95},
+            developer_mode=False,
+        )
+        developer_context = build_prompt_context(
+            {},
+            planner={"goal": BAKERY, "task_type": "General Business Help"},
+            business_context={"source": "current_message", "confidence": 0.95},
+            developer_mode=True,
+        )
+
+        self.assertNotIn("diagnostics", normal_context)
+        self.assertIn("diagnostics", developer_context)
+        diagnostics = developer_context["diagnostics"]
+        for field in [
+            "prompt_context_size",
+            "selected_business_skill",
+            "selected_business_domain",
+            "matched_intents",
+            "context_source",
+            "context_confidence",
+            "context_conflicts",
+            "stale_context_detected",
+            "included_context_sections",
+            "omitted_context_sections",
+        ]:
+            self.assertIn(field, diagnostics)
+
+    def test_selected_skill_and_domain_diagnostics_are_recorded(self):
+        developer_context = build_prompt_context(
+            {},
+            planner={
+                "goal": "ลูกค้าบอกว่าแพง",
+                "task_type": "Business Consulting",
+                "business_intelligence": {
+                    "matched_skill": {
+                        "skill_id": "01.002.customer_says_expensive",
+                        "business_domain": "01 Sales",
+                    },
+                    "matched_domain": "01 Sales",
+                },
+            },
+            reasoning={"action": "business_reasoning"},
+            developer_mode=True,
+        )
+
+        diagnostics = developer_context["diagnostics"]
+        self.assertEqual(diagnostics["selected_business_skill"], "01.002.customer_says_expensive")
+        self.assertEqual(diagnostics["selected_business_domain"], "01 Sales")
+
+    def test_diagnostics_are_not_exposed_in_normal_prompt_context(self):
+        prompt_context = build_prompt_context(
+            {},
+            planner={"goal": "ลูกค้าบอกว่าแพง", "task_type": "Business Consulting"},
+            reasoning={"matched_skill": {"skill_id": "01.002.customer_says_expensive"}},
+            business_context={"source": "current_message", "confidence": 0.95, "conflicts": [{"field": "business_type"}]},
+            developer_mode=False,
+        )
+
+        self.assertNotIn("diagnostics", prompt_context)
+        self.assertNotIn("included_context_sections", prompt_context)
+        self.assertNotIn("omitted_context_sections", prompt_context)
 
 
 if __name__ == "__main__":

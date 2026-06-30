@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from brain.business_context_engine import sanitize_user_context_text
 
@@ -16,6 +17,8 @@ PLACEHOLDER_CONTEXT_SOURCES = {
 }
 
 DEFAULT_PROMPT_BUDGET_CHARS = 6000
+RECENT_MESSAGE_LIMIT = 4
+RECENT_MESSAGE_MAX_CHARS = 280
 
 
 def _compact_dict(data: dict | None, allowed_keys: list[str] | None = None) -> dict:
@@ -31,10 +34,23 @@ def _compact_dict(data: dict | None, allowed_keys: list[str] | None = None) -> d
 def _recent_conversation(conversation: dict | None, limit: int = 6) -> list[dict]:
     history = (conversation or {}).get("chat_history") or []
     compact = []
+    seen = set()
     for message in history[-limit:]:
         if not isinstance(message, dict):
             continue
-        compact.append(_compact_dict(message, ["role", "content"]))
+        item = _compact_dict(message, ["role", "content"])
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        content = re.sub(r"\s+", " ", content)
+        if len(content) > RECENT_MESSAGE_MAX_CHARS:
+            content = f"{content[:RECENT_MESSAGE_MAX_CHARS].rstrip()}..."
+        item["content"] = content
+        fingerprint = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        compact.append(item)
     return compact
 
 
@@ -100,14 +116,27 @@ def _business_memory_summary(business_memory: dict | list | None, *, show_busine
 
 
 def _conversation_summary(conversation: dict | None, *, short_question: bool = False) -> dict:
-    limit = 2 if short_question else 6
+    limit = 2 if short_question else RECENT_MESSAGE_LIMIT
+    memory = (conversation or {}).get("conversation_memory")
+    compact_memory = {}
+    if isinstance(memory, dict) and not short_question:
+        compact_memory = _compact_dict(
+            memory,
+            [
+                "last_intent",
+                "last_workflow",
+                "focused_business_topic",
+                "recent_topics",
+                "summary",
+            ],
+        )
     summary = {
         "recent_messages": _recent_conversation(conversation, limit=limit),
         "current_topic": (conversation or {}).get("current_topic"),
         "last_intent": (conversation or {}).get("last_intent"),
     }
-    if not short_question:
-        summary["memory"] = (conversation or {}).get("conversation_memory")
+    if compact_memory:
+        summary["memory"] = compact_memory
     return sanitize_user_context_text(_compact_dict(summary))
 
 
@@ -142,6 +171,146 @@ def _skill_summary(loaded_skill: dict | list | None) -> dict | list | None:
     if not isinstance(loaded_skill, dict):
         return None
     return _compact_dict(loaded_skill, ["name", "path", "available", "content"])
+
+
+def _selected_skill_id(reasoning: dict | None, planner: dict | None) -> str | None:
+    reasoning = reasoning or {}
+    planner = planner or {}
+    intelligence = planner.get("business_intelligence") or {}
+    matched = reasoning.get("matched_skill") or intelligence.get("matched_skill") or {}
+    if isinstance(matched, dict):
+        return matched.get("skill_id") or matched.get("name")
+    if matched:
+        return str(matched)
+    return (
+        reasoning.get("business_skill_id")
+        or intelligence.get("top_skill")
+        or ((planner.get("business_reasoning") or {}).get("skill_id") if isinstance(planner.get("business_reasoning"), dict) else None)
+    )
+
+
+def _select_relevant_skill(loaded_skill: dict | list | None, reasoning: dict | None, planner: dict | None) -> dict | list | None:
+    if not loaded_skill:
+        return None
+    selected_id = _selected_skill_id(reasoning, planner)
+    skills = loaded_skill if isinstance(loaded_skill, list) else [loaded_skill]
+    if selected_id:
+        selected_text = str(selected_id).strip().lower()
+        for skill in skills:
+            if not isinstance(skill, dict):
+                continue
+            identifiers = [
+                skill.get("skill_id"),
+                skill.get("id"),
+                skill.get("name"),
+                skill.get("path"),
+                skill.get("source_path"),
+            ]
+            if any(selected_text and selected_text in str(identifier or "").lower() for identifier in identifiers):
+                return _skill_summary(skill)
+    if len(skills) == 1:
+        return _skill_summary(skills[0])
+    return [_compact_dict(skill if isinstance(skill, dict) else {}, ["name", "available", "path"]) for skill in skills[:3]]
+
+
+def _fingerprint(value) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _dedupe_value(value):
+    if isinstance(value, dict):
+        return {
+            key: deduped
+            for key, item in value.items()
+            for deduped in [_dedupe_value(item)]
+            if deduped not in (None, "", [], {})
+        }
+    if isinstance(value, list):
+        deduped_list = []
+        seen = set()
+        for item in value:
+            deduped = _dedupe_value(item)
+            if deduped in (None, "", [], {}):
+                continue
+            fingerprint = _fingerprint(deduped)
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            deduped_list.append(deduped)
+        return deduped_list
+    return value
+
+
+def _dedupe_context_sections(context: dict) -> tuple[dict, list[str]]:
+    deduped = {}
+    omitted = []
+    seen_payloads = {}
+    for key, value in context.items():
+        normalized = _dedupe_value(value)
+        if normalized in (None, "", [], {}):
+            omitted.append(key)
+            continue
+        fingerprint = _fingerprint(normalized)
+        if fingerprint in seen_payloads:
+            omitted.append(key)
+            continue
+        seen_payloads[fingerprint] = key
+        deduped[key] = normalized
+    return deduped, omitted
+
+
+def _business_skill_name(reasoning: dict | None, planner: dict | None) -> str | None:
+    reasoning = reasoning or {}
+    planner = planner or {}
+    intelligence = planner.get("business_intelligence") or {}
+    matched = reasoning.get("matched_skill") or intelligence.get("matched_skill") or {}
+    if isinstance(matched, dict):
+        return matched.get("skill_id") or matched.get("skill_name") or matched.get("name")
+    return _selected_skill_id(reasoning, planner)
+
+
+def _business_domain(reasoning: dict | None, planner: dict | None) -> str | None:
+    reasoning = reasoning or {}
+    planner = planner or {}
+    intelligence = planner.get("business_intelligence") or {}
+    matched = reasoning.get("matched_skill") or intelligence.get("matched_skill") or {}
+    if isinstance(matched, dict) and matched.get("business_domain"):
+        return matched.get("business_domain")
+    return reasoning.get("matched_domain") or intelligence.get("matched_domain")
+
+
+def _matched_intents(planner: dict | None, reasoning: dict | None, llm_decision: dict | None) -> list[str]:
+    intents = [
+        (planner or {}).get("task_type"),
+        (planner or {}).get("workflow"),
+        (reasoning or {}).get("action"),
+        (reasoning or {}).get("response_mode"),
+        (llm_decision or {}).get("response_mode"),
+    ]
+    return [str(intent) for intent in intents if intent not in (None, "", [], {})]
+
+
+def _diagnostics(
+    context: dict,
+    selected_business_context: dict,
+    reasoning: dict | None,
+    planner: dict | None,
+    llm_decision: dict | None,
+    included_sections: list[str],
+    omitted_sections: list[str],
+) -> dict:
+    return {
+        "prompt_context_size": _context_size(context),
+        "selected_business_skill": _business_skill_name(reasoning, planner),
+        "selected_business_domain": _business_domain(reasoning, planner),
+        "matched_intents": _matched_intents(planner, reasoning, llm_decision),
+        "context_source": selected_business_context.get("source"),
+        "context_confidence": selected_business_context.get("confidence"),
+        "context_conflicts": selected_business_context.get("conflicts") or [],
+        "stale_context_detected": bool(selected_business_context.get("is_stale") or selected_business_context.get("conflicts")),
+        "included_context_sections": included_sections,
+        "omitted_context_sections": omitted_sections,
+    }
 
 
 def _business_guidance(reasoning: dict | None, planner: dict | None) -> dict:
@@ -275,9 +444,24 @@ def build_prompt_context(
             ["developer_mode", "current_action", "llm_decision", "llm_latency_ms", "token_usage"],
         )
 
-    context["future_context_sources"] = dict(PLACEHOLDER_CONTEXT_SOURCES)
+    context["loaded_skill"] = _select_relevant_skill(loaded_skill, reasoning, planner)
+    if developer_mode:
+        context["future_context_sources"] = dict(PLACEHOLDER_CONTEXT_SOURCES)
     compact_context = {key: value for key, value in context.items() if value not in (None, "", [], {})}
+    compact_context, omitted_sections = _dedupe_context_sections(compact_context)
+    included_sections = list(compact_context.keys())
     compact_context["prompt_context_size"] = _context_size(compact_context)
     compact_context = _enforce_prompt_budget(compact_context, max(1000, int(prompt_budget_chars or DEFAULT_PROMPT_BUDGET_CHARS)))
     compact_context["prompt_context_size"] = _context_size(compact_context)
+    if developer_mode:
+        compact_context["diagnostics"] = _diagnostics(
+            compact_context,
+            selected_business_context,
+            reasoning,
+            planner,
+            llm_decision,
+            included_sections,
+            omitted_sections,
+        )
+        compact_context["prompt_context_size"] = _context_size(compact_context)
     return compact_context
