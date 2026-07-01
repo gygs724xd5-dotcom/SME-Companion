@@ -21,6 +21,11 @@ from brain.business_reasoning_runtime import (
     REASONING_RUNTIME_VERSION,
     create_reasoning_context,
 )
+from brain.planner_adapter import (
+    PLANNER_CONTEXT_SOURCE,
+    PLANNER_CONTEXT_VERSION,
+    build_planner_context,
+)
 from brain.business_intent_engine import detect_business_intent
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
@@ -281,6 +286,49 @@ def _reasoning_context_for_route(route: dict | None, knowledge_context: dict | N
         }
 
 
+def _planner_context_for_route(
+    route: dict | None,
+    knowledge_context: dict | None = None,
+    reasoning_context: dict | None = None,
+) -> dict:
+    route = route or {}
+    existing = route.get("planner_context")
+    if isinstance(existing, dict):
+        return existing
+    knowledge = knowledge_context if isinstance(knowledge_context, dict) else _knowledge_context_for_route(route)
+    reasoning = reasoning_context if isinstance(reasoning_context, dict) else _reasoning_context_for_route(route, knowledge)
+    try:
+        context = build_planner_context(
+            route,
+            knowledge_context=knowledge,
+            reasoning_context=reasoning,
+            workflow_state=route.get("business_workflow") or {},
+        )
+        return context.to_dict()
+    except Exception as exc:
+        return {
+            "selected_domain": "",
+            "selected_skill": "",
+            "business_goal": "",
+            "decision_type": "unknown",
+            "workflow_owner": "",
+            "workflow_state": {},
+            "planner_inputs": {},
+            "planner_hints": {},
+            "planner_constraints": ["diagnostics_only"],
+            "confidence": 0.0,
+            "version": PLANNER_CONTEXT_VERSION,
+            "diagnostics": {
+                "planner_context_created": False,
+                "planner_context_version": PLANNER_CONTEXT_VERSION,
+                "planner_context_source": PLANNER_CONTEXT_SOURCE,
+                "planner_context_error": f"{type(exc).__name__}: {exc}",
+                "runtime_mode": "diagnostics_only",
+                "planner_logic_executed": False,
+            },
+        }
+
+
 def _matched_skill_payload(route: dict | None) -> dict:
     matched = ((route or {}).get("business_intelligence") or {}).get("matched_skill") or {}
     if not isinstance(matched, dict):
@@ -386,7 +434,9 @@ def _intent_priority_audit(route: dict | None) -> dict:
 def _with_response_gate(route: dict) -> dict:
     knowledge_context = _knowledge_context_for_route(route)
     route = {**route, "knowledge_context": knowledge_context}
-    route = {**route, "reasoning_context": _reasoning_context_for_route(route, knowledge_context)}
+    reasoning_context = _reasoning_context_for_route(route, knowledge_context)
+    route = {**route, "reasoning_context": reasoning_context}
+    route = {**route, "planner_context": _planner_context_for_route(route, knowledge_context, reasoning_context)}
     route = {**route, "intent_priority_audit": _intent_priority_audit(route)}
     gate = workflow_response_gate(route)
     return {**route, **gate}
@@ -783,6 +833,17 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "llm_decision": diagnostics.get("LLM Decision"),
             "llm_needed": diagnostics.get("LLM Needed"),
         },
+        "Planner Context": {
+            "planner_context": diagnostics.get("planner_context"),
+            "planner_context_created": diagnostics.get("planner_context_created"),
+            "planner_context_version": diagnostics.get("planner_context_version"),
+            "planner_context_source": diagnostics.get("planner_context_source"),
+            "planner_selected_domain": diagnostics.get("planner_selected_domain"),
+            "planner_selected_skill": diagnostics.get("planner_selected_skill"),
+            "planner_business_goal": diagnostics.get("planner_business_goal"),
+            "planner_confidence": diagnostics.get("planner_confidence"),
+            "planner_context_present": diagnostics.get("planner_context_present"),
+        },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
             "registered_domains": diagnostics.get("registered_domains"),
@@ -843,6 +904,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     knowledge_diagnostics = knowledge_context.get("diagnostics") or {}
     reasoning_context = _reasoning_context_for_route(route, knowledge_context)
     reasoning_diagnostics = reasoning_context.get("diagnostics") or {}
+    planner_context = _planner_context_for_route(route, knowledge_context, reasoning_context)
+    planner_context_diagnostics = planner_context.get("diagnostics") or {}
     business_knowledge = {
         "candidate_domains": knowledge_context.get("candidate_domains") or [],
         "candidate_skills": knowledge_context.get("candidate_skills") or [],
@@ -947,6 +1010,15 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "selected_domain": reasoning_context.get("selected_domain"),
         "selected_skill": reasoning_context.get("selected_skill"),
         "reasoning_context_present": bool(reasoning_context),
+        "planner_context": planner_context,
+        "planner_context_created": bool(planner_context_diagnostics.get("planner_context_created")),
+        "planner_context_version": planner_context_diagnostics.get("planner_context_version") or planner_context.get("version"),
+        "planner_context_source": planner_context_diagnostics.get("planner_context_source"),
+        "planner_selected_domain": planner_context.get("selected_domain"),
+        "planner_selected_skill": planner_context.get("selected_skill"),
+        "planner_business_goal": planner_context.get("business_goal"),
+        "planner_confidence": planner_context.get("confidence"),
+        "planner_context_present": bool(planner_context),
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
         "skill_match_audit": (route.get("business_intelligence") or {}).get("skill_match_audit") or {},
         "skill_match_audit_summary": (route.get("business_intelligence") or {}).get("skill_match_audit_summary") or {},

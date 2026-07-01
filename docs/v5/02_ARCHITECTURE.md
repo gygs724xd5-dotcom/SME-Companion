@@ -106,6 +106,10 @@ Responsibilities:
 
 The Planner is the orchestration layer. It should not own domain rules or final wording.
 
+V5.1.4 introduces `PlannerContext` as a bridge layer between V5 runtime context and the existing V4 planner. The adapter packages selected domain, selected skill, business goal, decision type, workflow state, planner inputs, hints, constraints, confidence, and diagnostics for developer visibility.
+
+This bridge is diagnostics-only. It does not replace planner metadata, alter planner execution, change routing decisions, start or continue workflows, affect response selection, or modify Conversation OS behavior. Actual planner migration to consume `PlannerContext` occurs in a later architecture step.
+
 ## Workflow
 
 Workflow manages structured business processes across turns.
@@ -190,4 +194,3 @@ Every turn should end with a `ResponseEnvelope` conceptually containing:
 - Confidence.
 - Fallback path if used.
 - Developer diagnostics.
-

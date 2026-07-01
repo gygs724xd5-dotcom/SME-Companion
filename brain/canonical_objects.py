@@ -132,6 +132,29 @@ class ReasoningContext(_CanonicalObject):
 
 
 @dataclass
+class PlannerContext(_CanonicalObject):
+    planner_context_id: str = field(default_factory=lambda: _new_id("planner_context"))
+    selected_domain: str = ""
+    selected_skill: str = ""
+    business_goal: str = ""
+    decision_type: str = "unknown"
+    workflow_owner: str = ""
+    workflow_state: dict = field(default_factory=dict)
+    planner_inputs: dict = field(default_factory=dict)
+    planner_hints: dict = field(default_factory=dict)
+    planner_constraints: list = field(default_factory=list)
+    confidence: float = 0.0
+    diagnostics: dict = field(default_factory=dict)
+    version: str = "5.1.4"
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "PlannerContext":
+        item = super().from_dict(data)
+        item.confidence = _float(item.confidence)
+        return item
+
+
+@dataclass
 class ReasoningDecision(_CanonicalObject):
     reasoning_decision_id: str = field(default_factory=lambda: _new_id("reasoning"))
     conversation_frame_id: str = ""

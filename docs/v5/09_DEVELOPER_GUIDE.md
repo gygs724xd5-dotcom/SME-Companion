@@ -54,6 +54,20 @@ Workflows should expose state and next action. Response wording belongs to Respo
 
 Reasoning rules should not be keyword-only. Keywords may be signals, but the rule must consider context.
 
+## Planner Adapter
+
+V5.1.4 adds `PlannerContext` as a bridge from V5 runtime objects into the existing V4 planner surface. It is an adapter foundation only.
+
+When extending this layer:
+
+1. Package context only; do not execute planner logic.
+2. Keep existing V4 planner output as the source of truth.
+3. Attach `PlannerContext` to developer diagnostics only.
+4. Preserve routing, workflow, response, and Conversation OS behavior.
+5. Use diagnostics such as `planner_context_created`, `planner_context_version`, `planner_context_source`, `planner_selected_domain`, `planner_selected_skill`, `planner_business_goal`, `planner_confidence`, and `planner_context_present`.
+
+Planner migration to consume `PlannerContext` must happen in a later explicit architecture step.
+
 ## Add New Memory
 
 1. Identify the memory type.
@@ -102,4 +116,3 @@ Before accepting future V5 architecture work, verify:
 - Response source is auditable.
 - Fallback behavior is useful.
 - Diagnostics are available.
-

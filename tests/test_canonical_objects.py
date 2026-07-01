@@ -4,6 +4,7 @@ from brain.canonical_objects import (
     BusinessMemoryItem,
     ConversationFrame,
     KnowledgeContext,
+    PlannerContext,
     PlannerDecision,
     ReasoningContext,
     ReasoningDecision,
@@ -21,6 +22,7 @@ class CanonicalObjectsTest(unittest.TestCase):
             ConversationFrame(),
             KnowledgeContext(),
             ReasoningContext(),
+            PlannerContext(),
             ReasoningDecision(),
             PlannerDecision(),
             WorkflowState(),
@@ -38,6 +40,7 @@ class CanonicalObjectsTest(unittest.TestCase):
         self.assertEqual(ConversationFrame().candidate_entities, {})
         self.assertEqual(KnowledgeContext().candidate_skills, [])
         self.assertEqual(ReasoningContext().known_entities, {})
+        self.assertEqual(PlannerContext().planner_inputs, {})
         self.assertEqual(ReasoningDecision().known_facts, {})
         self.assertEqual(PlannerDecision().primary_engine_path, [])
         self.assertEqual(WorkflowState().collected_fields, {})
