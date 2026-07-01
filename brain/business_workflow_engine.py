@@ -9,6 +9,9 @@ from brain.business_entity_extractor import REQUIRED_BY_INTENT
 from brain.conversation_manager import active_workflow_state, ensure_conversation_os_state
 from brain.workflow_registry import get_workflow_definition, get_workflow_registry
 from brain.workflow_state_machine import cost_calculation_trace
+from brain.planner_intent_priority import (
+    has_profit_calculation_intent,
+)
 from brain.workflow_lifecycle import (
     STATUS_COLLECTING,
     STATUS_COMPLETED,
@@ -44,7 +47,7 @@ OVERRIDE_INTENTS = {
 }
 
 REQUIRED_ENTITIES_BY_INTENT = {
-    "profit_calculation": ("product", "price", "cost", "quantity"),
+    "profit_calculation": ("price", "cost"),
     "pricing_question": ("product",),
     "sales_summary": ("date",),
     "cost_calculation": ("product", "cost"),
@@ -52,7 +55,7 @@ REQUIRED_ENTITIES_BY_INTENT = {
 }
 
 REQUIRED_ENTITIES_BY_WORKFLOW = {
-    "PROFIT_CALCULATION": ("product", "price", "cost", "quantity"),
+    "PROFIT_CALCULATION": ("price", "cost"),
     "COST_CALCULATION": ("cost", "quantity"),
     "SALES_PLAN_7_DAY": ("product", "daily_capacity_or_available_quantity", "selling_window_or_sales_channel"),
     "CONTENT_PLAN": ("product_or_business_type",),
@@ -132,6 +135,22 @@ def decide_business_workflow(
                 current_entities=entities,
             ),
             workflow_interrupted=False,
+        )
+
+    if active and active_workflow_id == "COST_CALCULATION" and _profit_interrupt(intent, message):
+        profit_state = _synthetic_workflow_state("profit_calculation", entities)
+        return _with_decision(
+            _build_payload(
+                workflow_action=ACTION_START_NEW,
+                workflow_state=profit_state,
+                user_message=message,
+                detected_intent="profit_calculation",
+                workflow_confidence=max(intent_confidence, 0.86),
+                workflow_reason="profit calculation interrupts active cost workflow",
+                entity_result=entity_result,
+                current_entities=entities,
+            ),
+            workflow_interrupted=True,
         )
 
     if active and _override_reason(intent, message):
@@ -662,6 +681,8 @@ def _refine_intent(intent: str, message: str, entity_result: dict | None) -> str
 
 def _override_reason(intent: str, message: str) -> str | None:
     normalized = message.lower()
+    if intent in WORKFLOW_INTENTS:
+        return None
     if intent in {"customer_reply", "customer_says_expensive"}:
         return "customer_reply intent overrides workflow"
     if intent == "label_explanation" or _is_label_explanation(normalized):
@@ -707,6 +728,10 @@ def _looks_like_numeric_or_field_answer(message: str) -> bool:
     if re.fullmatch(r"[\d,.\s]+", normalized):
         return True
     return bool(re.search(r"\d", normalized)) and len(normalized.split()) <= 8
+
+
+def _profit_interrupt(intent: str, message: str) -> bool:
+    return intent == "profit_calculation" or has_profit_calculation_intent(message)
 
 
 def _supplies_missing_information(message: str, workflow_payload: dict) -> bool:

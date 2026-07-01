@@ -7,6 +7,7 @@ from typing import Any
 from brain.business_reasoning_engine import reason_business_message
 from brain.business_skill_loader import get_business_skill, load_all_business_skills, search_business_skills
 from brain.business_skill_matcher import rank_business_skills
+from brain.planner_intent_priority import has_profit_calculation_intent
 from brain.response_mode_engine import BUSINESS_CONSULTING
 
 
@@ -103,6 +104,8 @@ def _has_strong_current_message_business_evidence(user_message: str, conversatio
 
 
 def _has_strong_cost_calculation_evidence(user_message: str, conversation_context: dict | None) -> bool:
+    if has_profit_calculation_intent(user_message):
+        return False
     context = conversation_context or {}
     business_context = context.get("business_context") or {}
     entities = context.get("extracted_entities") or business_context.get("extracted_entities") or {}

@@ -133,6 +133,33 @@ def _extract_unit_cost(message: str) -> dict | None:
     }
 
 
+def _extract_labeled_money(message: str, labels: tuple[str, ...]) -> dict | None:
+    label_pattern = "|".join(re.escape(label) for label in labels)
+    match = re.search(
+        rf"(?:{label_pattern})[^\d]{{0,30}}(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)?",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return {
+        "amount": _to_number(match.group("amount")),
+        "currency": "THB",
+        "raw": match.group(0).strip(),
+    }
+
+
+def _normalize_profit_money(message: str, prices: list[dict], costs: list[dict]) -> tuple[list[dict], list[dict]]:
+    cost = _extract_labeled_money(message, ("\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "\u0e17\u0e38\u0e19", "cost"))
+    price = _extract_labeled_money(message, ("\u0e02\u0e32\u0e22", "\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22", "sell", "selling price"))
+    if cost:
+        costs = [cost, *[item for item in costs if item.get("amount") != cost.get("amount")]]
+        prices = [item for item in prices if item.get("amount") != cost.get("amount")]
+    if price:
+        prices = [price, *[item for item in prices if item.get("amount") != price.get("amount")]]
+    return _unique(prices), _unique(costs)
+
+
 def _extract_dates(message: str) -> list[str]:
     dates = []
     lowered = message.lower()
@@ -258,6 +285,12 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
         }
 
     prices, costs = _extract_money(message)
+    if detected_intent == "profit_calculation":
+        prices, costs = _normalize_profit_money(message, prices, costs)
+    elif detected_intent == "cost_calculation":
+        labeled_cost = _extract_labeled_money(message, ("\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e23\u0e27\u0e21", "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "\u0e17\u0e38\u0e19", "total cost", "cost"))
+        if labeled_cost:
+            costs = _unique([labeled_cost, *[item for item in costs if item.get("amount") != labeled_cost.get("amount")]])
     unit_cost = _extract_unit_cost(message) if detected_intent == "cost_calculation" else None
     normalization_trace = []
     if unit_cost:

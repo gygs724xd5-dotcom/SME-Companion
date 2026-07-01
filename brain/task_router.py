@@ -71,6 +71,7 @@ TASK_CAPABILITY_NAMES = {
     "Sales Plan": "Sales Plan",
     "Content Plan": "Content Plan",
     "Cost Calculation": "Cost Calculation",
+    "Profit Calculation": "Cost Calculation",
     "Dashboard Request": "Dashboard Request",
     "Receipt Upload": "Receipt Upload",
     "Product Feedback": "Product Feedback",

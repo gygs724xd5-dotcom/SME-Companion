@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from brain.planner_intent_priority import planner_intent_for_message
+
 
 INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "label_explanation": (
@@ -155,6 +157,19 @@ def detect_business_intent(user_message: str | None) -> dict:
         }
 
     normalized_message = _normalize_text(message)
+    priority_intent = planner_intent_for_message(message)
+    if priority_intent:
+        matches = [
+            keyword
+            for keyword in INTENT_KEYWORDS[priority_intent]
+            if _normalize_text(keyword) in normalized_message
+        ]
+        return {
+            "detected_intent": priority_intent,
+            "intent_confidence": 0.96,
+            "matched_intent_keywords": matches,
+        }
+
     if re.search(r"\b[a-z][a-z0-9_]{2,}\s+(?:คืออะไร|คือ|หมายถึงอะไร|แปลว่าอะไร|means?|what is)\b", normalized_message):
         return {
             "detected_intent": "label_explanation",

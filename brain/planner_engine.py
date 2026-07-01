@@ -10,6 +10,10 @@ from brain.workflow_readiness import (
 )
 from brain.workflow_state_machine import REQUIRED_FIELDS, detect_workflow_intent
 from brain.workflow_registry import get_workflow_definition
+from brain.planner_intent_priority import (
+    WORKFLOW_PROFIT_CALCULATION,
+    planner_intent_for_message,
+)
 
 
 WORKFLOW_TASK_TYPES = {
@@ -18,6 +22,7 @@ WORKFLOW_TASK_TYPES = {
     WORKFLOW_CONTENT_PLAN: "Content Plan",
     WORKFLOW_DASHBOARD_REQUEST: "Dashboard Request",
     WORKFLOW_RECEIPT_CAPTURE: "Receipt Upload",
+    WORKFLOW_PROFIT_CALCULATION: "Profit Calculation",
 }
 
 
@@ -34,6 +39,7 @@ ENGLISH_TASK_KEYWORDS = {
     WORKFLOW_CONTENT_PLAN: ["content plan", "content ideas", "caption", "post ideas"],
     WORKFLOW_DASHBOARD_REQUEST: ["dashboard", "business dashboard", "store overview"],
     WORKFLOW_RECEIPT_CAPTURE: ["receipt upload", "upload receipt", "receipt", "slip"],
+    WORKFLOW_PROFIT_CALCULATION: ["profit calculation", "profit", "margin", "selling price"],
 }
 
 
@@ -189,6 +195,8 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
         return "Sales Plan", "sales_plan", WORKFLOW_SALES_PLAN_7_DAY, ["sales_planning"], "workflow"
     if resolved_intent == "cost_calculation":
         return "Cost Calculation", "cost_calculation", WORKFLOW_COST_CALCULATION, ["cost_calculation"], "workflow"
+    if resolved_intent == "profit_calculation":
+        return "Profit Calculation", "profit_calculation", WORKFLOW_PROFIT_CALCULATION, [], "workflow"
     if resolved_intent in {"continue_previous_workflow", "follow_up_edit"}:
         workflow = resolved_workflow or active_workflow
         task = _workflow_task(workflow)
@@ -217,6 +225,11 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
     if understood_intent in {"receipt_reference", "image_reference"}:
         return "Receipt Upload", "receipt_upload", WORKFLOW_RECEIPT_CAPTURE, ["receipt_capture"], "workflow"
     if understood_intent == "cost_question":
+        return "Cost Calculation", "cost_calculation", WORKFLOW_COST_CALCULATION, ["cost_calculation"], "workflow"
+    priority_intent = planner_intent_for_message(user_message)
+    if priority_intent == "profit_calculation":
+        return "Profit Calculation", "profit_calculation", WORKFLOW_PROFIT_CALCULATION, [], "workflow"
+    if priority_intent == "cost_calculation":
         return "Cost Calculation", "cost_calculation", WORKFLOW_COST_CALCULATION, ["cost_calculation"], "workflow"
     if understood_intent == "pricing_question":
         return "Sales Plan", "sales_plan", WORKFLOW_SALES_PLAN_7_DAY, ["sales_planning"], "workflow"

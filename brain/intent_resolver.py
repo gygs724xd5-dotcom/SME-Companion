@@ -8,6 +8,10 @@ from brain.workflow_readiness import (
     WORKFLOW_DASHBOARD_REQUEST,
     WORKFLOW_SALES_PLAN_7_DAY,
 )
+from brain.planner_intent_priority import (
+    WORKFLOW_PROFIT_CALCULATION,
+    has_profit_calculation_intent,
+)
 
 
 INTENT_TO_PLANNER_MESSAGE = {
@@ -17,6 +21,7 @@ INTENT_TO_PLANNER_MESSAGE = {
     "marketing_strategy": "marketing campaign strategy",
     "sales_planning": "sales plan increase sales",
     "pricing_question": "sales plan pricing recommendation",
+    "profit_calculation": "profit calculation selling price margin",
     "cost_calculation": "cost calculation unit cost profit margin",
     "continue_previous_workflow": "continue previous workflow",
     "follow_up_edit": "continue previous output edit",
@@ -84,6 +89,8 @@ def _workflow_for_intent(intent: str, memory: dict | None) -> str | None:
         return WORKFLOW_CONTENT_PLAN
     if intent in {"sales_planning", "pricing_question"}:
         return WORKFLOW_SALES_PLAN_7_DAY
+    if intent == "profit_calculation":
+        return WORKFLOW_PROFIT_CALCULATION
     if intent == "cost_calculation":
         return WORKFLOW_COST_CALCULATION
     if intent in {"continue_previous_workflow", "follow_up_edit"}:
@@ -164,9 +171,11 @@ def resolve_intent(
     if detected == "pricing_question" or _contains_any(message, PRICE_TERMS):
         _add(scores, "pricing_question", 58)
         _add(scores, "sales_planning", 35)
-    if detected == "cost_question" or _contains_any(message, COST_TERMS):
+    if detected == "profit_calculation" or has_profit_calculation_intent(message):
+        _add(scores, "profit_calculation", 72)
+    elif detected == "cost_question" or _contains_any(message, COST_TERMS):
         _add(scores, "cost_calculation", 62)
-    if _strong_cost_calculation_evidence(message, context):
+    if not has_profit_calculation_intent(message) and _strong_cost_calculation_evidence(message, context):
         _add(scores, "cost_calculation", 28)
     if detected == "continue_previous_workflow" or _contains_any(message, FOLLOW_UP_TERMS):
         _add(scores, "continue_previous_workflow", 62 if _active_workflow(memory) else 42)
@@ -207,7 +216,17 @@ def resolve_intent(
     )
     winner = candidates[0] if candidates else {"intent": "general_business_help", "score": 35}
     resolver_override = None
-    if _strong_cost_calculation_evidence(message, context):
+    if has_profit_calculation_intent(message):
+        score_by_intent = {item["intent"]: item["score"] for item in candidates}
+        profit_score = int(score_by_intent.get("profit_calculation") or 0)
+        if winner.get("intent") != "profit_calculation":
+            resolver_override = {
+                "from_intent": winner.get("intent"),
+                "to_intent": "profit_calculation",
+                "reason": "current message has profit or selling-price calculation evidence",
+            }
+        winner = {"intent": "profit_calculation", "score": max(profit_score, 86)}
+    if not has_profit_calculation_intent(message) and _strong_cost_calculation_evidence(message, context):
         score_by_intent = {item["intent"]: item["score"] for item in candidates}
         cost_score = int(score_by_intent.get("cost_calculation") or 0)
         pricing_score = int(score_by_intent.get("pricing_question") or 0)

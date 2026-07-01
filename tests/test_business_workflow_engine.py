@@ -90,19 +90,19 @@ class BusinessWorkflowEngineTest(unittest.TestCase):
 
         self.assertEqual(decision["workflow_action"], "start_new")
         self.assertIn("cost", decision["missing_entities"])
-        self.assertIn("quantity", decision["missing_entities"])
+        self.assertNotIn("quantity", decision["missing_entities"])
 
     def test_entity_completeness_and_missing_detection(self):
         decision = _decision(f"profit product {CHOUX_CREAM} price 50 cost 20", intent="profit_calculation")
 
-        self.assertEqual(decision["required_entities"], ["product", "price", "cost", "quantity"])
-        self.assertIn("quantity", decision["missing_entities"])
-        self.assertEqual(decision["entity_completeness"]["completed"], 3)
+        self.assertEqual(decision["required_entities"], ["price", "cost"])
+        self.assertNotIn("quantity", decision["missing_entities"])
+        self.assertEqual(decision["entity_completeness"]["completed"], 2)
 
-    def test_smart_question_generation_only_asks_missing_entity(self):
+    def test_smart_question_generation_does_not_ask_quantity_for_unit_profit(self):
         decision = _decision(f"profit product {CHOUX_CREAM} price 50 cost 20", intent="profit_calculation")
 
-        self.assertEqual(decision["next_question"], "ขายทั้งหมดกี่ชิ้นครับ")
+        self.assertIsNone(decision["next_question"])
 
     def test_task_router_customer_reply_overrides_active_workflow(self):
         state = {}
