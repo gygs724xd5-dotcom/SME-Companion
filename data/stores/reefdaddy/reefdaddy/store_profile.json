@@ -167,6 +167,192 @@
           "llm_enabled": true,
           "llm_used": false
         }
+      },
+      {
+        "created_at": "2026-06-30T09:42:07",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T09:42:32",
+        "event_type": "chat_question",
+        "summary": "ร้านฉันขายชูครีม",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T09:56:44",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T09:58:14",
+        "event_type": "chat_question",
+        "summary": "SME Companion คืออะไร",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T10:21:09",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T10:21:27",
+        "event_type": "chat_question",
+        "summary": "SME Companion คืออะไร",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T10:47:14",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T10:47:46",
+        "event_type": "chat_question",
+        "summary": "SME Companion คืออะไร",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T11:07:59",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T11:09:49",
+        "event_type": "chat_question",
+        "summary": "ลูกค้าบอกว่าชูครีมแพงไป ควรตอบยังไง",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T11:28:18",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T11:28:44",
+        "event_type": "chat_question",
+        "summary": "sme com คืออะไร",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T11:46:08",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T11:46:33",
+        "event_type": "chat_question",
+        "summary": "SME Companion คืออะไร",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T13:48:20",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T13:49:05",
+        "event_type": "chat_question",
+        "summary": "sme companion คืออะไร",
+        "metadata": {
+          "intent": "OTHER",
+          "business_intent": null,
+          "conversation_mode": "casual",
+          "llm_enabled": true,
+          "llm_used": false
+        }
+      },
+      {
+        "created_at": "2026-06-30T14:02:39",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
+      },
+      {
+        "created_at": "2026-06-30T14:18:27",
+        "event_type": "diagnosis",
+        "summary": "HOMCHOUX มีจุดที่ควรโฟกัสคือ คอนเทนต์บางประเภทหายไป, ยังสร้างความน่าเชื่อถือไม่พอ, ยังไม่มีระบบดึงลูกค้าเก่ากลับมา",
+        "metadata": {
+          "likely_problem": "ลูกค้ายังไม่มั่นใจก่อนซื้อ",
+          "urgency_level": "กลาง"
+        }
       }
     ]
   },
@@ -205,5 +391,5 @@
   "created_at": "2026-06-28T11:39:35+00:00",
   "owner_id": "reefdaddy",
   "store_id": "reefdaddy",
-  "updated_at": "2026-06-29T09:58:44+00:00"
+  "updated_at": "2026-06-30T07:18:39+00:00"
 }

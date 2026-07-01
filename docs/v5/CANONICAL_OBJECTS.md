@@ -4,7 +4,7 @@
 
 This document defines the canonical data objects used across SME Companion V5. These objects establish clear boundaries between engines and prevent hidden state ownership.
 
-The definitions are documentation-only and implementation-neutral.
+As of V5.1.1, lightweight runtime dataclasses exist in `brain/canonical_objects.py` as foundation contracts. They are intentionally additive and coexist with the existing V4 dict-based runtime. Routing, planner, workflow, and response behavior should not be migrated to these objects until a later explicit runtime migration.
 
 ## Object Rules
 
