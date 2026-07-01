@@ -105,6 +105,10 @@ Example:
 
 ## Response Envelope
 
+V5.1.5 introduces the runtime ResponseEnvelope foundation only.
+
+This is a compatibility layer over the existing V4 response pipeline. The adapter wraps the current response into a canonical envelope for diagnostics, but it does not select, rewrite, render, or otherwise change the user-visible answer. Routing behavior, planner decisions, workflow behavior, response wording, and Streamlit UI remain owned by the existing runtime.
+
 Every turn should conceptually produce one response envelope:
 
 ```yaml
@@ -115,18 +119,20 @@ skill_id: "Selected skill"
 workflow:
   id: "workflow_id_or_none"
   status: "collecting | ready | completed | none"
-memory:
-  read:
-    - "memory reference"
-  write:
-    - "memory write proposal"
+memory_read:
+  - "memory reference"
+memory_write:
+  - "memory write proposal"
 confidence: "high | medium | low"
 follow_up: "Question or null"
 diagnostics:
+  response_envelope_created: true
+  response_envelope_version: "5.1.5"
+  response_envelope_source: "v4_response_adapter"
+  response_envelope_present: true
   planner: {}
   reasoning: {}
   response_priority: []
 ```
 
-The UI renders the envelope. It should not independently decide business behavior.
-
+In V5.1.5 the UI does not render the envelope. The envelope is attached to developer diagnostics under the Response Envelope group so future response architecture can observe the canonical object without breaking V4 compatibility.

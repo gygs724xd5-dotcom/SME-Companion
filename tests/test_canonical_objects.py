@@ -47,6 +47,9 @@ class CanonicalObjectsTest(unittest.TestCase):
         self.assertEqual(BusinessMemoryItem().provenance, {})
         self.assertEqual(TransformationResult().structured_output, {})
         self.assertEqual(ResponseEnvelope().rendering_hints, {})
+        self.assertEqual(ResponseEnvelope().memory_read, [])
+        self.assertEqual(ResponseEnvelope().memory_write, [])
+        self.assertEqual(ResponseEnvelope().version, "5.1.5")
 
     def test_roundtrip_preserves_dict_shape(self):
         frame = ConversationFrame(
@@ -103,6 +106,8 @@ class CanonicalObjectsTest(unittest.TestCase):
             confidence=0.8,
             workflow={"workflow_id": "CONTENT_PLAN", "status": "collecting_content_inputs"},
             memory={"write_proposals": []},
+            memory_read=["previous_product"],
+            memory_write=[{"type": "last_response"}],
             reasoning_summary={"recommended_action": "ask_follow_up"},
             follow_up="Which product should I use?",
             diagnostics={"selected_by": "response_intelligence"},
@@ -115,6 +120,9 @@ class CanonicalObjectsTest(unittest.TestCase):
         self.assertEqual(data["source"], "workflow")
         self.assertEqual(data["workflow"]["workflow_id"], "CONTENT_PLAN")
         self.assertEqual(data["memory"], {"write_proposals": []})
+        self.assertEqual(data["memory_read"], ["previous_product"])
+        self.assertEqual(data["memory_write"], [{"type": "last_response"}])
+        self.assertEqual(data["version"], "5.1.5")
         self.assertEqual(data["diagnostics"]["selected_by"], "response_intelligence")
         self.assertFalse(data["fallback_used"])
 
@@ -169,6 +177,14 @@ class CanonicalObjectsTest(unittest.TestCase):
         envelope_dict = {"turn_id": "turn-1", "text": "Done", "source": "legacy_pipeline"}
         self.assertEqual(ResponseEnvelope.from_dict(envelope_dict).text, "Done")
         self.assertEqual(to_canonical_dict(envelope_dict), envelope_dict)
+
+        legacy_envelope_memory = {
+            "text": "Done",
+            "memory": {"read": ["profile"], "write": [{"subject": "reply"}]},
+        }
+        legacy_envelope = ResponseEnvelope.from_dict(legacy_envelope_memory)
+        self.assertEqual(legacy_envelope.memory_read, ["profile"])
+        self.assertEqual(legacy_envelope.memory_write, [{"subject": "reply"}])
 
     def test_from_dict_uses_independent_mutable_defaults(self):
         first = ConversationFrame.from_dict({})

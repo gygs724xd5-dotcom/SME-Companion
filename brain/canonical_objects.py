@@ -335,13 +335,16 @@ class ResponseEnvelope(_CanonicalObject):
     source: str = "unknown"
     domain: str = ""
     skill_id: str = ""
-    confidence: float = 0.0
-    created_at: str = field(default_factory=_utc_now)
-    diagnostics: dict = field(default_factory=dict)
     workflow: dict = field(default_factory=dict)
+    confidence: float = 0.0
+    follow_up: str = ""
+    memory_read: list = field(default_factory=list)
+    memory_write: list = field(default_factory=list)
+    diagnostics: dict = field(default_factory=dict)
+    version: str = "5.1.5"
+    created_at: str = field(default_factory=_utc_now)
     memory: dict = field(default_factory=dict)
     reasoning_summary: dict = field(default_factory=dict)
-    follow_up: str = ""
     assumptions: list = field(default_factory=list)
     rendering_hints: dict = field(default_factory=dict)
     fallback_used: bool = False
@@ -351,9 +354,19 @@ class ResponseEnvelope(_CanonicalObject):
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "ResponseEnvelope":
-        item = super().from_dict(data)
+        source = dict(data or {})
+        legacy_memory = _dict(source.get("memory"))
+        if "memory_read" not in source and isinstance(legacy_memory.get("read"), list):
+            source["memory_read"] = legacy_memory.get("read")
+        if "memory_write" not in source and isinstance(legacy_memory.get("write"), list):
+            source["memory_write"] = legacy_memory.get("write")
+        item = super().from_dict(source)
         item.confidence = _float(item.confidence)
         item.fallback_used = bool(item.fallback_used)
+        item.workflow = _dict(item.workflow)
+        item.memory_read = _list(item.memory_read)
+        item.memory_write = _list(item.memory_write)
+        item.diagnostics = _dict(item.diagnostics)
         return item
 
 

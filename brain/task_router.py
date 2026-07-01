@@ -35,6 +35,7 @@ from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
 from brain.planner_engine import build_execution_plan
 from brain.reasoning_engine import build_reasoning
 from brain.response_transformation_engine import detect_response_transformation, transformation_source
+from brain.response_envelope_runtime import build_response_envelope, response_envelope_diagnostics
 from brain.skill_loader import load_skills
 from brain.workflow_lifecycle import classify_completed_workflow_followup
 from brain.business_skill_registry import registry_diagnostics
@@ -891,6 +892,13 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "reply_builder": diagnostics.get("reply_builder"),
             "natural_response": diagnostics.get("natural_response"),
         },
+        "Response Envelope": {
+            "response_envelope": diagnostics.get("response_envelope"),
+            "response_envelope_created": diagnostics.get("response_envelope_created"),
+            "response_envelope_version": diagnostics.get("response_envelope_version"),
+            "response_envelope_source": diagnostics.get("response_envelope_source"),
+            "response_envelope_present": diagnostics.get("response_envelope_present"),
+        },
     }
     return {**diagnostics, "diagnostic_groups": grouped}
 
@@ -965,6 +973,12 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "rewrite_mode": route.get("rewrite_mode"),
         "translation_mode": route.get("translation_mode"),
     }
+    response_envelope = build_response_envelope(
+        route.get("final_response_text"),
+        route,
+        response_audit_defaults,
+    )
+    response_envelope_audit = response_envelope_diagnostics(response_envelope)
 
     diagnostics = {
         "Planner Output": route.get("planner_output") or {},
@@ -1121,6 +1135,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "final_response_gate": route.get("final_response_gate") or workflow_response_gate(route).get("final_response_gate"),
         "workflow_response_allowed": bool(route.get("workflow_response_allowed") if "workflow_response_allowed" in route else workflow_response_gate(route).get("workflow_response_allowed")),
         "workflow_response_blocked_reason": route.get("workflow_response_blocked_reason") or workflow_response_gate(route).get("workflow_response_blocked_reason"),
+        **response_envelope_audit,
         **response_audit_defaults,
     }
     return _with_diagnostic_groups(diagnostics)
