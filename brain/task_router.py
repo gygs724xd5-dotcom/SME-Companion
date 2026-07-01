@@ -16,6 +16,11 @@ from brain.business_knowledge_runtime import (
     KNOWLEDGE_RUNTIME_SOURCE,
     create_knowledge_context,
 )
+from brain.business_reasoning_runtime import (
+    REASONING_RUNTIME_SOURCE,
+    REASONING_RUNTIME_VERSION,
+    create_reasoning_context,
+)
 from brain.business_intent_engine import detect_business_intent
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
@@ -237,6 +242,45 @@ def _knowledge_context_for_route(route: dict | None) -> dict:
         }
 
 
+def _reasoning_context_for_route(route: dict | None, knowledge_context: dict | None = None) -> dict:
+    route = route or {}
+    existing = route.get("reasoning_context")
+    if isinstance(existing, dict):
+        return existing
+    knowledge = knowledge_context if isinstance(knowledge_context, dict) else _knowledge_context_for_route(route)
+    try:
+        context = create_reasoning_context(
+            route,
+            knowledge_context=knowledge,
+            workflow_state=route.get("business_workflow") or {},
+            memory=route.get("conversation_memory") or {},
+        )
+        return context.to_dict()
+    except Exception as exc:
+        return {
+            "business_goal": "",
+            "decision_type": "unknown",
+            "business_stage": "",
+            "selected_domain": "",
+            "selected_skill": "",
+            "known_entities": {},
+            "missing_entities": [],
+            "assumptions": [],
+            "risks": [],
+            "opportunities": [],
+            "recommended_next_action": "",
+            "reasoning_pattern": "",
+            "confidence": 0.0,
+            "version": REASONING_RUNTIME_VERSION,
+            "diagnostics": {
+                "reasoning_runtime_created": False,
+                "reasoning_runtime_version": REASONING_RUNTIME_VERSION,
+                "reasoning_source": REASONING_RUNTIME_SOURCE,
+                "reasoning_runtime_error": f"{type(exc).__name__}: {exc}",
+            },
+        }
+
+
 def _matched_skill_payload(route: dict | None) -> dict:
     matched = ((route or {}).get("business_intelligence") or {}).get("matched_skill") or {}
     if not isinstance(matched, dict):
@@ -340,7 +384,9 @@ def _intent_priority_audit(route: dict | None) -> dict:
 
 
 def _with_response_gate(route: dict) -> dict:
-    route = {**route, "knowledge_context": _knowledge_context_for_route(route)}
+    knowledge_context = _knowledge_context_for_route(route)
+    route = {**route, "knowledge_context": knowledge_context}
+    route = {**route, "reasoning_context": _reasoning_context_for_route(route, knowledge_context)}
     route = {**route, "intent_priority_audit": _intent_priority_audit(route)}
     gate = workflow_response_gate(route)
     return {**route, **gate}
@@ -751,6 +797,20 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "matched_skill": diagnostics.get("Matched Skill"),
             "matched_domain": diagnostics.get("Matched Domain"),
         },
+        "Business Reasoning": {
+            "business_reasoning": diagnostics.get("business_reasoning"),
+            "reasoning_runtime_created": diagnostics.get("reasoning_runtime_created"),
+            "reasoning_runtime_version": diagnostics.get("reasoning_runtime_version"),
+            "reasoning_source": diagnostics.get("reasoning_source"),
+            "business_goal": diagnostics.get("business_goal"),
+            "decision_type": diagnostics.get("decision_type"),
+            "business_stage": diagnostics.get("business_stage"),
+            "reasoning_confidence": diagnostics.get("reasoning_confidence"),
+            "reasoning_pattern": diagnostics.get("reasoning_pattern"),
+            "selected_domain": diagnostics.get("selected_domain"),
+            "selected_skill": diagnostics.get("selected_skill"),
+            "reasoning_context_present": diagnostics.get("reasoning_context_present"),
+        },
         "Memory": {
             "reuse_completed_workflow": diagnostics.get("reuse_completed_workflow"),
             "variant_source": diagnostics.get("variant_source"),
@@ -781,6 +841,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
     knowledge_context = _knowledge_context_for_route(route)
     knowledge_diagnostics = knowledge_context.get("diagnostics") or {}
+    reasoning_context = _reasoning_context_for_route(route, knowledge_context)
+    reasoning_diagnostics = reasoning_context.get("diagnostics") or {}
     business_knowledge = {
         "candidate_domains": knowledge_context.get("candidate_domains") or [],
         "candidate_skills": knowledge_context.get("candidate_skills") or [],
@@ -873,6 +935,18 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Decision Tree": (route.get("business_intelligence") or {}).get("decision_tree") or [],
         "Business Reasoning": (route.get("business_intelligence") or {}).get("business_reasoning") or {},
         "Reasoning Confidence": (route.get("business_intelligence") or {}).get("confidence"),
+        "business_reasoning": reasoning_context,
+        "reasoning_runtime_created": bool(reasoning_diagnostics.get("reasoning_runtime_created")),
+        "reasoning_runtime_version": reasoning_diagnostics.get("reasoning_runtime_version") or reasoning_context.get("version"),
+        "reasoning_source": reasoning_diagnostics.get("reasoning_source"),
+        "business_goal": reasoning_context.get("business_goal"),
+        "decision_type": reasoning_context.get("decision_type"),
+        "business_stage": reasoning_context.get("business_stage"),
+        "reasoning_confidence": reasoning_context.get("confidence"),
+        "reasoning_pattern": reasoning_context.get("reasoning_pattern"),
+        "selected_domain": reasoning_context.get("selected_domain"),
+        "selected_skill": reasoning_context.get("selected_skill"),
+        "reasoning_context_present": bool(reasoning_context),
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
         "skill_match_audit": (route.get("business_intelligence") or {}).get("skill_match_audit") or {},
         "skill_match_audit_summary": (route.get("business_intelligence") or {}).get("skill_match_audit_summary") or {},

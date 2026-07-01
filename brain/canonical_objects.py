@@ -105,6 +105,33 @@ class KnowledgeContext(_CanonicalObject):
 
 
 @dataclass
+class ReasoningContext(_CanonicalObject):
+    reasoning_context_id: str = field(default_factory=lambda: _new_id("reasoning_context"))
+    knowledge_context_id: str = ""
+    business_goal: str = ""
+    decision_type: str = "unknown"
+    business_stage: str = ""
+    selected_domain: str = ""
+    selected_skill: str = ""
+    known_entities: dict = field(default_factory=dict)
+    missing_entities: list = field(default_factory=list)
+    assumptions: list = field(default_factory=list)
+    risks: list = field(default_factory=list)
+    opportunities: list = field(default_factory=list)
+    recommended_next_action: str = ""
+    reasoning_pattern: str = ""
+    confidence: float = 0.0
+    diagnostics: dict = field(default_factory=dict)
+    version: str = "5.1.3"
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "ReasoningContext":
+        item = super().from_dict(data)
+        item.confidence = _float(item.confidence)
+        return item
+
+
+@dataclass
 class ReasoningDecision(_CanonicalObject):
     reasoning_decision_id: str = field(default_factory=lambda: _new_id("reasoning"))
     conversation_frame_id: str = ""

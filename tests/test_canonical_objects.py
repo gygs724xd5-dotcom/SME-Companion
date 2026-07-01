@@ -5,6 +5,7 @@ from brain.canonical_objects import (
     ConversationFrame,
     KnowledgeContext,
     PlannerDecision,
+    ReasoningContext,
     ReasoningDecision,
     ResponseEnvelope,
     TransformationResult,
@@ -19,6 +20,7 @@ class CanonicalObjectsTest(unittest.TestCase):
         objects = [
             ConversationFrame(),
             KnowledgeContext(),
+            ReasoningContext(),
             ReasoningDecision(),
             PlannerDecision(),
             WorkflowState(),
@@ -35,6 +37,7 @@ class CanonicalObjectsTest(unittest.TestCase):
 
         self.assertEqual(ConversationFrame().candidate_entities, {})
         self.assertEqual(KnowledgeContext().candidate_skills, [])
+        self.assertEqual(ReasoningContext().known_entities, {})
         self.assertEqual(ReasoningDecision().known_facts, {})
         self.assertEqual(PlannerDecision().primary_engine_path, [])
         self.assertEqual(WorkflowState().collected_fields, {})
@@ -72,6 +75,19 @@ class CanonicalObjectsTest(unittest.TestCase):
         )
 
         self.assertEqual(ReasoningDecision.from_dict(reasoning.to_dict()).to_dict(), reasoning.to_dict())
+
+        reasoning_context = ReasoningContext(
+            business_goal="answer price question",
+            decision_type="Sales Plan",
+            selected_domain="01 Sales",
+            selected_skill="01.001.customer_asks_price",
+            known_entities={"product": "tea"},
+            missing_entities=["price"],
+            confidence=0.8,
+            diagnostics={"source": "test"},
+        )
+
+        self.assertEqual(ReasoningContext.from_dict(reasoning_context.to_dict()).to_dict(), reasoning_context.to_dict())
 
     def test_response_envelope_structure(self):
         envelope = ResponseEnvelope(

@@ -6,6 +6,27 @@ The V5 Business Reasoning Engine turns conversation understanding, business know
 
 It does not rely on keyword matching as the primary mechanism. Keywords can be signals, but the decision must come from business meaning.
 
+## V5.1.3 Runtime Foundation
+
+V5.1.3 introduces `brain/business_reasoning_runtime.py` as an additive runtime reasoning context layer.
+
+The runtime creates a canonical `ReasoningContext` from the existing route, `KnowledgeContext`, workflow state, and memory. It infers high-level diagnostic context only:
+
+- Business goal.
+- Decision type.
+- Business stage.
+- Selected domain and skill.
+- Known and missing entities.
+- Assumptions, risks, and opportunities.
+- Recommended next action.
+- Reasoning pattern.
+- Confidence.
+- Runtime diagnostics.
+
+This foundation is diagnostics-only. It does not change planner decisions, routing behavior, workflow behavior, response behavior, or Conversation OS behavior.
+
+The existing planner remains the execution decision owner. Planner migration to consume `ReasoningContext` will occur in a later explicit architecture step.
+
 ## Reasoning Flow
 
 ```text
@@ -131,4 +152,3 @@ Every reasoning decision should expose:
 - Business rules applied.
 - Workflow decision.
 - Confidence score or label.
-
