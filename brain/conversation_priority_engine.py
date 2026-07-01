@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION,
@@ -238,6 +239,9 @@ def _workflow_state_v2(state: dict) -> dict:
 
 
 def _detect_new_workflow_intent(message: str) -> str | None:
+    if is_strong_cost_calculation_message(message):
+        return WORKFLOW_COST_CALCULATION
+
     detected = detect_workflow_intent(message)
     if detected:
         return detected

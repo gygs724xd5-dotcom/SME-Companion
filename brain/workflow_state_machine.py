@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
+from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.workflow_field_extractor import extract_workflow_fields
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN,
@@ -172,6 +173,8 @@ def detect_workflow_intent(message: str, is_product_feedback: bool = False) -> s
     lowered = str(message or "").strip().lower()
     if not lowered:
         return None
+    if is_strong_cost_calculation_message(message):
+        return WORKFLOW_COST_CALCULATION
     for workflow, triggers in _INTENT_TRIGGERS.items():
         if any(trigger.lower() in lowered for trigger in triggers):
             return workflow

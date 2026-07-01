@@ -43,6 +43,7 @@ from brain.conversation_understanding_engine import (
     should_answer_directly,
     understand_conversation,
 )
+from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.conversation_workflow_engine import (
     WORKFLOW_COST_CALCULATION,
     WORKFLOW_DASHBOARD_REQUEST,
@@ -2665,6 +2666,46 @@ def _remember_generated_response(
     return memory
 
 
+def _clear_generated_response_memory_for_cost_intent() -> None:
+    state = _ensure_conversation_state()
+    memory = {
+        "last_generated_response": None,
+        "last_response_type": None,
+        "last_generation_context": {},
+        "last_variant_history": [],
+        "last_transformation_chain": [],
+        "transformation_history": [],
+    }
+    state.update(memory)
+    state["response_memory"] = memory
+    _update_application_section("conversation", {**state, "response_memory": memory})
+
+
+def _remember_completed_workflow_if_done(reply: str, intent: str | None) -> None:
+    if intent not in {V2_WORKFLOW_COST_CALCULATION, V2_WORKFLOW_CONTENT_PLAN, V2_WORKFLOW_SALES_PLAN_7_DAY}:
+        return
+    workflow_state = (_ensure_conversation_state().get("workflow_state_v2") or {})
+    if workflow_state.get("workflow") != intent or workflow_state.get("step") != "completed":
+        return
+    definition = get_workflow_definition(intent)
+    completed = {
+        "workflow_id": intent,
+        "workflow_name": definition.workflow_name if definition else intent,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "collected_fields": dict(workflow_state.get("collected_fields") or {}),
+        "workflow_status": "RELEASED",
+        "workflow_completion_reason": workflow_state.get("workflow_completion_reason") or "workflow output generated",
+        "workflow_release_reason": workflow_state.get("workflow_release_reason") or "completed workflow released",
+        "generated_response": str(reply or "").strip(),
+        "response_type": intent,
+    }
+    app_state = _get_application_state()
+    app_state.setdefault("store", {})["last_completed_workflow"] = completed
+    app_state.setdefault("business_memory", {}).setdefault("completed_workflows", []).append(completed)
+    conversation = app_state.setdefault("conversation", {})
+    conversation.setdefault("conversation_memory", {}).setdefault("completed_workflows", []).append(completed)
+
+
 def _one_question_correction_reply() -> str:
     state = _ensure_conversation_state()
     topic = state.get("current_topic") or "เรื่องก่อนหน้า"
@@ -3129,6 +3170,14 @@ def _generate_cost_calculation(workflow_state: dict) -> str:
         f"จำนวนที่ทำได้: {_format_number(total_units)} ชิ้น",
         f"ต้นทุนต่อชิ้น: {_format_number(cost_per_unit)} บาท",
     ]
+    unit_cost = trace.get("input_unit_cost") or trace.get("input_cost_per_unit")
+    if trace.get("selected_formula") == "unit_cost_times_quantity" and unit_cost not in (None, "", [], {}):
+        lines.insert(
+            2,
+            f"{_format_number(unit_cost)} \u0e1a\u0e32\u0e17\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19 * "
+            f"{_format_number(total_units)} \u0e0a\u0e34\u0e49\u0e19 = {_format_number(total_cost)} \u0e1a\u0e32\u0e17",
+        )
+    lines[-1] = f"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19 = {_format_number(cost_per_unit)} \u0e1a\u0e32\u0e17"
     if selling_price:
         selling_price = float(selling_price)
         gross_profit = selling_price - cost_per_unit
@@ -3626,6 +3675,8 @@ def _append_workflow_reply(
     reply, response_source, response_empty = _resolve_assistant_reply(reply, response_source)
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
+    if intent == V2_WORKFLOW_COST_CALCULATION:
+        _clear_generated_response_memory_for_cost_intent()
     _remember_generated_response(
         reply,
         response_type=intent or "workflow_response",
@@ -3635,6 +3686,7 @@ def _append_workflow_reply(
             "response_source": response_source,
         },
     )
+    _remember_completed_workflow_if_done(reply, intent)
     st.session_state["chat_history"].append(assistant_message)
     add_pipeline_event(
         "response",
@@ -4096,7 +4148,11 @@ def _show_chat_companion(
     with st.chat_message("user"):
         _render_markdown(user_message)
 
-    transformation = transform_response(user_message, _sync_session_to_application_state())
+    strong_cost_intent = is_strong_cost_calculation_message(user_message)
+    if strong_cost_intent:
+        _clear_generated_response_memory_for_cost_intent()
+
+    transformation = {"handled": False} if strong_cost_intent else transform_response(user_message, _sync_session_to_application_state())
     if transformation.get("handled"):
         reply = _clean_chat_reply(transformation.get("reply") or "")
         reply, response_source, response_empty = _resolve_assistant_reply(reply, "response_transformation")
@@ -4276,7 +4332,7 @@ def _show_chat_companion(
             _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
             return
 
-    if _handle_completed_workflow_followup(user_message):
+    if not strong_cost_intent and _handle_completed_workflow_followup(user_message):
         return
 
     understanding_state = _sync_session_to_application_state()

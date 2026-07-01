@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 
+from brain.cost_intent_isolation import is_strong_cost_calculation_message
+
 
 TRANSFORMATION_TYPES = {
     "SHORTEN",
@@ -192,6 +194,32 @@ def build_response_memory(
 def transform_response(user_message: str | None, application_state: dict | None) -> dict:
     detection = detect_response_transformation(user_message)
     source = transformation_source(application_state)
+    if is_strong_cost_calculation_message(user_message):
+        return {
+            **detection,
+            "handled": False,
+            "reply": None,
+            "transformation_source": None,
+            "used_previous_response": False,
+            "transformation_chain": [],
+            "transformation_history": [],
+            "response_reason": "strong_cost_calculation_intent_isolated",
+        }
+    completed = ((application_state or {}).get("store") or {}).get("last_completed_workflow") or {}
+    if (
+        detection.get("transformation_type") == "VARIANT"
+        and completed.get("workflow_id") == "COST_CALCULATION"
+    ):
+        return {
+            **detection,
+            "handled": False,
+            "reply": None,
+            "transformation_source": None,
+            "used_previous_response": False,
+            "transformation_chain": [],
+            "transformation_history": [],
+            "response_reason": "completed_cost_workflow_blocks_content_variant_reuse",
+        }
     if not detection.get("is_transformation") or not source.get("text"):
         return {
             **detection,

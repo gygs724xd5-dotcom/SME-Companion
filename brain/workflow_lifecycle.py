@@ -4,6 +4,7 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 
+from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.workflow_readiness import (
     WORKFLOW_COST_CALCULATION,
 )
@@ -203,6 +204,13 @@ def classify_completed_workflow_followup(application_state: dict | None, user_me
         return base
 
     workflow_id = completed.get("workflow_id")
+    if is_strong_cost_calculation_message(user_message):
+        return {
+            **base,
+            "workflow_transition_reason": "strong cost calculation intent isolated from completed workflow context",
+            "followup_chain": ["cost_intent_isolation"],
+        }
+
     if workflow_id != WORKFLOW_COST_CALCULATION and any(trigger in normalized for trigger in _VARIANT_TRIGGERS):
         return {
             **base,

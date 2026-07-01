@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from feedback.product_classifier import classify_product_feedback
 
 
@@ -75,6 +76,12 @@ def detect_workflow(user_message: str, is_product_feedback: bool = False) -> dic
             "workflow": None,
             "confidence": 0.0,
             "should_skip_generic_companion": False,
+        }
+    if is_strong_cost_calculation_message(user_message):
+        return {
+            "workflow": WORKFLOW_COST_CALCULATION,
+            "confidence": 0.99,
+            "should_skip_generic_companion": True,
         }
 
     best_workflow = None
