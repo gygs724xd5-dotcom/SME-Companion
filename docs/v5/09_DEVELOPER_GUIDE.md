@@ -54,7 +54,7 @@ Workflows should expose state and next action. Response wording belongs to Respo
 
 Reasoning rules should not be keyword-only. Keywords may be signals, but the rule must consider context.
 
-## Planner Adapter
+## Planner Adapter and Migration
 
 V5.1.4 adds `PlannerContext` as a bridge from V5 runtime objects into the existing V4 planner surface. It is an adapter foundation only.
 
@@ -66,7 +66,16 @@ When extending this layer:
 4. Preserve routing, workflow, response, and Conversation OS behavior.
 5. Use diagnostics such as `planner_context_created`, `planner_context_version`, `planner_context_source`, `planner_selected_domain`, `planner_selected_skill`, `planner_business_goal`, `planner_confidence`, and `planner_context_present`.
 
-Planner migration to consume `PlannerContext` must happen in a later explicit architecture step.
+V5.2.0 Phase 1 begins the runtime planner migration. The migration layer may now read existing V5 context objects before invoking the legacy planner:
+
+1. Prefer `KnowledgeContext`.
+2. Fall back to `ReasoningContext`.
+3. Fall back to `PlannerContext`.
+4. Use the existing V4 planner logic when V5 context is missing, incomplete, or unmapped.
+
+The migration layer must keep returning the legacy route object expected by downstream code. It may normalize planner inputs and expose migration diagnostics, but it must not change response wording, workflow behavior, UI behavior, Conversation OS behavior, memory behavior, or transformation behavior.
+
+Use planner migration diagnostics such as `planner_runtime_source`, `planner_runtime_version`, `planner_used_v5_context`, `planner_used_legacy_fallback`, `planner_selected_domain`, `planner_selected_skill`, `planner_business_goal`, `planner_decision_type`, `planner_confidence`, and `planner_reason`.
 
 ## Add New Memory
 

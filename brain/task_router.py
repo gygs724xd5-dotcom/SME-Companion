@@ -26,6 +26,11 @@ from brain.planner_adapter import (
     PLANNER_CONTEXT_VERSION,
     build_planner_context,
 )
+from brain.planner_migration import (
+    apply_planner_migration_to_state,
+    normalize_planner_inputs,
+    planner_migration_diagnostics,
+)
 from brain.business_intent_engine import detect_business_intent
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
@@ -673,6 +678,31 @@ def build_task_route(application_state, user_message) -> dict:
         os_state["active_workflow_id"] = None
         conversation["conversation_os"] = os_state
         routing_state["conversation"] = conversation
+    preliminary_context_route = {
+        "user_message": user_message,
+        "knowledge_context": state.get("knowledge_context") or ((state.get("conversation") or {}).get("knowledge_context")),
+        "reasoning_context": state.get("reasoning_context") or ((state.get("conversation") or {}).get("reasoning_context")),
+        "planner_context": state.get("planner_context") or ((state.get("conversation") or {}).get("planner_context")),
+        "conversation_understanding": interpretation,
+        "conversation_intelligence": conversation_intelligence,
+        "conversation_memory": memory_context,
+        "business_context": business_context,
+        "business_workflow": workflow_decision,
+        "intent_resolution": intent_resolution,
+        "detected_intent": business_intent,
+        "extracted_entities": entity_result,
+    }
+    preliminary_knowledge_context = preliminary_context_route.get("knowledge_context") or {}
+    preliminary_reasoning_context = preliminary_context_route.get("reasoning_context") or {}
+    preliminary_planner_context = preliminary_context_route.get("planner_context") or {}
+    planner_migration = normalize_planner_inputs(
+        knowledge_context=preliminary_knowledge_context,
+        reasoning_context=preliminary_reasoning_context,
+        planner_context=preliminary_planner_context,
+        user_message=user_message,
+    )
+    routing_state = apply_planner_migration_to_state(routing_state, planner_migration)
+
     planner_message = intent_resolution.get("planner_message") or interpretation.get("planner_message") or user_message
     plan = build_execution_plan(routing_state, planner_message)
     plan["workflow_intelligence"] = workflow_decision
@@ -768,6 +798,7 @@ def build_task_route(application_state, user_message) -> dict:
         "prompt_context_size": llm_reasoning_context.get("prompt_context_size"),
         "conversation_memory": memory_context,
         "business_intelligence": bridge_result,
+        "planner_migration": planner_migration,
         "task_type": plan.get("task_type"),
         "selected_capability": capability,
         "loaded_skills": [_serialize_skill(skill) for skill in loaded_skills],
@@ -845,6 +876,18 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "planner_confidence": diagnostics.get("planner_confidence"),
             "planner_context_present": diagnostics.get("planner_context_present"),
         },
+        "Planner Migration": {
+            "planner_runtime_source": diagnostics.get("planner_runtime_source"),
+            "planner_runtime_version": diagnostics.get("planner_runtime_version"),
+            "planner_used_v5_context": diagnostics.get("planner_used_v5_context"),
+            "planner_used_legacy_fallback": diagnostics.get("planner_used_legacy_fallback"),
+            "planner_selected_domain": diagnostics.get("planner_selected_domain"),
+            "planner_selected_skill": diagnostics.get("planner_selected_skill"),
+            "planner_business_goal": diagnostics.get("planner_business_goal"),
+            "planner_decision_type": diagnostics.get("planner_decision_type"),
+            "planner_confidence": diagnostics.get("planner_confidence"),
+            "planner_reason": diagnostics.get("planner_reason"),
+        },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
             "registered_domains": diagnostics.get("registered_domains"),
@@ -914,6 +957,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     reasoning_diagnostics = reasoning_context.get("diagnostics") or {}
     planner_context = _planner_context_for_route(route, knowledge_context, reasoning_context)
     planner_context_diagnostics = planner_context.get("diagnostics") or {}
+    migration_diagnostics = planner_migration_diagnostics(route.get("planner_migration"))
     business_knowledge = {
         "candidate_domains": knowledge_context.get("candidate_domains") or [],
         "candidate_skills": knowledge_context.get("candidate_skills") or [],
@@ -1033,6 +1077,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "planner_business_goal": planner_context.get("business_goal"),
         "planner_confidence": planner_context.get("confidence"),
         "planner_context_present": bool(planner_context),
+        **migration_diagnostics,
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
         "skill_match_audit": (route.get("business_intelligence") or {}).get("skill_match_audit") or {},
         "skill_match_audit_summary": (route.get("business_intelligence") or {}).get("skill_match_audit_summary") or {},

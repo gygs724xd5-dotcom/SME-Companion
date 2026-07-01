@@ -106,9 +106,18 @@ Responsibilities:
 
 The Planner is the orchestration layer. It should not own domain rules or final wording.
 
-V5.1.4 introduces `PlannerContext` as a bridge layer between V5 runtime context and the existing V4 planner. The adapter packages selected domain, selected skill, business goal, decision type, workflow state, planner inputs, hints, constraints, confidence, and diagnostics for developer visibility.
+V5.1.4 introduced `PlannerContext` as a bridge layer between V5 runtime context and the existing V4 planner. The adapter packages selected domain, selected skill, business goal, decision type, workflow state, planner inputs, hints, constraints, confidence, and diagnostics for developer visibility.
 
-This bridge is diagnostics-only. It does not replace planner metadata, alter planner execution, change routing decisions, start or continue workflows, affect response selection, or modify Conversation OS behavior. Actual planner migration to consume `PlannerContext` occurs in a later architecture step.
+V5.2.0 Phase 1 is the first runtime planner migration. The existing planner now reads available V5 `KnowledgeContext`, `ReasoningContext`, and `PlannerContext` objects through a migration layer before falling back to the V4 planner logic. The priority order is:
+
+1. `KnowledgeContext`
+2. `ReasoningContext`
+3. `PlannerContext`
+4. Existing V4 planner fallback
+
+The migration layer normalizes selected domain, selected skill, business goal, decision type, and confidence into V4-compatible planner hints. It does not replace the legacy route object, planner output schema, workflow behavior, UI behavior, response wording, memory behavior, or transformation behavior.
+
+The planner migration exposes diagnostics under `diagnostic_groups["Planner Migration"]`, including runtime source, runtime version, whether V5 context was used, whether legacy fallback was used, selected domain, selected skill, business goal, decision type, confidence, and reason.
 
 ## Workflow
 
