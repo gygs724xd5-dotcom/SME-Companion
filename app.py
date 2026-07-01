@@ -89,6 +89,7 @@ from brain.response_transformation_engine import (
     build_response_memory,
     transform_response,
 )
+from brain.runtime_context_reset import RUNTIME_CONTEXT_KEYS, reset_runtime_contexts
 from brain.response_mode_engine import determine_response_mode
 from brain.sales_strategy_engine import get_sales_strategy
 from brain.sme_companion_engine import generate_sme_companion
@@ -1320,6 +1321,7 @@ def _reset_chat_session() -> None:
         "previous_intent",
         "continuation_mode",
         "last_response_source_cache",
+        *RUNTIME_CONTEXT_KEYS,
     ]:
         st.session_state.pop(key, None)
     next_state, diagnostics = reset_transient_conversation_state(
@@ -1327,6 +1329,8 @@ def _reset_chat_session() -> None:
         conversation_id=conversation_id,
         reason="new_conversation",
     )
+    next_state, runtime_diagnostics = reset_runtime_contexts(next_state, reason="new_conversation")
+    diagnostics = {**diagnostics, **runtime_diagnostics}
     st.session_state["conversation_reset_diagnostics"] = diagnostics
     safe_set_session_state("application_state", next_state)
     _sync_global_application_state()
