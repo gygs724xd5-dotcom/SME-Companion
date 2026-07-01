@@ -31,6 +31,7 @@ from brain.conversation_manager import (
     route_quick_action as conversation_os_route_quick_action,
     sync_legacy_workflow_state as conversation_os_sync_legacy_workflow_state,
 )
+from brain.conversation_runtime_reset import reset_transient_conversation_state
 from brain.conversation_priority_engine import (
     NEW_INTENT as PRIORITY_NEW_INTENT,
     TEMPORARY_INTERRUPT as PRIORITY_TEMPORARY_INTERRUPT,
@@ -1285,13 +1286,50 @@ def _reset_conversation_memory() -> None:
 
 
 def _reset_chat_session() -> None:
+    conversation_id = str(uuid4())
     st.session_state["chat_history"] = []
-    st.session_state["conversation_id"] = str(uuid4())
+    st.session_state["conversation_id"] = conversation_id
+    st.session_state["conversation_state"] = _new_conversation_state()
+    st.session_state["pending_followup"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
-    _reset_conversation_memory()
-    _sync_session_to_application_state()
+    st.session_state["last_task_route"] = {}
+    st.session_state["last_llm_decision"] = None
+    st.session_state["ai_pipeline_debug_trace"] = {}
+    st.session_state["last_chat_input"] = None
+    st.session_state["last_response_source"] = None
+    st.session_state["last_response_empty"] = False
+    st.session_state["last_response_audit"] = {}
+    st.session_state["last_pipeline_error"] = None
+    st.session_state["chat_history_count"] = 0
+    st.session_state["chat_pipeline_in_progress"] = False
+    st.session_state["conversation_reset_diagnostics"] = {}
+    for key in [
+        "llm_context_cache",
+        "business_context_cache",
+        "cached_llm_context",
+        "cached_business_context",
+        "response_envelope_cache",
+        "last_generated_response",
+        "last_transformation_chain",
+        "transformation_history",
+        "last_business_entities",
+        "extracted_entities",
+        "last_intent",
+        "previous_intent",
+        "continuation_mode",
+        "last_response_source_cache",
+    ]:
+        st.session_state.pop(key, None)
+    next_state, diagnostics = reset_transient_conversation_state(
+        _get_application_state(),
+        conversation_id=conversation_id,
+        reason="new_conversation",
+    )
+    st.session_state["conversation_reset_diagnostics"] = diagnostics
+    safe_set_session_state("application_state", next_state)
+    _sync_global_application_state()
 
 
 def _init_session_state() -> None:
