@@ -82,6 +82,23 @@ The V5 skill registry should support:
 - Version and status tracking.
 - Diagnostic output for planner decisions.
 
+### Runtime Foundation
+
+`brain/business_skill_registry.py` is the V5.1.0 runtime foundation for Business Skill registration and discovery.
+
+Current scope:
+
+- Loads existing markdown business skills through adapters.
+- Exposes `get_skill()`, `find_skill()`, `list_domains()`, and `list_skills()`.
+- Provides canonical runtime models for `BusinessSkill`, `BusinessDomain`, and `SkillRegistry`.
+- Adds developer diagnostics for `registry_version`, `registered_domains`, and `registered_skills`.
+
+Compatibility rules:
+
+- Existing V4 skill loading, matching, routing, planner behavior, workflows, and responses remain unchanged.
+- Existing skills are not migrated yet.
+- The registry is available for discovery and diagnostics before it becomes the routing owner.
+
 ## Knowledge Layer Contracts
 
 Business Knowledge should provide downstream components with:
@@ -98,4 +115,3 @@ Business Knowledge should provide downstream components with:
 - Confidence and diagnostics.
 
 It should not render the final response directly.
-

@@ -22,6 +22,7 @@ from brain.reasoning_engine import build_reasoning
 from brain.response_transformation_engine import detect_response_transformation, transformation_source
 from brain.skill_loader import load_skills
 from brain.workflow_lifecycle import classify_completed_workflow_followup
+from brain.business_skill_registry import registry_diagnostics
 
 
 BYPASS_WORKFLOW_RESPONSE_INTENTS = {
@@ -675,6 +676,14 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "llm_decision": diagnostics.get("LLM Decision"),
             "llm_needed": diagnostics.get("LLM Needed"),
         },
+        "Business Knowledge": {
+            "registry_version": diagnostics.get("registry_version"),
+            "registered_domains": diagnostics.get("registered_domains"),
+            "registered_skills": diagnostics.get("registered_skills"),
+            "business_skill_registry": diagnostics.get("business_skill_registry"),
+            "matched_skill": diagnostics.get("Matched Skill"),
+            "matched_domain": diagnostics.get("Matched Domain"),
+        },
         "Memory": {
             "reuse_completed_workflow": diagnostics.get("reuse_completed_workflow"),
             "variant_source": diagnostics.get("variant_source"),
@@ -703,6 +712,15 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     skills = route.get("loaded_skills") or []
     loaded_skill_names = [skill.get("name") for skill in skills if skill.get("available")]
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
+    try:
+        business_skill_registry = registry_diagnostics()
+    except Exception as exc:
+        business_skill_registry = {
+            "registry_version": None,
+            "registered_domains": 0,
+            "registered_skills": 0,
+            "registry_error": str(exc),
+        }
 
     response_audit_defaults = {
         "final_response_origin": route.get("final_response_origin"),
@@ -756,6 +774,10 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "Selected Capability": (route.get("selected_capability") or {}).get("name"),
         "Loaded Skill": loaded_skill_names,
         "Business Skill Search": bool((route.get("business_intelligence") or {}).get("bridge_used") or (route.get("business_intelligence") or {}).get("fallback_used")),
+        "registry_version": business_skill_registry.get("registry_version"),
+        "registered_domains": business_skill_registry.get("registered_domains"),
+        "registered_skills": business_skill_registry.get("registered_skills"),
+        "business_skill_registry": business_skill_registry,
         "Matched Skill": ((route.get("business_intelligence") or {}).get("matched_skill") or {}).get("skill_id"),
         "Matched Skills": (route.get("business_intelligence") or {}).get("matched_skills") or [],
         "Ranking Table": (route.get("business_intelligence") or {}).get("ranking_table") or [],

@@ -90,9 +90,12 @@ Workflow logic exists in three layers:
 
 | File | Function | Output |
 | --- | --- | --- |
+| `brain/business_skill_registry.py` | `get_skill()`, `find_skill()`, `list_domains()`, `list_skills()` | V5 registry models and diagnostics |
 | `brain/business_skill_loader.py` | `load_all_business_skills()`, `search_business_skills()` | markdown business skills |
 | `brain/business_skill_matcher.py` | `rank_business_skills()` | ranked skills, score, confidence, provenance |
 | `brain/business_intelligence_bridge.py` | `run_business_intelligence_bridge()` | matched skill, domain, audit, bridge diagnostics |
+
+The V5 registry currently adapts existing markdown skills for discovery and developer diagnostics only. V4 routing still uses the existing loader, matcher, and bridge behavior.
 
 Skill matching is advisory. It enriches planner output and LLM prompt context but should not directly render.
 
