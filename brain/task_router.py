@@ -11,6 +11,11 @@ from brain.business_intelligence_bridge import (
     inject_business_intelligence,
     run_business_intelligence_bridge,
 )
+from brain.business_knowledge_runtime import (
+    KNOWLEDGE_CONTEXT_VERSION,
+    KNOWLEDGE_RUNTIME_SOURCE,
+    create_knowledge_context,
+)
 from brain.business_intent_engine import detect_business_intent
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
@@ -177,6 +182,61 @@ def _workflow_id_from_business_workflow(workflow: dict | None) -> str | None:
     return state.get("workflow_id") or state.get("workflow") or state.get("current_workflow")
 
 
+def _knowledge_context_for_route(route: dict | None) -> dict:
+    route = route or {}
+    existing = route.get("knowledge_context")
+    if isinstance(existing, dict):
+        return existing
+    try:
+        context = create_knowledge_context(
+            user_message=(
+                route.get("user_message")
+                or (route.get("conversation_understanding") or {}).get("raw_text")
+                or (route.get("planner_output") or {}).get("goal")
+            ),
+            conversation_context={
+                "conversation_understanding": route.get("conversation_understanding") or {},
+                "conversation_intelligence": route.get("conversation_intelligence") or {},
+                "conversation_memory": route.get("conversation_memory") or {},
+                "business_context": route.get("business_context") or {},
+                "business_workflow": route.get("business_workflow") or {},
+                "intent_resolution": route.get("intent_resolution") or {},
+                "business_intent": route.get("detected_intent") or {},
+                "extracted_entities": (route.get("extracted_entities") or {}).get("extracted_entities")
+                if isinstance(route.get("extracted_entities"), dict)
+                else route.get("extracted_entities"),
+                "selected_business_skill": route.get("selected_business_skill"),
+                "selected_business_domain": route.get("selected_business_domain"),
+            },
+            planner_output=route.get("planner_output") or {},
+            business_intelligence=route.get("business_intelligence") or {},
+        )
+        return context.to_dict()
+    except Exception as exc:
+        return {
+            "candidate_domains": [],
+            "candidate_skills": [],
+            "selected_domain": "",
+            "selected_skill": "",
+            "business_rules": [],
+            "reasoning_pattern": "",
+            "required_entities": [],
+            "required_memory": [],
+            "workflow_candidates": [],
+            "tool_candidates": [],
+            "confidence": 0.0,
+            "version": KNOWLEDGE_CONTEXT_VERSION,
+            "diagnostics": {
+                "knowledge_context_created": False,
+                "knowledge_context_version": KNOWLEDGE_CONTEXT_VERSION,
+                "candidate_domain_count": 0,
+                "candidate_skill_count": 0,
+                "knowledge_runtime_source": KNOWLEDGE_RUNTIME_SOURCE,
+                "knowledge_runtime_error": f"{type(exc).__name__}: {exc}",
+            },
+        }
+
+
 def _matched_skill_payload(route: dict | None) -> dict:
     matched = ((route or {}).get("business_intelligence") or {}).get("matched_skill") or {}
     if not isinstance(matched, dict):
@@ -280,6 +340,7 @@ def _intent_priority_audit(route: dict | None) -> dict:
 
 
 def _with_response_gate(route: dict) -> dict:
+    route = {**route, "knowledge_context": _knowledge_context_for_route(route)}
     route = {**route, "intent_priority_audit": _intent_priority_audit(route)}
     gate = workflow_response_gate(route)
     return {**route, **gate}
@@ -681,6 +742,12 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "registered_domains": diagnostics.get("registered_domains"),
             "registered_skills": diagnostics.get("registered_skills"),
             "business_skill_registry": diagnostics.get("business_skill_registry"),
+            "business_knowledge": diagnostics.get("business_knowledge"),
+            "knowledge_context_created": diagnostics.get("knowledge_context_created"),
+            "knowledge_context_version": diagnostics.get("knowledge_context_version"),
+            "candidate_domain_count": diagnostics.get("candidate_domain_count"),
+            "candidate_skill_count": diagnostics.get("candidate_skill_count"),
+            "knowledge_runtime_source": diagnostics.get("knowledge_runtime_source"),
             "matched_skill": diagnostics.get("Matched Skill"),
             "matched_domain": diagnostics.get("Matched Domain"),
         },
@@ -712,6 +779,16 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     skills = route.get("loaded_skills") or []
     loaded_skill_names = [skill.get("name") for skill in skills if skill.get("available")]
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
+    knowledge_context = _knowledge_context_for_route(route)
+    knowledge_diagnostics = knowledge_context.get("diagnostics") or {}
+    business_knowledge = {
+        "candidate_domains": knowledge_context.get("candidate_domains") or [],
+        "candidate_skills": knowledge_context.get("candidate_skills") or [],
+        "selected_domain": knowledge_context.get("selected_domain"),
+        "selected_skill": knowledge_context.get("selected_skill"),
+        "registry_version": knowledge_diagnostics.get("registry_version"),
+        "confidence": knowledge_context.get("confidence"),
+    }
     try:
         business_skill_registry = registry_diagnostics()
     except Exception as exc:
@@ -778,6 +855,12 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "registered_domains": business_skill_registry.get("registered_domains"),
         "registered_skills": business_skill_registry.get("registered_skills"),
         "business_skill_registry": business_skill_registry,
+        "business_knowledge": business_knowledge,
+        "knowledge_context_created": bool(knowledge_diagnostics.get("knowledge_context_created")),
+        "knowledge_context_version": knowledge_diagnostics.get("knowledge_context_version") or knowledge_context.get("version"),
+        "candidate_domain_count": knowledge_diagnostics.get("candidate_domain_count", len(business_knowledge["candidate_domains"])),
+        "candidate_skill_count": knowledge_diagnostics.get("candidate_skill_count", len(business_knowledge["candidate_skills"])),
+        "knowledge_runtime_source": knowledge_diagnostics.get("knowledge_runtime_source"),
         "Matched Skill": ((route.get("business_intelligence") or {}).get("matched_skill") or {}).get("skill_id"),
         "Matched Skills": (route.get("business_intelligence") or {}).get("matched_skills") or [],
         "Ranking Table": (route.get("business_intelligence") or {}).get("ranking_table") or [],

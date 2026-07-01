@@ -76,20 +76,32 @@ class KnowledgeContext(_CanonicalObject):
     conversation_frame_id: str = ""
     candidate_domains: list = field(default_factory=list)
     candidate_skills: list = field(default_factory=list)
+    selected_domain: str = ""
+    selected_skill: str = ""
     selected_domain_hint: str = ""
     required_entities: list = field(default_factory=list)
     required_memory: list = field(default_factory=list)
     business_rules: list = field(default_factory=list)
+    reasoning_pattern: str = ""
     reasoning_patterns: list = field(default_factory=list)
     response_guidance: dict = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
+    workflow_candidates: list = field(default_factory=list)
+    tool_candidates: list = field(default_factory=list)
+    confidence: float = 0.0
     workflow_links: list = field(default_factory=list)
     tool_requirements: list = field(default_factory=list)
     examples: list = field(default_factory=list)
     domain_vocabulary: dict = field(default_factory=dict)
     reject_reasons: list = field(default_factory=list)
     knowledge_gaps: list = field(default_factory=list)
-    version: str = "5.1.1"
+    version: str = "5.1.2"
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "KnowledgeContext":
+        item = super().from_dict(data)
+        item.confidence = _float(item.confidence)
+        return item
 
 
 @dataclass

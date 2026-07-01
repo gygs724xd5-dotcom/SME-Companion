@@ -99,6 +99,33 @@ Compatibility rules:
 - Existing skills are not migrated yet.
 - The registry is available for discovery and diagnostics before it becomes the routing owner.
 
+### V5.1.2 Business Knowledge Runtime Foundation
+
+`brain/business_knowledge_runtime.py` adds the V5.1.2 runtime layer for Business Knowledge.
+
+Current scope:
+
+- Reads the Business Skill Registry.
+- Builds the canonical `KnowledgeContext` runtime object.
+- Exposes candidate domains and candidate skills.
+- Exposes selected domain and selected skill hints from the existing route and bridge output.
+- Exposes domain metadata, skill metadata, workflow candidates, required entities, required memory, business rules, reasoning patterns, tool candidates, confidence, and diagnostics.
+- Adds developer diagnostics for `knowledge_context_created`, `knowledge_context_version`, `candidate_domain_count`, `candidate_skill_count`, and `knowledge_runtime_source`.
+- Adds a compact `business_knowledge` diagnostics block with candidate domains, candidate skills, selected domain, selected skill, registry version, and confidence.
+
+Compatibility rules:
+
+- The runtime is diagnostics and foundation only.
+- It does not make routing decisions.
+- It does not replace planner decisions.
+- It does not rewrite workflows.
+- It does not change responses.
+- Existing V4 routing, planner, workflow, bridge, and response behavior remain the execution path.
+
+Migration purpose:
+
+The V5.1.2 runtime makes Business Knowledge available during execution so future Business Reasoning Runtime work can consume a stable `KnowledgeContext`. Until that migration happens, the current router adapter only attaches this context to route/developer diagnostics.
+
 ## Knowledge Layer Contracts
 
 Business Knowledge should provide downstream components with:
