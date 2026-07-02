@@ -7,6 +7,7 @@ from brain.business_workflow_engine import decide_business_workflow
 from brain.conversation_manager import active_workflow_state, planner_locked, release_workflow_domain
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
 from brain.business_entity_extractor import extract_business_entities
+from brain.entity_runtime import canonical_entity_payload
 from brain.business_intelligence_bridge import (
     inject_business_intelligence,
     run_business_intelligence_bridge,
@@ -488,6 +489,7 @@ def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
     business_intent = detect_business_intent(user_message)
     entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
+    canonical_entities = canonical_entity_payload(user_message)
     workflow_decision = {}
     workflow_domain_boundary = {"workflow_domain_boundary_applied": False}
 
@@ -568,6 +570,7 @@ def build_task_route(application_state, user_message) -> dict:
         "intent_resolution": intent_resolution,
         "detected_intent": business_intent,
         "extracted_entities": entity_result,
+        "canonical_entities": canonical_entities,
     }
     preliminary_knowledge_context = preliminary_context_route.get("knowledge_context") or {}
     preliminary_reasoning_context = preliminary_context_route.get("reasoning_context") or {}
@@ -708,6 +711,7 @@ def build_task_route(application_state, user_message) -> dict:
         "intent_resolution": intent_resolution,
         "detected_intent": business_intent,
         "extracted_entities": entity_result,
+        "canonical_entities": canonical_entities,
         "business_workflow": workflow_decision,
         "workflow_domain_boundary": workflow_domain_boundary,
         "business_context": business_context,
@@ -803,6 +807,7 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "planner_business_goal": diagnostics.get("planner_business_goal"),
             "planner_confidence": diagnostics.get("planner_confidence"),
             "planner_context_present": diagnostics.get("planner_context_present"),
+            "canonical_entities": diagnostics.get("canonical_entities"),
         },
         "Planner Migration": {
             "planner_runtime_source": diagnostics.get("planner_runtime_source"),
@@ -1005,6 +1010,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "planner_business_goal": planner_context.get("business_goal"),
         "planner_confidence": planner_context.get("confidence"),
         "planner_context_present": bool(planner_context),
+        "canonical_entities": route.get("canonical_entities") or {},
         **migration_diagnostics,
         "Business Response Mode": (route.get("business_intelligence") or {}).get("response_mode"),
         "skill_match_audit": (route.get("business_intelligence") or {}).get("skill_match_audit") or {},

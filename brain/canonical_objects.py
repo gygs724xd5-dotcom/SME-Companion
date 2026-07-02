@@ -145,7 +145,7 @@ class PlannerContext(_CanonicalObject):
     planner_constraints: list = field(default_factory=list)
     confidence: float = 0.0
     diagnostics: dict = field(default_factory=dict)
-    version: str = "5.1.4"
+    version: str = "5.3.2"
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "PlannerContext":

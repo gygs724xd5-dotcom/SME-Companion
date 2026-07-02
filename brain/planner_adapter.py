@@ -6,7 +6,7 @@ from typing import Any
 from brain.canonical_objects import PlannerContext
 
 
-PLANNER_CONTEXT_VERSION = "5.1.4"
+PLANNER_CONTEXT_VERSION = "5.3.2"
 PLANNER_CONTEXT_SOURCE = "v5_planner_adapter"
 
 
@@ -90,6 +90,7 @@ def build_planner_context(
     reasoning_data = _as_dict(reasoning_context) or _as_dict(route_data.get("reasoning_context"))
     workflow_data = _as_dict(workflow_state) or _as_dict(route_data.get("business_workflow"))
     plan = _as_dict(route_data.get("planner_output"))
+    canonical_entities = _as_dict(route_data.get("canonical_entities"))
 
     selected_domain = _first_text(
         reasoning_data.get("selected_domain"),
@@ -124,6 +125,7 @@ def build_planner_context(
         "reasoning_context_id": reasoning_data.get("reasoning_context_id", ""),
         "intent_resolution": route_data.get("intent_resolution") or {},
         "conversation_understanding": route_data.get("conversation_understanding") or {},
+        "canonical_entities": canonical_entities,
     }
     planner_hints = {
         "selected_domain": selected_domain,
@@ -134,6 +136,7 @@ def build_planner_context(
         "reasoning_pattern": reasoning_data.get("reasoning_pattern", ""),
         "missing_entities": reasoning_data.get("missing_entities") or [],
         "workflow_owner": _workflow_owner(workflow_data),
+        "canonical_entity_slots": canonical_entities.get("slots") or {},
     }
     planner_constraints = [
         "diagnostics_only",
@@ -153,6 +156,10 @@ def build_planner_context(
         "knowledge_context_present": bool(knowledge_data),
         "reasoning_context_present": bool(reasoning_data),
         "workflow_state_present": bool(workflow_data),
+        "canonical_entities_present": bool(canonical_entities),
+        "canonical_entity_count": len(canonical_entities.get("entities") or []),
+        "canonical_entity_slots": sorted((canonical_entities.get("slots") or {}).keys()),
+        "canonical_entities_usage": "supporting_context_only",
     }
 
     return PlannerContext(
