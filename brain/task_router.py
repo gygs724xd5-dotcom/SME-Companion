@@ -33,6 +33,9 @@ from brain.planner_migration import (
     normalize_planner_inputs,
     planner_migration_diagnostics,
 )
+from brain.perception_engine import build_percept
+from brain.perception_signals import build_signal_set_from_percept_fields
+from brain.perception_situation_diagnostics import build_perception_situation_diagnostics
 from brain.business_intent_engine import detect_business_intent
 from brain.capability_registry import get_capability, is_capability_available
 from brain.conversation_memory_engine import get_last_context, remember_turn
@@ -482,6 +485,37 @@ def _intent_priority_audit(route: dict | None) -> dict:
     }
 
 
+def _perception_diagnostics_for_business_situation(state: dict | None, user_message: str) -> dict:
+    source_state = state or {}
+    conversation = source_state.get("conversation") or {}
+    percept = build_percept(
+        user_message=user_message,
+        conversation_history_reference=(
+            source_state.get("conversation_history")
+            or source_state.get("chat_history")
+            or conversation.get("chat_history")
+        ),
+        business_memory_reference=source_state.get("business_memory"),
+        store_profile_reference=source_state.get("store"),
+        dashboard_state=source_state.get("dashboard_state") or source_state.get("dashboard"),
+        active_workspace=source_state.get("active_workspace") or "",
+        current_context=source_state.get("current_context"),
+    )
+    signal_set = build_signal_set_from_percept_fields(
+        user_message=percept.user_message,
+        conversation_history_reference=percept.conversation_history_reference,
+        business_memory_reference=percept.business_memory_reference,
+        store_profile_reference=percept.store_profile_reference,
+        uploaded_documents=percept.uploaded_documents,
+        uploaded_images=percept.uploaded_images,
+        dashboard_state=percept.dashboard_state,
+        active_workspace=percept.active_workspace,
+        current_context=percept.current_context,
+        captured_at=percept.timestamp,
+    )
+    return build_perception_situation_diagnostics(percept=percept, signal_set=signal_set)
+
+
 def _with_response_gate(route: dict) -> dict:
     knowledge_context = _knowledge_context_for_route(route)
     route = {**route, "knowledge_context": knowledge_context}
@@ -495,6 +529,7 @@ def _with_response_gate(route: dict) -> dict:
 
 def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
+    perception_situation_diagnostics = _perception_diagnostics_for_business_situation(state, user_message)
     business_intent = detect_business_intent(user_message)
     entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
     canonical_entities = canonical_entity_payload(user_message)
@@ -550,6 +585,7 @@ def build_task_route(application_state, user_message) -> dict:
         intent_resolution=intent_resolution,
         canonical_entities=canonical_entities,
         extracted_entities=entity_result,
+        perception_diagnostics=perception_situation_diagnostics,
     )
     enriched_state = dict(state)
     enriched_state["conversation_understanding"] = interpretation
@@ -615,6 +651,7 @@ def build_task_route(application_state, user_message) -> dict:
         canonical_entities=canonical_entities,
         extracted_entities=entity_result,
         planner_output=plan,
+        perception_diagnostics=perception_situation_diagnostics,
     )
     enriched_state["business_situation"] = business_situation
     plan["business_situation"] = business_situation

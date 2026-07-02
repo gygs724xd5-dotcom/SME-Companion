@@ -256,6 +256,7 @@ def build_business_situation(
     canonical_entities: dict | None = None,
     extracted_entities: dict | None = None,
     planner_output: dict | None = None,
+    perception_diagnostics: dict | None = None,
 ) -> dict:
     """Build an additive V5.4 Business Situation context.
 
@@ -318,8 +319,14 @@ def build_business_situation(
             "business_situation_source": BUSINESS_SITUATION_SOURCE,
             "runtime_mode": "compatibility_context_only",
             "routes_changed": False,
+            "routing_changed": False,
+            "planner_changed": False,
+            "workflow_changed": False,
             "responses_changed": False,
+            "memory_changed": False,
+            "execution_changed": False,
             "commit_boundary_changed": False,
+            "perception": _as_dict(perception_diagnostics),
         },
     )
     return situation.to_dict()
