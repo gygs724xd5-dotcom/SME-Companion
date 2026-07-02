@@ -8,6 +8,9 @@ RESET_RUNTIME_STATE_VERSION = "v5.2.0.1"
 
 RUNTIME_CONVERSATION_DEFAULTS = {
     "current_topic": None,
+    "focused_business_topic": None,
+    "current_discussion_topic": None,
+    "current_product": None,
     "business_type": None,
     "latest_business_goal": None,
     "last_question": None,
@@ -15,6 +18,8 @@ RUNTIME_CONVERSATION_DEFAULTS = {
     "follow_up_expected": False,
     "last_intent": None,
     "previous_intent": None,
+    "previous_workflow": None,
+    "last_workflow": None,
     "conversation_stage": "new",
     "last_feedback": None,
     "last_correction": None,
@@ -48,6 +53,8 @@ RESET_CLEARED_KEYS = [
     "knowledge_context",
     "reasoning_context",
     "planner_context",
+    "planner_decision",
+    "planner_hints",
     "last_task_route",
     "last_reasoning",
     "last_llm_decision",
@@ -66,6 +73,12 @@ RESET_CLEARED_KEYS = [
     "followup_chain",
     "continuation_mode",
     "last_completed_workflow",
+    "current_topic",
+    "focused_business_topic",
+    "current_discussion_topic",
+    "current_product",
+    "previous_workflow",
+    "last_workflow",
 ]
 
 

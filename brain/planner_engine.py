@@ -210,6 +210,8 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
         return "Content Plan", "content_plan", WORKFLOW_CONTENT_PLAN, ["content_creation"], "workflow"
     if resolved_intent == "marketing_strategy":
         return "Marketing", "content_plan", None, ["marketing"], "llm"
+    if resolved_intent in {"customer_reply", "customer_says_expensive"}:
+        return "General Business Help", "conversation_memory", None, [], "llm"
     if resolved_intent in {"sales_planning", "pricing_question"}:
         return "Sales Plan", "sales_plan", WORKFLOW_SALES_PLAN_7_DAY, ["sales_planning"], "workflow"
     if resolved_intent == "cost_calculation":

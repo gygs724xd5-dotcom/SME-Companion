@@ -475,7 +475,8 @@ def _build_payload(
                 "missing_reason_by_field": _readiness_reason_by_field(required_entities, current_entities, missing_entities),
             }
         )
-    calculation = cost_calculation_trace(current_entities) if workflow == "COST_CALCULATION" else {}
+    workflow_entities = _merge_collected_workflow_entities(workflow_state, current_entities)
+    calculation = cost_calculation_trace(workflow_entities) if workflow == "COST_CALCULATION" else {}
     return {
         "workflow_action": workflow_action,
         "workflow_state": compact_state,
@@ -513,7 +514,7 @@ def _build_payload(
         "entity_completeness": progress,
         "next_question": None if complete else smart_question_for_missing(missing_entities),
         "detected_intent": detected_intent,
-        "extracted_entities": deepcopy(current_entities),
+        "extracted_entities": deepcopy(workflow_entities),
         "raw_missing_entities": list((entity_result or {}).get("missing_entities") or []),
         "entity_mapping_trace": mapping_trace,
         "workflow_readiness_decision": readiness_decision,
@@ -572,6 +573,24 @@ def _completed_entities(workflow_state: dict | None, current_entities: dict, req
     ):
         completed.add(remaining[0])
     return [entity for entity in required_entities if entity in completed]
+
+
+def _field_value(value):
+    if isinstance(value, dict):
+        for key in ("amount", "value", "raw"):
+            if value.get(key) not in (None, "", [], {}):
+                return value.get(key)
+    return value
+
+
+def _merge_collected_workflow_entities(workflow_state: dict | None, current_entities: dict | None) -> dict:
+    merged = dict(current_entities or {})
+    for field, value in _collected_fields(workflow_state).items():
+        normalized = _canonical_entity(str(field))
+        if normalized in merged:
+            continue
+        merged[normalized] = _field_value(value)
+    return merged
 
 
 def _normalize_workflow_entities(

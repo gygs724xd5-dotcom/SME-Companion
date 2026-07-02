@@ -192,6 +192,16 @@ def _skill_by_match(candidate_skills: list[dict], match: dict | None) -> dict | 
     return None
 
 
+def _matched_from_current_message(match: dict | None) -> bool:
+    current = (match or {}).get("current_message_match") or {}
+    if current.get("current_message_matched_keywords") or current.get("current_message_matched_aliases"):
+        return True
+    return any(
+        bool(item.get("matched_from_current_message"))
+        for item in (match or {}).get("match_provenance") or []
+    )
+
+
 def _suspicious_matches(ranked_matches: list[dict]) -> list[dict]:
     suspicious: list[dict] = []
     suspicious_types = {
@@ -471,6 +481,7 @@ def run_business_intelligence_bridge(
         confidence = float(reasoning.get("confidence") or 0.0)
         top_match = ranked_matches[0] if ranked_matches else {}
         top_confidence = float(top_match.get("confidence") or matched_skill.get("match_confidence") or confidence)
+        matched_from_current_message = _matched_from_current_message(top_match)
         response_mode = BUSINESS_CONSULTING if broad_consulting else reasoning.get("response_mode")
         business_payload = {
             "matched_skill": _compact(
@@ -483,6 +494,7 @@ def run_business_intelligence_bridge(
                     "matched_aliases": matched_skill.get("matched_aliases"),
                     "matching_reason": matched_skill.get("matching_reason"),
                     "source_path": matched_skill.get("source_path"),
+                    "matched_from_current_message": matched_from_current_message,
                 }
             ),
             "matched_domain": matched_skill.get("business_domain"),
@@ -500,6 +512,7 @@ def run_business_intelligence_bridge(
             "workflow": reasoning.get("workflow"),
             "memory_tags": reasoning.get("memory_tags") or [],
             "confidence": max(confidence, top_confidence),
+            "matched_from_current_message": matched_from_current_message,
             "bridge_used": True,
             "fallback_used": False,
             "broad_consulting": bool(broad_consulting),
@@ -580,7 +593,25 @@ def inject_business_intelligence(
     plan["business_response_mode"] = bridge.get("response_mode")
 
     if float(bridge.get("confidence") or 0.0) >= HIGH_CONFIDENCE_THRESHOLD:
-        if bridge.get("broad_consulting") or plan.get("task_type") == "General Business Help":
+        high_confidence_current_skill = bool(
+            bridge.get("matched_from_current_message")
+            and float(bridge.get("confidence") or 0.0) >= 0.8
+        )
+        matched_skill = bridge.get("matched_skill") or {}
+        skill_id = str(matched_skill.get("skill_id") or "")
+        if (
+            high_confidence_current_skill
+            and skill_id.startswith("01.")
+            and plan.get("workflow") in {"CONTENT_PLAN", "COST_CALCULATION"}
+        ):
+            plan["task_type"] = "Business Consulting"
+            plan["workflow"] = None
+            plan["estimated_response_mode"] = BUSINESS_CONSULTING
+            plan["planner_authority_override"] = {
+                "reason": "high-confidence current-message business skill overrides stale workflow context",
+                "matched_skill": skill_id,
+            }
+        elif bridge.get("broad_consulting") or plan.get("task_type") == "General Business Help":
             plan["task_type"] = "Business Consulting"
             plan["workflow"] = plan.get("workflow")
             plan["estimated_response_mode"] = BUSINESS_CONSULTING

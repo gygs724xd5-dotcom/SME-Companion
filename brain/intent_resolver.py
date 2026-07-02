@@ -21,12 +21,25 @@ INTENT_TO_PLANNER_MESSAGE = {
     "marketing_strategy": "marketing campaign strategy",
     "sales_planning": "sales plan increase sales",
     "pricing_question": "sales plan pricing recommendation",
+    "customer_reply": "customer reply answer customer message",
+    "customer_says_expensive": "customer reply handle price objection",
     "profit_calculation": "profit calculation selling price margin",
     "cost_calculation": "cost calculation unit cost profit margin",
     "continue_previous_workflow": "continue previous workflow",
     "follow_up_edit": "continue previous output edit",
     "reference_resolution": "resolve previous conversation reference",
     "general_business_help": "general business help",
+}
+
+CURRENT_INTENT_AUTHORITY_THRESHOLD = 0.65
+
+CURRENT_INTENT_TO_RESOLVED_INTENT = {
+    "customer_reply": "customer_reply",
+    "customer_says_expensive": "customer_says_expensive",
+    "pricing_question": "pricing_question",
+    "profit_calculation": "profit_calculation",
+    "cost_calculation": "cost_calculation",
+    "dashboard_request": "business_planning",
 }
 
 FOLLOW_UP_TERMS = ["ทำต่อ", "ต่อเลย", "ไปต่อ", "ช่วยต่อ", "continue"]
@@ -98,12 +111,36 @@ def _workflow_for_intent(intent: str, memory: dict | None) -> str | None:
     return None
 
 
+def _current_intent_authority(context: dict | None) -> dict | None:
+    context = context or {}
+    current_intent = context.get("current_message_intent") or context.get("detected_intent")
+    confidence = float(context.get("intent_confidence") or 0.0)
+    resolved_intent = CURRENT_INTENT_TO_RESOLVED_INTENT.get(str(current_intent or ""))
+    if not resolved_intent or confidence < CURRENT_INTENT_AUTHORITY_THRESHOLD:
+        return None
+    return {
+        "current_message_intent": current_intent,
+        "resolved_intent": resolved_intent,
+        "confidence": confidence,
+    }
+
+
+def _context_value_allowed_for_planner_message(business_context: dict | None) -> bool:
+    context = business_context or {}
+    if not context.get("intent_changed"):
+        return True
+    return context.get("source") in {"current_message", "workflow"}
+
+
 def _planner_message(intent: str, message: str, memory: dict | None, business_context: dict | None) -> str:
     base = INTENT_TO_PLANNER_MESSAGE.get(intent) or str(message or "").strip()
     workflow = _workflow_for_intent(intent, memory)
     business_type = (business_context or {}).get("business_type")
-    product = (business_context or {}).get("current_product")
-    topic = (business_context or {}).get("current_discussion_topic")
+    allow_context_values = _context_value_allowed_for_planner_message(business_context)
+    product = (business_context or {}).get("current_product") if allow_context_values else None
+    topic = (business_context or {}).get("current_discussion_topic") if allow_context_values else None
+    if intent in {"customer_reply", "customer_says_expensive"}:
+        topic = None
     parts = [base]
     if workflow:
         parts.append(str(workflow))
@@ -216,6 +253,17 @@ def resolve_intent(
     )
     winner = candidates[0] if candidates else {"intent": "general_business_help", "score": 35}
     resolver_override = None
+    current_authority = _current_intent_authority(context)
+    if current_authority and winner.get("intent") != current_authority["resolved_intent"]:
+        resolver_override = {
+            "from_intent": winner.get("intent"),
+            "to_intent": current_authority["resolved_intent"],
+            "reason": "current message intent authority blocks stale conversation context override",
+        }
+        winner = {
+            "intent": current_authority["resolved_intent"],
+            "score": max(int(current_authority["confidence"] * 100), 76),
+        }
     if has_profit_calculation_intent(message):
         score_by_intent = {item["intent"]: item["score"] for item in candidates}
         profit_score = int(score_by_intent.get("profit_calculation") or 0)
