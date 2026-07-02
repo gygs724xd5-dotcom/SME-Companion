@@ -55,7 +55,11 @@ from brain.conversation_workflow_engine import (
 from brain.workflow_state_machine import (
     cost_calculation_trace,
     detect_workflow_intent,
-    update_workflow_state,
+)
+from brain.workflow_authorization_gate import (
+    planner_workflow_from_decision,
+    update_workflow_state_if_authorized,
+    authorize_workflow_mutation,
 )
 from brain.workflow_lifecycle import (
     mark_completed,
@@ -3429,11 +3433,27 @@ def _handle_state_machine_workflow(
             "allow_field_extraction": bool(priority_decision.get("allow_field_extraction")),
         },
     )
-    workflow_state, extracted_fields = update_workflow_state(
+    workflow_state, extracted_fields, authorization = update_workflow_state_if_authorized(
         state.get("workflow_state_v2") or {},
         user_message,
+        authorized_workflow=detected_workflow,
         detected_workflow=detected_workflow,
     )
+    add_pipeline_event(
+        "workflow",
+        "_handle_state_machine_workflow",
+        "workflow authorization",
+        authorization,
+    )
+    if not authorization["workflow_mutation_authorized"]:
+        return {
+            "reply": None,
+            "intent": detected_workflow,
+            "done": False,
+            "llm_attempted": False,
+            "extracted_fields": {},
+            "workflow_authorization": authorization,
+        }
     workflow_state = prepare_content_collection_state(workflow_state)
     _sync_workflow_state_v2(workflow_state)
 
@@ -4459,6 +4479,13 @@ def _show_chat_companion(
         and detected_workflow not in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE, WORKFLOW_PRODUCT_FEEDBACK}
     ):
         detected_workflow_v2 = active_workflow_v2
+    workflow_authorization = authorize_workflow_mutation(
+        authorized_workflow=planner_workflow_from_decision(task_route.get("planner_output")),
+        candidate_workflow=detected_workflow_v2,
+        current_state=active_workflow_v2_state,
+    )
+    if not workflow_authorization["workflow_mutation_authorized"]:
+        detected_workflow_v2 = None
     debug_trace["workflow"] = _workflow_debug_state(
         {
             "detected_workflow": detected_workflow,
@@ -4466,6 +4493,7 @@ def _show_chat_companion(
             "active_workflow": active_workflow,
             "active_workflow_v2": active_workflow_v2,
             "active_workflow_step_v2": active_workflow_step_v2,
+            "workflow_authorization": workflow_authorization,
         }
     )
 

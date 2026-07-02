@@ -10,7 +10,8 @@ from brain.conversation_priority_engine import (
     classify_message_priority,
 )
 from brain.workflow_readiness import WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE
-from brain.workflow_state_machine import new_workflow_state, update_workflow_state
+from brain.workflow_state_machine import new_workflow_state
+from brain.workflow_authorization_gate import update_workflow_state_if_authorized
 from brain.workflow_lifecycle import (
     STATUS_COMPLETED,
     STATUS_EXECUTING,
@@ -122,7 +123,12 @@ def start_workflow(
 
     base_state = new_workflow_state(workflow_id)
     if initial_message:
-        base_state, _ = update_workflow_state(base_state, initial_message, detected_workflow=workflow_id)
+        base_state, _, _ = update_workflow_state_if_authorized(
+            base_state,
+            initial_message,
+            authorized_workflow=workflow_id,
+            detected_workflow=workflow_id,
+        )
 
     workflow_state = _workflow_os_payload(
         definition,
@@ -195,11 +201,20 @@ def continue_workflow(application_state: dict | None, user_message: str) -> dict
             "resume_after_reply": False,
         }
 
-    updated_state, extracted_fields = update_workflow_state(
+    updated_state, extracted_fields, authorization = update_workflow_state_if_authorized(
         _state_machine_view(current),
         user_message,
+        authorized_workflow=current.get("workflow_id"),
         detected_workflow=current.get("workflow_id"),
     )
+    if not authorization["workflow_mutation_authorized"]:
+        return {
+            "handled": False,
+            "event": "workflow_mutation_unauthorized",
+            "workflow_state": current,
+            "extracted_fields": {},
+            "workflow_authorization": authorization,
+        }
     status = "EXECUTE" if updated_state.get("is_ready") else "COLLECT"
     workflow_state = _merge_workflow_state(current, updated_state, workflow_status=status)
     _set_active_workflow_state(state, workflow_state)
