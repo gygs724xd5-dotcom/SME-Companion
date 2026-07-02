@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 import json
 
+from brain.business_situation import build_business_situation
 from brain.business_workflow_engine import decide_business_workflow
 from brain.conversation_manager import active_workflow_state, planner_locked, release_workflow_domain
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
@@ -541,10 +542,22 @@ def build_task_route(application_state, user_message) -> dict:
         "business_context": business_context,
         "intent_resolution": intent_resolution,
     }
+    business_situation = build_business_situation(
+        user_message=user_message,
+        application_state=state,
+        conversation_understanding=interpretation,
+        business_context=business_context,
+        intent_resolution=intent_resolution,
+        canonical_entities=canonical_entities,
+        extracted_entities=entity_result,
+    )
     enriched_state = dict(state)
     enriched_state["conversation_understanding"] = interpretation
     enriched_state["conversation_memory"] = memory_context
     enriched_state["business_context"] = business_context
+    enriched_state["business_situation"] = business_situation
+    enriched_state["canonical_entities"] = canonical_entities
+    enriched_state["extracted_entities"] = entity_result
     enriched_state["conversation_intelligence"] = conversation_intelligence
     enriched_state["conversation"] = {
         **(state.get("conversation") or {}),
@@ -573,6 +586,7 @@ def build_task_route(application_state, user_message) -> dict:
         "conversation_intelligence": conversation_intelligence,
         "conversation_memory": memory_context,
         "business_context": business_context,
+        "business_situation": business_situation,
         "business_workflow": workflow_decision,
         "intent_resolution": intent_resolution,
         "detected_intent": business_intent,
@@ -592,6 +606,18 @@ def build_task_route(application_state, user_message) -> dict:
 
     planner_message = intent_resolution.get("planner_message") or interpretation.get("planner_message") or user_message
     plan = build_execution_plan(routing_state, planner_message)
+    business_situation = build_business_situation(
+        user_message=user_message,
+        application_state=enriched_state,
+        conversation_understanding=interpretation,
+        business_context=business_context,
+        intent_resolution=intent_resolution,
+        canonical_entities=canonical_entities,
+        extracted_entities=entity_result,
+        planner_output=plan,
+    )
+    enriched_state["business_situation"] = business_situation
+    plan["business_situation"] = business_situation
     workflow_decision = decide_business_workflow(
         user_message,
         business_intent={
@@ -714,6 +740,7 @@ def build_task_route(application_state, user_message) -> dict:
 
     return _with_response_gate({
         "planner_output": plan,
+        "business_situation": business_situation,
         "conversation_understanding": interpretation,
         "conversation_intelligence": conversation_intelligence,
         "intent_resolution": intent_resolution,
@@ -828,6 +855,17 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "planner_decision_type": diagnostics.get("planner_decision_type"),
             "planner_confidence": diagnostics.get("planner_confidence"),
             "planner_reason": diagnostics.get("planner_reason"),
+        },
+        "Business Situation": {
+            "business_situation": diagnostics.get("Business Situation"),
+            "business_situation_created": diagnostics.get("business_situation_created"),
+            "business_situation_version": diagnostics.get("business_situation_version"),
+            "business_situation_source": diagnostics.get("business_situation_source"),
+            "business_topic": diagnostics.get("business_topic"),
+            "conversation_purpose": diagnostics.get("conversation_purpose"),
+            "material_uncertainty_count": diagnostics.get("material_uncertainty_count"),
+            "potential_business_risks": diagnostics.get("potential_business_risks"),
+            "potential_opportunities": diagnostics.get("potential_opportunities"),
         },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
@@ -964,9 +1002,20 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         response_audit_defaults,
     )
     response_envelope_audit = response_envelope_diagnostics(response_envelope)
+    business_situation = route.get("business_situation") or (route.get("planner_output") or {}).get("business_situation") or {}
+    business_situation_diagnostics = business_situation.get("diagnostics") or {}
 
     diagnostics = {
         "Planner Output": route.get("planner_output") or {},
+        "Business Situation": business_situation,
+        "business_situation_created": bool(business_situation_diagnostics.get("business_situation_created")),
+        "business_situation_version": business_situation_diagnostics.get("business_situation_version") or business_situation.get("version"),
+        "business_situation_source": business_situation_diagnostics.get("business_situation_source"),
+        "business_topic": business_situation.get("business_topic"),
+        "conversation_purpose": business_situation.get("conversation_purpose"),
+        "material_uncertainty_count": len(business_situation.get("material_uncertainty") or []),
+        "potential_business_risks": business_situation.get("potential_business_risks") or [],
+        "potential_opportunities": business_situation.get("potential_opportunities") or [],
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
         "intent_priority_audit": route.get("intent_priority_audit") or _intent_priority_audit(route),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from brain.business_situation import build_business_situation
 from brain.conversation_intent_engine import detect_conversation_intent, is_product_feedback
 from brain.conversation_manager import active_workflow_state
 from brain.workflow_readiness import (
@@ -317,6 +318,15 @@ def build_execution_plan(application_state, user_message) -> dict:
     missing_information = _missing_information(state, capability_key, workflow)
     known_information = _known_information(state, workflow)
     can_execute = capability_key not in {"ocr", "inventory", "pos_sync", "business_forecast"}
+    business_situation = state.get("business_situation") or build_business_situation(
+        user_message=user_message,
+        application_state=state,
+        conversation_understanding=_conversation_understanding(state),
+        business_context=_business_context(state),
+        intent_resolution=_intent_resolution(state),
+        canonical_entities=state.get("canonical_entities"),
+        extracted_entities=state.get("extracted_entities"),
+    )
 
     if missing_information and workflow not in {WORKFLOW_DASHBOARD_REQUEST, WORKFLOW_RECEIPT_CAPTURE}:
         next_step = "collect_missing_information"
@@ -329,6 +339,7 @@ def build_execution_plan(application_state, user_message) -> dict:
 
     return {
         "goal": str(user_message or "").strip(),
+        "business_situation": business_situation,
         "conversation_understanding": _conversation_understanding(state),
         "conversation_intelligence": _conversation_intelligence(state),
         "business_context": _business_context(state),
