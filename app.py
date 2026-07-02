@@ -83,6 +83,7 @@ from brain.promotion_engine import get_promotion_idea
 from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.response_intelligence_engine import guard_response, select_final_response, select_planner_first_response
+from brain.response_commit_boundary import commit_response_boundary
 from brain.response_transformation_engine import (
     build_response_memory,
 )
@@ -914,6 +915,31 @@ def _sync_chat_history_to_application_state() -> None:
             "chat_history": _chat_history_snapshot(),
         },
     )
+
+
+def commit_assistant_turn(
+    final_reply: str,
+    *,
+    intent: str | None = None,
+    workflow: str | None = None,
+    business_topic: str | None = None,
+    response_metadata: dict | None = None,
+    assistant_message: dict | None = None,
+) -> dict:
+    state = _get_application_state()
+    result = commit_response_boundary(
+        session_state=st.session_state,
+        application_state=state,
+        final_reply=final_reply,
+        intent=intent,
+        workflow=workflow,
+        business_topic=business_topic,
+        response_metadata=response_metadata,
+        assistant_message=assistant_message,
+    )
+    safe_set_session_state("application_state", result["application_state"])
+    _sync_global_application_state()
+    return result
 
 
 def _sync_session_to_application_state() -> dict:
@@ -3642,14 +3668,24 @@ def _append_workflow_reply(
         },
     )
     _remember_completed_workflow_if_done(reply, intent)
-    st.session_state["chat_history"].append(assistant_message)
+    commit_assistant_turn(
+        reply,
+        intent=intent,
+        workflow=intent,
+        business_topic=topic,
+        response_metadata={
+            "response_source": response_source,
+            "last_response_empty": response_empty,
+            "user_message": st.session_state.get("last_user_message"),
+        },
+        assistant_message=assistant_message,
+    )
     add_pipeline_event(
         "response",
         "_append_workflow_reply",
         "assistant message appended",
         {"response_source": response_source, "last_response_empty": response_empty},
     )
-    _sync_chat_history_to_application_state()
     _update_chat_developer_diagnostics(
         response_source=response_source,
         response_empty=response_empty,
@@ -4068,14 +4104,22 @@ def _show_chat_companion(
         )
         _update_conversation_state_after_assistant(reset_reply, "GREETING")
         st.session_state["chat_history"].append({"role": "user", "content": user_message})
-        st.session_state["chat_history"].append({"role": "assistant", "content": reset_reply})
+        commit_assistant_turn(
+            reset_reply,
+            intent="GREETING",
+            response_metadata={
+                "response_source": reset_source,
+                "last_response_empty": reset_empty,
+                "user_message": user_message,
+            },
+            assistant_message={"role": "assistant", "content": reset_reply},
+        )
         add_pipeline_event(
             "response",
             "_show_chat_companion",
             "assistant message appended",
             {"response_source": reset_source, "last_response_empty": reset_empty},
         )
-        _sync_chat_history_to_application_state()
         _update_chat_developer_diagnostics(
             response_source=reset_source,
             response_empty=reset_empty,
@@ -4168,8 +4212,16 @@ def _show_chat_companion(
             resume_prompt = _workflow_missing_reply(locked_workflow.get("state_machine") or {})
             reply = f"{datetime.now().strftime('%H:%M')} ครับ\n\nกลับมาต่อเรื่องเดิมนะครับ {resume_prompt}"
             _update_conversation_state_after_assistant(reply, locked_workflow.get("workflow_id"), None)
-            st.session_state["chat_history"].append({"role": "assistant", "content": reply, "show_business_insights": False})
-            _sync_chat_history_to_application_state()
+            commit_assistant_turn(
+                reply,
+                intent=locked_workflow.get("workflow_id"),
+                workflow=locked_workflow.get("workflow_id"),
+                response_metadata={
+                    "response_source": "conversation_os_interrupt",
+                    "user_message": user_message,
+                },
+                assistant_message={"role": "assistant", "content": reply, "show_business_insights": False},
+            )
             _finalize_ai_pipeline_debug_trace(
                 debug_trace,
                 "conversation_os_interrupt",
@@ -4435,7 +4487,18 @@ def _show_chat_companion(
             "content": direct_reply,
             "show_business_insights": conversation_understanding.get("detected_intent") in {"store_summary", "business_status"},
         }
-        st.session_state["chat_history"].append(assistant_message)
+        commit_assistant_turn(
+            direct_reply,
+            intent=conversation_intent,
+            workflow=(task_route.get("intent_resolution") or {}).get("resolved_workflow"),
+            business_topic=topic,
+            response_metadata={
+                "response_source": "direct_conversation_response",
+                "last_response_empty": not bool(direct_reply),
+                "user_message": user_message,
+            },
+            assistant_message=assistant_message,
+        )
         finalize_debug("direct_conversation_response", direct_reply)
         add_pipeline_event(
             "response",
@@ -4443,7 +4506,6 @@ def _show_chat_companion(
             "assistant message appended",
             {"response_source": "direct_conversation_response", "last_response_empty": not bool(direct_reply)},
         )
-        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_assistant_message(direct_reply)
         add_pipeline_event(
@@ -4549,7 +4611,18 @@ def _show_chat_companion(
             "content": simple_reply,
             "show_business_insights": False,
         }
-        st.session_state["chat_history"].append(assistant_message)
+        commit_assistant_turn(
+            simple_reply,
+            intent=conversation_intent,
+            workflow=(task_route.get("intent_resolution") or {}).get("resolved_workflow"),
+            business_topic=topic,
+            response_metadata={
+                "response_source": "direct_conversation_response",
+                "last_response_empty": not bool(simple_reply),
+                "user_message": user_message,
+            },
+            assistant_message=assistant_message,
+        )
         finalize_debug("direct_conversation_response", simple_reply)
         add_pipeline_event(
             "response",
@@ -4557,7 +4630,6 @@ def _show_chat_companion(
             "assistant message appended",
             {"response_source": "direct_conversation_response", "last_response_empty": not bool(simple_reply)},
         )
-        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_assistant_message(simple_reply)
         add_pipeline_event(
@@ -4588,7 +4660,18 @@ def _show_chat_companion(
             "show_business_insights": False,
         }
         _update_conversation_state_after_assistant(response["reply"], conversation_intent, "Product Feedback")
-        st.session_state["chat_history"].append(assistant_message)
+        commit_assistant_turn(
+            response["reply"],
+            intent=conversation_intent,
+            workflow=(task_route.get("intent_resolution") or {}).get("resolved_workflow"),
+            business_topic="Product Feedback",
+            response_metadata={
+                "response_source": product_source,
+                "last_response_empty": product_empty,
+                "user_message": user_message,
+            },
+            assistant_message=assistant_message,
+        )
         finalize_debug(product_source, response["reply"], {"workflow_handler": "product_feedback"})
         add_pipeline_event(
             "response",
@@ -4596,7 +4679,6 @@ def _show_chat_companion(
             "assistant message appended",
             {"response_source": product_source, "last_response_empty": product_empty},
         )
-        _sync_chat_history_to_application_state()
         with st.chat_message("assistant"):
             _render_assistant_message(response["reply"])
         add_pipeline_event(
@@ -4825,7 +4907,18 @@ def _show_chat_companion(
         response.get("intent") or conversation_intent,
         state.get("current_topic"),
     )
-    st.session_state["chat_history"].append(assistant_message)
+    commit_assistant_turn(
+        response["reply"],
+        intent=response.get("intent") or conversation_intent,
+        workflow=(task_route.get("intent_resolution") or {}).get("resolved_workflow"),
+        business_topic=state.get("current_topic"),
+        response_metadata={
+            "response_source": response_source,
+            "last_response_empty": response_empty,
+            "user_message": user_message,
+        },
+        assistant_message=assistant_message,
+    )
     finalize_debug(
         response_source,
         response["reply"],
@@ -4845,7 +4938,6 @@ def _show_chat_companion(
         "assistant message appended",
         {"response_source": response_source, "last_response_empty": response_empty},
     )
-    _sync_chat_history_to_application_state()
 
     with st.chat_message("assistant"):
         _render_assistant_message(response["reply"])
