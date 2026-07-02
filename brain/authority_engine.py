@@ -7,6 +7,7 @@ import json
 import re
 from typing import Any
 
+from brain.authority_resolution import AUTHORITY_RESOLUTION_VERSION, resolve_authority
 from brain.authority_models import (
     AUTHORITY_CONTEXT_VERSION,
     CUSTOMER_SERVICE_AUTHORITY,
@@ -33,6 +34,10 @@ AUTHORITY_DIAGNOSTICS = {
     "commit_boundary_changed": False,
     "authority_selected_by": AUTHORITY_ENGINE_SOURCE,
     "workflow_decided_authority": False,
+    "authority_resolution_version": AUTHORITY_RESOLUTION_VERSION,
+    "authority_resolution_source": "authority_resolution",
+    "resolution_changed_runtime": False,
+    "planner_changed": False,
 }
 
 AUTHORITY_KEYWORDS = {
@@ -177,37 +182,19 @@ def _score_authorities(search_text: str) -> dict[str, dict[str, Any]]:
     return scores
 
 
-def _select_primary(scores: dict[str, dict[str, Any]]) -> tuple[str, str, list[str]]:
-    if not scores:
-        return GENERAL_BUSINESS_AUTHORITY, "low", []
-
-    ranked = sorted(
-        scores.items(),
-        key=lambda item: (-int(item[1].get("score") or 0), item[0]),
-    )
-    top_score = int(ranked[0][1].get("score") or 0)
-    tied = [authority for authority, payload in ranked if int(payload.get("score") or 0) == top_score]
-    if len(tied) > 1:
-        return GENERAL_BUSINESS_AUTHORITY, "conflicted", tied
-    if top_score >= 2:
-        return ranked[0][0], "high", []
-    return ranked[0][0], "medium", []
-
-
-def _secondary_authorities(
-    primary_authority: str,
-    scores: dict[str, dict[str, Any]],
-    conflicts: list[str],
-) -> list[str]:
-    if conflicts:
-        return sorted(conflicts)
+def _authority_candidates(scores: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return [
-        authority
-        for authority, _payload in sorted(
+        {
+            "source": AUTHORITY_ENGINE_SOURCE,
+            "signal": "keyword_match",
+            "authority": authority,
+            "score": payload.get("score"),
+            "matched_keywords": list(payload.get("matched_keywords") or []),
+        }
+        for authority, payload in sorted(
             scores.items(),
             key=lambda item: (-int(item[1].get("score") or 0), item[0]),
         )
-        if authority != primary_authority
     ]
 
 
@@ -244,30 +231,25 @@ def build_authority_context(
     }
     search_text = " ".join(_flatten_text(text_payload)).lower()
     scores = _score_authorities(search_text)
-    primary, confidence, conflict_authorities = _select_primary(scores)
-    secondaries = _secondary_authorities(primary, scores, conflict_authorities)
-    conflicts = [
-        {
-            "kind": "authority_conflict",
-            "authorities": conflict_authorities,
-            "reason": "Multiple authorities had the same strongest heuristic score.",
-        }
-    ] if conflict_authorities else []
+    candidates = _authority_candidates(scores)
+    resolution = resolve_authority(candidates, business_situation=situation)
+    resolution_payload = resolution.to_dict()
+    primary = resolution.primary_authority
+    confidence = resolution.confidence
+    secondaries = resolution.secondary_authorities
+    conflicts = resolution.conflicts
 
-    authority_path = []
-    for authority, payload in sorted(
-        scores.items(),
-        key=lambda item: (-int(item[1].get("score") or 0), item[0]),
-    ):
-        authority_path.append(
-            {
-                "source": AUTHORITY_ENGINE_SOURCE,
-                "signal": "keyword_match",
-                "authority": authority,
-                "score": payload.get("score"),
-                "matched_keywords": list(payload.get("matched_keywords") or []),
-            }
-        )
+    authority_path = [
+        {
+            "source": item.get("source"),
+            "signal": item.get("signal"),
+            "authority": item.get("authority"),
+            "score": item.get("score"),
+            "matched_keywords": list(item.get("matched_keywords") or []),
+        }
+        for item in resolution.resolution_path
+        if item.get("valid")
+    ]
     if not authority_path:
         authority_path.append(
             {
@@ -297,8 +279,9 @@ def build_authority_context(
         authority_resolution={
             "selected_authority": primary,
             "selection_method": "conservative_keyword_heuristic",
-            "fallback_used": primary == GENERAL_BUSINESS_AUTHORITY and not conflict_authorities,
+            "fallback_used": primary == GENERAL_BUSINESS_AUTHORITY and confidence == "low",
             "scored_authorities": deepcopy(scores),
+            "authority_resolution": resolution_payload,
         },
         authority_confidence=confidence,
         authority_path=authority_path,
