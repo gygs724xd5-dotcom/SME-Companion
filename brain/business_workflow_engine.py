@@ -153,6 +153,28 @@ def decide_business_workflow(
             workflow_interrupted=True,
         )
 
+    detected_definition = get_workflow_registry().detect(message)
+    requested_workflow = _intent_to_workflow(intent) or (detected_definition.workflow_id if detected_definition else None)
+    if active and requested_workflow and requested_workflow != active_workflow_id:
+        requested_intent = intent if _intent_to_workflow(intent) else _workflow_to_intent(requested_workflow)
+        next_state = _synthetic_workflow_state(requested_intent, entities)
+        return _with_decision(
+            _build_payload(
+                workflow_action=ACTION_START_NEW,
+                workflow_state=next_state,
+                user_message=message,
+                detected_intent=requested_intent,
+                workflow_confidence=max(intent_confidence, 0.78),
+                workflow_reason="workflow domain changed; previous workflow released",
+                entity_result=entity_result,
+                current_entities=entities,
+            ),
+            workflow_interrupted=True,
+            workflow_domain_changed=True,
+            previous_workflow_id=active_workflow_id,
+            next_workflow_id=requested_workflow,
+        )
+
     if active and _override_reason(intent, message):
         return _with_decision(
             _build_payload(
@@ -596,6 +618,18 @@ def _intent_to_workflow(intent: str | None) -> str | None:
         "marketing_content": "CONTENT_PLAN",
     }
     return mapping.get(str(intent or ""))
+
+
+def _workflow_to_intent(workflow: str | None) -> str:
+    mapping = {
+        "PROFIT_CALCULATION": "profit_calculation",
+        "SALES_PLAN_7_DAY": "pricing_question",
+        "DASHBOARD_REQUEST": "sales_summary",
+        "COST_CALCULATION": "cost_calculation",
+        "INVENTORY_CHECK": "inventory_check",
+        "CONTENT_PLAN": "marketing_content",
+    }
+    return mapping.get(str(workflow or ""), "unknown")
 
 
 def _synthetic_workflow_state(intent: str, entities: dict) -> dict:

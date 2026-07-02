@@ -281,6 +281,76 @@ def cancel_workflow(application_state: dict | None) -> dict | None:
     return workflow_state
 
 
+def release_workflow_domain(
+    application_state: dict | None,
+    *,
+    next_workflow_id: str | None = None,
+    reason: str = "workflow_domain_changed",
+) -> dict:
+    """Clear transient workflow runtime when a new workflow domain takes over."""
+    state = application_state if application_state is not None else {}
+    os_state = ensure_conversation_os_state(state)
+    previous_active = os_state.get("active_workflow_id")
+    timestamp = now_iso()
+
+    os_state["active_workflow_id"] = None
+    os_state["planner_locked"] = False
+    os_state["mode"] = "general_chat"
+    os_state["conversation_stack"] = []
+    os_state["workflow_states"] = {}
+    os_state["last_paused_workflow_id"] = None
+    os_state["last_resume_prompt"] = None
+    os_state["last_event"] = reason
+    os_state["workflow_release_reason"] = reason
+    os_state["previous_workflow_id"] = previous_active
+    os_state["next_workflow_id"] = next_workflow_id
+    os_state["updated_at"] = timestamp
+
+    state["workflow"] = {
+        **(state.get("workflow") or {}),
+        "current_workflow": None,
+        "workflow": None,
+        "workflow_step": None,
+        "step": None,
+        "workflow_data": {},
+        "workflow_state_v2": {},
+        "workflow_runtime": {},
+        "pending_workflow": None,
+        "workflow_cache": {},
+        "is_ready": False,
+        "last_workflow_message": None,
+    }
+
+    conversation = state.setdefault("conversation", {})
+    conversation.update(
+        {
+            "current_workflow": None,
+            "workflow_step": None,
+            "workflow_data": {},
+            "workflow_state_v2": {},
+            "workflow_blocked_phrases": {},
+            "conversation_os": os_state,
+        }
+    )
+    for key in (
+        "workflow_runtime",
+        "pending_workflow",
+        "workflow_cache",
+        "workflow_readiness",
+        "missing_entities",
+        "next_question",
+        "active_workflow",
+    ):
+        conversation.pop(key, None)
+
+    return {
+        "workflow_domain_boundary_applied": True,
+        "previous_workflow_id": previous_active,
+        "next_workflow_id": next_workflow_id,
+        "workflow_release_reason": reason,
+    }
+
+
 def route_quick_action(application_state: dict | None, quick_action: str | None) -> dict:
     definition = get_workflow_registry().by_quick_action(quick_action)
     if not definition:

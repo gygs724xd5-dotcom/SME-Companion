@@ -4,7 +4,7 @@ from dataclasses import asdict, is_dataclass
 import json
 
 from brain.business_workflow_engine import decide_business_workflow
-from brain.conversation_manager import active_workflow_state, planner_locked
+from brain.conversation_manager import active_workflow_state, planner_locked, release_workflow_domain
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
 from brain.business_entity_extractor import extract_business_entities
 from brain.business_intelligence_bridge import (
@@ -197,6 +197,42 @@ def workflow_response_gate(task_route: dict | None) -> dict:
 def _workflow_id_from_business_workflow(workflow: dict | None) -> str | None:
     state = (workflow or {}).get("workflow_state") or {}
     return state.get("workflow_id") or state.get("workflow") or state.get("current_workflow")
+
+
+def _active_workflow_id_from_state(state: dict | None) -> str | None:
+    active = active_workflow_state(state if state is not None else {})
+    if active:
+        return active.get("workflow_id")
+    workflow = (state or {}).get("workflow") or {}
+    workflow_state = workflow.get("workflow_state_v2") or {}
+    return (
+        workflow.get("current_workflow")
+        or workflow.get("workflow")
+        or workflow_state.get("workflow")
+        or workflow_state.get("workflow_id")
+    )
+
+
+def _workflow_domain_boundary_for_decision(state: dict, workflow_decision: dict) -> dict:
+    next_workflow_id = _workflow_id_from_business_workflow(workflow_decision)
+    previous_workflow_id = workflow_decision.get("previous_workflow_id") or _active_workflow_id_from_state(state)
+    domain_changed = bool(
+        workflow_decision.get("workflow_action") == "start_new"
+        and previous_workflow_id
+        and next_workflow_id
+        and previous_workflow_id != next_workflow_id
+    )
+    if not domain_changed:
+        return {
+            "workflow_domain_boundary_applied": False,
+            "previous_workflow_id": previous_workflow_id,
+            "next_workflow_id": next_workflow_id,
+        }
+    return release_workflow_domain(
+        state,
+        next_workflow_id=next_workflow_id,
+        reason="workflow_domain_changed",
+    )
 
 
 def _knowledge_context_for_route(route: dict | None) -> dict:
@@ -558,6 +594,14 @@ def build_task_route(application_state, user_message) -> dict:
         entity_result=entity_result,
         application_state=state,
     )
+    workflow_domain_boundary = _workflow_domain_boundary_for_decision(state, workflow_decision)
+    if workflow_domain_boundary.get("workflow_domain_boundary_applied"):
+        workflow_decision = {
+            **workflow_decision,
+            **workflow_domain_boundary,
+            "workflow_reason": workflow_decision.get("workflow_reason") or "workflow domain changed; previous workflow released",
+            "workflow_release_reason": workflow_domain_boundary.get("workflow_release_reason"),
+        }
     if planner_locked(state) and workflow_decision.get("workflow_action") not in {"interrupt", "start_new"}:
         workflow_state = active_workflow_state(state) or {}
         isolation = _context_isolation_metadata(
@@ -579,6 +623,7 @@ def build_task_route(application_state, user_message) -> dict:
                 "estimated_response_mode": "workflow",
                 "planner_locked": True,
                 "workflow_intelligence": workflow_decision,
+                "workflow_domain_boundary": workflow_domain_boundary,
             },
             "conversation_understanding": {},
             "conversation_intelligence": {},
@@ -595,6 +640,7 @@ def build_task_route(application_state, user_message) -> dict:
                 "missing_entities": entity_result.get("missing_entities") or [],
                 "entity_confidence": entity_result.get("entity_confidence"),
                 "workflow_intelligence": workflow_decision,
+                "workflow_domain_boundary": workflow_domain_boundary,
             },
             "conversation_memory": {},
             "task_type": workflow_state.get("workflow_name"),
@@ -642,6 +688,7 @@ def build_task_route(application_state, user_message) -> dict:
         "missing_entities": entity_result.get("missing_entities") or [],
         "entity_confidence": entity_result.get("entity_confidence"),
         "workflow_intelligence": workflow_decision,
+        "workflow_domain_boundary": workflow_domain_boundary,
     }
     intent_resolution = resolve_intent(interpretation, memory_context, business_context)
     memory_context = remember_turn(
@@ -715,6 +762,7 @@ def build_task_route(application_state, user_message) -> dict:
             "conversation_memory": memory_context,
             "business_context": business_context,
             "business_workflow": workflow_decision,
+            "workflow_domain_boundary": workflow_domain_boundary,
             "intent_resolution": intent_resolution,
             **isolation,
             "intent": business_intent.get("detected_intent"),
@@ -771,6 +819,7 @@ def build_task_route(application_state, user_message) -> dict:
     llm_reasoning_context["detected_intent"] = business_intent
     llm_reasoning_context["extracted_entities"] = entity_result
     llm_reasoning_context["workflow_intelligence"] = workflow_decision
+    llm_reasoning_context["workflow_domain_boundary"] = workflow_domain_boundary
     llm_reasoning_context.update(isolation)
     llm_reasoning_context["prompt_context_size"] = _prompt_context_size(llm_reasoning_context)
     llm_decision = decide_llm_usage(llm_reasoning_context)
@@ -784,6 +833,7 @@ def build_task_route(application_state, user_message) -> dict:
         "detected_intent": business_intent,
         "extracted_entities": entity_result,
         "business_workflow": workflow_decision,
+        "workflow_domain_boundary": workflow_domain_boundary,
         "business_context": business_context,
         "normalized_business_context": business_context,
         "context_source": business_context.get("source"),
