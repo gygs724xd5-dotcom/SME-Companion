@@ -58,11 +58,8 @@ from brain.workflow_state_machine import (
     update_workflow_state,
 )
 from brain.workflow_lifecycle import (
-    classify_completed_workflow_followup,
-    completed_to_workflow_state,
     mark_completed,
     mark_executing,
-    variant_instruction_from_message,
 )
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN as V2_WORKFLOW_CONTENT_PLAN,
@@ -88,7 +85,6 @@ from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.response_intelligence_engine import guard_response, select_final_response, select_planner_first_response
 from brain.response_transformation_engine import (
     build_response_memory,
-    transform_response,
 )
 from brain.runtime_context_reset import RUNTIME_CONTEXT_KEYS, reset_runtime_contexts
 from brain.response_mode_engine import determine_response_mode
@@ -103,7 +99,6 @@ from brain.pipeline_debugger import (
 )
 from brain.workflow_reply_builder import (
     build_workflow_reply,
-    completed_workflow_followup_reply,
     prepare_content_collection_state,
 )
 from content_engine import generate_content_plan, generate_sales_brief
@@ -1061,7 +1056,6 @@ def _workflow_debug_state(extra: dict | None = None) -> dict:
     app_state = _sync_session_to_application_state()
     app_workflow = (app_state.get("workflow") or {})
     os_diagnostics = conversation_os_developer_diagnostics(app_state)
-    completed_followup = classify_completed_workflow_followup(app_state, st.session_state.get("last_user_message") or "")
     state = {
         "current_workflow": conversation_state.get("current_workflow") or app_workflow.get("current_workflow"),
         "workflow_step": conversation_state.get("workflow_step") or app_workflow.get("workflow_step"),
@@ -1076,8 +1070,8 @@ def _workflow_debug_state(extra: dict | None = None) -> dict:
         "workflow_completion_reason": workflow_state_v2.get("workflow_completion_reason") or os_diagnostics.get("workflow_completion_reason"),
         "workflow_release_reason": workflow_state_v2.get("workflow_release_reason") or os_diagnostics.get("workflow_release_reason"),
         "workflow_transition_reason": workflow_state_v2.get("workflow_transition_reason") or os_diagnostics.get("workflow_transition_reason"),
-        "workflow_followup_mode": workflow_state_v2.get("workflow_followup_mode") or completed_followup.get("workflow_followup_mode"),
-        "workflow_variant_mode": workflow_state_v2.get("workflow_variant_mode") or completed_followup.get("workflow_variant_mode"),
+        "workflow_followup_mode": workflow_state_v2.get("workflow_followup_mode"),
+        "workflow_variant_mode": workflow_state_v2.get("workflow_variant_mode"),
         "execution_reason": workflow_state_v2.get("execution_reason"),
         "readiness_decision": workflow_state_v2.get("readiness_decision") or {},
         "completion_decision": workflow_state_v2.get("completion_decision") or {},
@@ -3301,131 +3295,6 @@ def _generate_workflow_reply(workflow_state: dict) -> str:
     return _workflow_missing_reply(workflow_state)
 
 
-def _completed_workflow_followup_response(user_message: str, application_state: dict | None) -> dict | None:
-    decision = classify_completed_workflow_followup(application_state, user_message)
-    if not decision.get("reuse_completed_workflow"):
-        return None
-    completed = decision.get("completed_workflow") or {}
-    workflow_id = completed.get("workflow_id")
-    composed = completed_workflow_followup_reply(
-        completed,
-        user_message,
-        workflow_variant_mode=decision.get("workflow_variant_mode"),
-    )
-    if workflow_id == V2_WORKFLOW_COST_CALCULATION and decision.get("workflow_variant_mode") is None:
-        if composed and composed.get("reply"):
-            return {
-                "reply": composed["reply"],
-                "intent": workflow_id,
-                "done": True,
-                "workflow_lifecycle": decision,
-                "response_mode": "generate_output",
-                "reply_builder": "workflow_completion_followup",
-                "natural_response": True,
-                "response_type": composed.get("response_type"),
-                "response_source": composed.get("response_source"),
-                "response_reason": composed.get("response_reason"),
-                "reuse_completed_workflow": True,
-                "variant_source": composed.get("variant_source"),
-                "composer_trace": composed.get("composer_trace") or [],
-                "followup_chain": decision.get("followup_chain") or [],
-                "calculation_trace": composed.get("calculation_trace") or {},
-                "conversation_style": "chatgpt_continuation",
-                "continuation_mode": "completed_workflow_followup",
-                "direct_answer_mode": True,
-                "planner_skipped": True,
-                "reuse_reason": "completed_cost_result_available",
-                "response_generation_mode": "completed_context_reuse",
-            }
-
-    workflow_state = completed_to_workflow_state(completed)
-    variant = variant_instruction_from_message(user_message)
-    if decision.get("workflow_variant_mode"):
-        workflow_state["workflow_variant_mode"] = decision.get("workflow_variant_mode")
-        if variant.get("short"):
-            workflow_state.setdefault("collected_fields", {})["tone"] = "Short"
-        if variant.get("youth"):
-            workflow_state.setdefault("collected_fields", {})["target_customer"] = "วัยรุ่น"
-    reply = _generate_workflow_reply(workflow_state)
-    if variant.get("short"):
-        reply = "\n".join([line for line in reply.splitlines() if line.strip()][:4])
-    if composed and composed.get("reply"):
-        reply = composed["reply"]
-    return {
-        "reply": reply,
-        "intent": workflow_id,
-        "done": True,
-        "workflow_lifecycle": decision,
-        "response_mode": "generate_output",
-        "reply_builder": "workflow_completion_followup",
-        "natural_response": True,
-        "response_type": (composed or {}).get("response_type") or "workflow_followup",
-        "response_source": (composed or {}).get("response_source") or "completed_workflow",
-        "response_reason": (composed or {}).get("response_reason") or "fallback_completed_workflow_generation",
-        "reuse_completed_workflow": True,
-        "variant_source": (composed or {}).get("variant_source"),
-        "composer_trace": (composed or {}).get("composer_trace") or ["completed_workflow", "legacy_workflow_generator"],
-        "followup_chain": decision.get("followup_chain") or [],
-        "calculation_trace": (composed or {}).get("calculation_trace") or {},
-        "conversation_style": "chatgpt_continuation",
-        "continuation_mode": "completed_workflow_followup",
-        "direct_answer_mode": True,
-        "planner_skipped": True,
-        "reuse_reason": "completed_content_result_available" if workflow_id == V2_WORKFLOW_CONTENT_PLAN else "completed_workflow_context_available",
-        "response_generation_mode": "variant_generation" if decision.get("workflow_variant_mode") else "completed_context_reuse",
-    }
-
-
-def _completed_workflow_followup_debug_extra(completed_followup: dict | None) -> dict:
-    completed_followup = completed_followup or {}
-    return {
-        **(completed_followup.get("workflow_lifecycle") or {}),
-        "workflow_handler": "completed_workflow_followup",
-        "response_mode": completed_followup.get("response_mode"),
-        "reply_builder": completed_followup.get("reply_builder"),
-        "natural_response": completed_followup.get("natural_response"),
-        "response_type": completed_followup.get("response_type"),
-        "response_source": completed_followup.get("response_source"),
-        "response_reason": completed_followup.get("response_reason"),
-        "reuse_completed_workflow": completed_followup.get("reuse_completed_workflow"),
-        "variant_source": completed_followup.get("variant_source"),
-        "composer_trace": completed_followup.get("composer_trace") or [],
-        "followup_chain": completed_followup.get("followup_chain") or [],
-        "calculation_trace": completed_followup.get("calculation_trace") or {},
-        "conversation_style": completed_followup.get("conversation_style"),
-        "continuation_mode": completed_followup.get("continuation_mode"),
-        "direct_answer_mode": completed_followup.get("direct_answer_mode"),
-        "planner_skipped": completed_followup.get("planner_skipped"),
-        "reuse_reason": completed_followup.get("reuse_reason"),
-        "response_generation_mode": completed_followup.get("response_generation_mode"),
-        "workflow_status": "COMPLETED",
-        "workflow_complete": True,
-        "workflow_released": True,
-        "execution_reason": "completed workflow reused for follow-up",
-    }
-
-
-def _handle_completed_workflow_followup(
-    user_message: str,
-    *,
-    topic: str | None = None,
-) -> bool:
-    completed_followup = _completed_workflow_followup_response(user_message, _sync_session_to_application_state())
-    if not completed_followup:
-        return False
-
-    debug_trace = _new_ai_pipeline_debug_trace(user_message, {})
-    workflow_extra = _completed_workflow_followup_debug_extra(completed_followup)
-    _finalize_ai_pipeline_debug_trace(debug_trace, "workflow_response", completed_followup["reply"], workflow_extra)
-    _append_workflow_reply(
-        completed_followup["reply"],
-        completed_followup["intent"],
-        topic or _ensure_conversation_state().get("current_topic"),
-        response_source_override=completed_followup.get("response_source") or "completed_workflow",
-    )
-    return True
-
-
 def _workflow_llm_context(workflow_state: dict, profile: dict | None, user_message: str) -> dict:
     return {
         "current_workflow": workflow_state.get("workflow"),
@@ -4237,69 +4106,6 @@ def _show_chat_companion(
     strong_cost_intent = is_strong_cost_calculation_message(user_message)
     if strong_cost_intent:
         _clear_generated_response_memory_for_cost_intent()
-
-    transformation = {"handled": False} if strong_cost_intent else transform_response(user_message, _sync_session_to_application_state())
-    if transformation.get("handled"):
-        reply = _clean_chat_reply(transformation.get("reply") or "")
-        reply, response_source, response_empty = _resolve_assistant_reply(reply, "response_transformation")
-        debug_trace = _new_ai_pipeline_debug_trace(user_message, {})
-        workflow_extra = {
-            "workflow_handler": "response_transformation_engine",
-            "response_mode": "transform_previous_response",
-            "reply_builder": "response_transformation_engine",
-            "natural_response": True,
-            "response_type": transformation.get("response_type"),
-            "response_source": transformation.get("response_source"),
-            "response_reason": transformation.get("response_reason"),
-            "transformation_type": transformation.get("transformation_type"),
-            "transformation_reason": transformation.get("transformation_reason"),
-            "transformation_source": transformation.get("transformation_source"),
-            "transformation_chain": transformation.get("transformation_chain") or [],
-            "transformation_history": transformation.get("transformation_history") or [],
-            "used_previous_response": transformation.get("used_previous_response"),
-            "rewrite_mode": transformation.get("rewrite_mode"),
-            "translation_mode": transformation.get("translation_mode"),
-            "conversation_style": transformation.get("conversation_style"),
-            "continuation_mode": transformation.get("continuation_mode"),
-            "direct_answer_mode": transformation.get("direct_answer_mode"),
-            "planner_skipped": transformation.get("planner_skipped"),
-            "reuse_reason": transformation.get("reuse_reason"),
-            "response_generation_mode": transformation.get("response_generation_mode"),
-        }
-        _update_conversation_state_after_assistant(
-            reply,
-            transformation.get("response_type") or "response_transformation",
-            _ensure_conversation_state().get("current_topic"),
-        )
-        _remember_generated_response(
-            reply,
-            response_type=transformation.get("response_type") or "response_transformation",
-            generation_context=transformation.get("last_generation_context") or {},
-            transformation_result=transformation,
-        )
-        st.session_state["chat_history"].append(
-            {"role": "assistant", "content": reply, "show_business_insights": False}
-        )
-        _sync_chat_history_to_application_state()
-        _finalize_ai_pipeline_debug_trace(debug_trace, response_source, reply, workflow_extra)
-        add_pipeline_event(
-            "response",
-            "response_transformation_engine",
-            "assistant message appended",
-            {"response_source": response_source, "last_response_empty": response_empty, **workflow_extra},
-        )
-        with st.chat_message("assistant"):
-            _render_assistant_message(reply)
-        add_pipeline_event(
-            "render",
-            "response_transformation_engine",
-            "assistant rendered",
-            {"response_source": response_source, "last_response_empty": response_empty},
-        )
-        st.session_state["chat_pipeline_in_progress"] = False
-        add_pipeline_event("finalize", "response_transformation_engine", "pipeline finalized")
-        finalize_pipeline_trace()
-        return
 
     locked_state = _sync_session_to_application_state()
     locked_workflow = conversation_os_active_workflow_state(locked_state)

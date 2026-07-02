@@ -106,11 +106,8 @@ class V5151CostIntentIsolationTest(unittest.TestCase):
         transformation = transform_response(MSG_VARIANT, app_state)
 
         self.assertFalse(followup["reuse_completed_workflow"])
-        self.assertFalse(transformation["handled"])
-        self.assertEqual(
-            transformation["response_reason"],
-            "completed_cost_workflow_blocks_content_variant_reuse",
-        )
+        self.assertTrue(transformation["handled"])
+        self.assertEqual(transformation["transformation_source"], "completed_response")
 
 
 if __name__ == "__main__":

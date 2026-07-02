@@ -113,19 +113,6 @@ def transformation_source(application_state: dict | None) -> dict:
             "transformation_history": list(memory.get("transformation_history") or []),
         }
 
-    completed = ((application_state or {}).get("store") or {}).get("last_completed_workflow") or {}
-    completed_response = completed.get("generated_response") or completed.get("reply") or completed.get("response")
-    if completed_response:
-        return {
-            "source": "completed_workflow",
-            "text": str(completed_response).strip(),
-            "response_type": completed.get("response_type") or completed.get("workflow_id") or "completed_workflow",
-            "generation_context": {"completed_workflow": deepcopy(completed)},
-            "variant_history": [],
-            "transformation_chain": [],
-            "transformation_history": [],
-        }
-
     latest = _latest_assistant_from_history(application_state)
     if latest:
         return {
@@ -204,21 +191,6 @@ def transform_response(user_message: str | None, application_state: dict | None)
             "transformation_chain": [],
             "transformation_history": [],
             "response_reason": "strong_cost_calculation_intent_isolated",
-        }
-    completed = ((application_state or {}).get("store") or {}).get("last_completed_workflow") or {}
-    if (
-        detection.get("transformation_type") == "VARIANT"
-        and completed.get("workflow_id") == "COST_CALCULATION"
-    ):
-        return {
-            **detection,
-            "handled": False,
-            "reply": None,
-            "transformation_source": None,
-            "used_previous_response": False,
-            "transformation_chain": [],
-            "transformation_history": [],
-            "response_reason": "completed_cost_workflow_blocks_content_variant_reuse",
         }
     if not detection.get("is_transformation") or not source.get("text"):
         return {

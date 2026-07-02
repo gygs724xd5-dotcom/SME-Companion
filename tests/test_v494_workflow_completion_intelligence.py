@@ -11,10 +11,7 @@ from brain.conversation_manager import (
 from brain.conversation_priority_engine import classify_message_priority
 from brain.task_router import build_task_route, developer_diagnostics
 from brain.workflow_lifecycle import (
-    FOLLOWUP_MODE_REUSE_COMPLETED,
-    VARIANT_MODE_GENERATE_VARIANT,
     classify_completed_workflow_followup,
-    pricing_reply_from_completed_cost,
 )
 from brain.workflow_readiness import WORKFLOW_CONTENT_PLAN, WORKFLOW_COST_CALCULATION
 from brain.workflow_reply_builder import prepare_content_collection_state
@@ -46,7 +43,7 @@ class V494WorkflowCompletionIntelligenceTest(unittest.TestCase):
         self.assertEqual(state["next_action"], "generate")
         self.assertEqual(state["readiness_decision"]["reason"], "execute_before_collecting")
 
-    def test_completed_cost_workflow_reused_for_pricing_followup(self):
+    def test_completed_cost_workflow_is_diagnostics_only_for_pricing_followup(self):
         app_state = {
             "store": {
                 "last_completed_workflow": {
@@ -60,15 +57,13 @@ class V494WorkflowCompletionIntelligenceTest(unittest.TestCase):
             app_state,
             "\u0e04\u0e27\u0e23\u0e02\u0e32\u0e22\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23\u0e14\u0e35",
         )
-        reply = pricing_reply_from_completed_cost(decision["completed_workflow"])
-
-        self.assertTrue(decision["reuse_completed_workflow"])
-        self.assertEqual(decision["workflow_followup_mode"], FOLLOWUP_MODE_REUSE_COMPLETED)
-        self.assertIn("35", reply)
+        self.assertFalse(decision["reuse_completed_workflow"])
+        self.assertIsNone(decision["workflow_followup_mode"])
+        self.assertEqual(decision["completed_workflow"]["collected_fields"]["unit_cost"], 35)
         self.assertIsNone(active_workflow_state(app_state))
         self.assertFalse(planner_locked(app_state))
 
-    def test_variant_request_uses_completed_content_workflow(self):
+    def test_variant_request_does_not_use_completed_content_workflow(self):
         app_state = {
             "store": {
                 "last_completed_workflow": {
@@ -84,9 +79,9 @@ class V494WorkflowCompletionIntelligenceTest(unittest.TestCase):
 
         decision = classify_completed_workflow_followup(app_state, "\u0e02\u0e2d\u0e2d\u0e35\u0e01\u0e41\u0e1a\u0e1a")
 
-        self.assertTrue(decision["reuse_completed_workflow"])
-        self.assertEqual(decision["workflow_followup_mode"], FOLLOWUP_MODE_REUSE_COMPLETED)
-        self.assertEqual(decision["workflow_variant_mode"], VARIANT_MODE_GENERATE_VARIANT)
+        self.assertFalse(decision["reuse_completed_workflow"])
+        self.assertIsNone(decision["workflow_followup_mode"])
+        self.assertIsNone(decision["workflow_variant_mode"])
 
     def test_completed_workflow_is_released_but_diagnostics_keep_completion(self):
         app_state = {}

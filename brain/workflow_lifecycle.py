@@ -1,13 +1,7 @@
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 from datetime import datetime, timezone
-
-from brain.cost_intent_isolation import is_strong_cost_calculation_message
-from brain.workflow_readiness import (
-    WORKFLOW_COST_CALCULATION,
-)
 
 
 STATUS_COLLECTING = "COLLECTING"
@@ -17,65 +11,7 @@ STATUS_COMPLETED = "COMPLETED"
 STATUS_RELEASED = "RELEASED"
 
 VARIANT_MODE_NONE = None
-VARIANT_MODE_GENERATE_VARIANT = "generate_variant"
 FOLLOWUP_MODE_NONE = None
-FOLLOWUP_MODE_REUSE_COMPLETED = "reuse_completed_workflow"
-
-_VARIANT_TRIGGERS = (
-    "ขออีกแบบ",
-    "อีกแบบ",
-    "เอาแบบสั้น",
-    "เอาแบบวัยรุ่น",
-    "ขอเพิ่มอีก",
-    "another",
-    "variant",
-    "shorter",
-)
-
-_PRICING_TRIGGERS = (
-    "ควรขายเท่าไร",
-    "ขายเท่าไร",
-    "ตั้งราคา",
-    "ราคาขาย",
-    "price",
-    "pricing",
-)
-
-_VARIANT_TRIGGERS = _VARIANT_TRIGGERS + (
-    "\u0e02\u0e2d\u0e2d\u0e35\u0e01\u0e41\u0e1a\u0e1a",
-    "\u0e2d\u0e35\u0e01\u0e41\u0e1a\u0e1a",
-    "\u0e2d\u0e35\u0e01\u0e2d\u0e31\u0e19",
-    "\u0e2d\u0e35\u0e01\u0e42\u0e1e\u0e2a\u0e15\u0e4c",
-    "\u0e41\u0e1a\u0e1a\u0e43\u0e2b\u0e21\u0e48",
-    "\u0e41\u0e1a\u0e1a\u0e2a\u0e31\u0e49\u0e19",
-    "\u0e41\u0e1a\u0e1a\u0e22\u0e32\u0e27",
-    "\u0e40\u0e2d\u0e32\u0e41\u0e1a\u0e1a\u0e2a\u0e31\u0e49\u0e19",
-    "\u0e40\u0e2d\u0e32\u0e41\u0e1a\u0e1a\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19",
-    "\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19",
-    "\u0e2b\u0e23\u0e39",
-    "\u0e40\u0e1b\u0e47\u0e19\u0e01\u0e31\u0e19\u0e40\u0e2d\u0e07",
-    "\u0e02\u0e32\u0e22\u0e40\u0e01\u0e48\u0e07\u0e01\u0e27\u0e48\u0e32\u0e40\u0e14\u0e34\u0e21",
-    "new version",
-    "longer",
-    "luxury",
-    "friendly",
-)
-
-_PRICING_TRIGGERS = _PRICING_TRIGGERS + (
-    "\u0e04\u0e27\u0e23\u0e02\u0e32\u0e22\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23",
-    "\u0e02\u0e32\u0e22\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23",
-    "\u0e15\u0e31\u0e49\u0e07\u0e23\u0e32\u0e04\u0e32",
-    "\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22",
-    "\u0e01\u0e33\u0e44\u0e23",
-    "\u0e1a\u0e27\u0e01",
-    "\u0e16\u0e49\u0e32\u0e02\u0e32\u0e22",
-    "\u0e02\u0e32\u0e22",
-    "sell",
-    "selling price",
-    "sale price",
-    "profit",
-    "markup",
-)
 
 
 def now_iso() -> str:
@@ -192,74 +128,15 @@ def completed_workflow_context(application_state: dict | None) -> dict | None:
 
 def classify_completed_workflow_followup(application_state: dict | None, user_message: str | None) -> dict:
     completed = completed_workflow_context(application_state)
-    normalized = str(user_message or "").strip().lower()
-    base = {
+    return {
         "workflow_followup_mode": FOLLOWUP_MODE_NONE,
         "workflow_variant_mode": VARIANT_MODE_NONE,
         "reuse_completed_workflow": False,
         "completed_workflow": completed or {},
-        "workflow_transition_reason": None,
+        "workflow_transition_reason": "completed workflows are diagnostics only; planner owns next workflow",
         "followup_chain": [],
     }
 
-    if not completed or not normalized:
-        return base
-
-    workflow_id = completed.get("workflow_id")
-    if is_strong_cost_calculation_message(user_message):
-        return {
-            **base,
-            "workflow_transition_reason": "strong cost calculation intent isolated from completed workflow context",
-            "followup_chain": ["cost_intent_isolation"],
-        }
-
-    if workflow_id != WORKFLOW_COST_CALCULATION and any(trigger in normalized for trigger in _VARIANT_TRIGGERS):
-        return {
-            **base,
-            "workflow_followup_mode": FOLLOWUP_MODE_REUSE_COMPLETED,
-            "workflow_variant_mode": VARIANT_MODE_GENERATE_VARIANT,
-            "reuse_completed_workflow": True,
-            "workflow_transition_reason": "variant request reused last completed workflow",
-            "followup_chain": ["completed_workflow", "variant_request"],
-        }
-
-    pricing_pattern = re.search(
-        r"(\u0e01\u0e33\u0e44\u0e23|\u0e1a\u0e27\u0e01|\u0e02\u0e32\u0e22|\u0e23\u0e32\u0e04\u0e32|\u0e16\u0e49\u0e32\u0e02\u0e32\u0e22|profit|markup|price)\s*\d",
-        normalized,
-        flags=re.IGNORECASE,
-    )
-    if workflow_id == WORKFLOW_COST_CALCULATION and (
-        any(trigger in normalized for trigger in _PRICING_TRIGGERS) or pricing_pattern
-    ):
-        return {
-            **base,
-            "workflow_followup_mode": FOLLOWUP_MODE_REUSE_COMPLETED,
-            "workflow_variant_mode": VARIANT_MODE_NONE,
-            "reuse_completed_workflow": True,
-            "workflow_transition_reason": "pricing follow-up reused completed cost workflow",
-            "followup_chain": ["completed_workflow", "pricing_followup"],
-        }
-
-    return base
-
-
-def pricing_reply_from_completed_cost(completed: dict | None) -> str | None:
-    from brain.workflow_state_machine import cost_calculation_trace
-
-    fields = (completed or {}).get("collected_fields") or {}
-    if not fields:
-        return None
-    trace = cost_calculation_trace(fields)
-    cost_per_unit = trace.get("computed_cost_per_unit")
-    if cost_per_unit in (None, "", [], {}):
-        return None
-    base = float(cost_per_unit)
-    suggested = round(base / 0.65, 2)
-    profit = round(suggested - base, 2)
-    return (
-        f"จากต้นทุนต่อชิ้น {base:g} บาท แนะนำตั้งราคาขายประมาณ {suggested:g} บาทต่อชิ้น\n\n"
-        f"จะเหลือกำไรขั้นต้นประมาณ {profit:g} บาทต่อชิ้น ก่อนหักค่าแพ็กเกจ ค่าขนส่ง และค่าโฆษณา"
-    )
 
 
 def completed_to_workflow_state(completed: dict | None) -> dict:
@@ -273,12 +150,12 @@ def completed_to_workflow_state(completed: dict | None) -> dict:
             "required_fields": [],
             "collected_fields": fields,
             "missing_fields": [],
-            "is_ready": True,
-            "next_action": "completed",
+            "is_ready": False,
+            "next_action": "diagnostics_only",
             "last_updated": data.get("completed_at"),
         },
         completion_reason="loaded from completed workflow context",
-        followup_mode=FOLLOWUP_MODE_REUSE_COMPLETED,
+        followup_mode=FOLLOWUP_MODE_NONE,
     )
 
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from brain.natural_response_engine import contains_structured_noise, naturalize_response
 from brain.response_mode_engine import ASK_NEXT_FIELD, GENERATE_OUTPUT, determine_response_mode
 from brain.workflow_lifecycle import variant_instruction_from_message
@@ -12,8 +10,6 @@ from brain.workflow_readiness import (
     WORKFLOW_RECEIPT_CAPTURE,
     WORKFLOW_SALES_PLAN_7_DAY,
 )
-from brain.workflow_state_machine import cost_calculation_trace
-
 
 CONTENT_REQUIRED_FIELDS = ("product", "target_customer")
 CONTENT_OPTIONAL_DEFAULTS = {"tone": "Friendly"}
@@ -93,122 +89,6 @@ def prepare_content_collection_state(workflow_state: dict) -> dict:
     return state
 
 
-def _format_number(value) -> str:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    if numeric.is_integer():
-        return str(int(numeric))
-    return f"{numeric:.2f}".rstrip("0").rstrip(".")
-
-
-def _extract_profit_percent(message: str | None) -> float | None:
-    text = str(message or "")
-    patterns = (
-        r"(?:\u0e01\u0e33\u0e44\u0e23|profit|markup|\u0e1a\u0e27\u0e01)\s*(\d+(?:\.\d+)?)\s*%",
-        r"(?:\u0e01\u0e33\u0e44\u0e23|profit|markup|\u0e1a\u0e27\u0e01)\s*(\d+(?:\.\d+)?)(?![\d.]|\s*(?:\u0e1a\u0e32\u0e17|baht))",
-        r"(\d+(?:\.\d+)?)\s*%\s*(?:\u0e01\u0e33\u0e44\u0e23|profit|markup)?",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            return float(match.group(1))
-    return None
-
-
-def _extract_fixed_profit(message: str | None) -> float | None:
-    text = str(message or "")
-    patterns = (
-        r"(?:\u0e01\u0e33\u0e44\u0e23|profit)\s*(\d+(?:\.\d+)?)\s*(?:\u0e1a\u0e32\u0e17|baht)",
-        r"(?:\u0e40\u0e2d\u0e32\u0e01\u0e33\u0e44\u0e23|profit)\s*(\d+(?:\.\d+)?)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match and "%" not in match.group(0):
-            return float(match.group(1))
-    return None
-
-
-def _extract_requested_selling_price(message: str | None) -> float | None:
-    text = str(message or "")
-    patterns = (
-        r"(?:\u0e16\u0e49\u0e32\u0e02\u0e32\u0e22|\u0e02\u0e32\u0e22|\u0e23\u0e32\u0e04\u0e32|sell|price)\s*(\d+(?:\.\d+)?)",
-        r"(\d+(?:\.\d+)?)\s*(?:\u0e1a\u0e32\u0e17|baht)\s*(?:\u0e14\u0e35\u0e44\u0e2b\u0e21|\u0e44\u0e2b\u0e21)?",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            return float(match.group(1))
-    return None
-
-
-def pricing_followup_reply(completed_workflow: dict | None, user_message: str | None = None) -> dict | None:
-    fields = (completed_workflow or {}).get("collected_fields") or {}
-    trace = cost_calculation_trace(fields)
-    cost_per_unit = trace.get("computed_cost_per_unit")
-    if cost_per_unit in (None, "", [], {}):
-        return None
-
-    base = float(cost_per_unit)
-    profit_percent = _extract_profit_percent(user_message)
-    fixed_profit = _extract_fixed_profit(user_message)
-    requested_selling_price = _extract_requested_selling_price(user_message)
-    if profit_percent is not None:
-        selling_price = round(base * (1 + (profit_percent / 100)), 2)
-        profit = round(selling_price - base, 2)
-        reason = "profit_markup_from_completed_cost"
-        reply = (
-            f"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19 {_format_number(base)} \u0e1a\u0e32\u0e17 "
-            f"\u0e16\u0e49\u0e32\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23\u0e01\u0e33\u0e44\u0e23 {_format_number(profit_percent)}% "
-            f"\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22\u0e04\u0e37\u0e2d {_format_number(selling_price)} \u0e1a\u0e32\u0e17\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19\n\n"
-            f"\u0e01\u0e33\u0e44\u0e23\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19\u0e1b\u0e23\u0e30\u0e21\u0e32\u0e13 {_format_number(profit)} \u0e1a\u0e32\u0e17"
-        )
-    elif fixed_profit is not None:
-        selling_price = round(base + fixed_profit, 2)
-        profit = round(fixed_profit, 2)
-        reason = "fixed_profit_from_completed_cost"
-        reply = (
-            f"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19 {_format_number(base)} \u0e1a\u0e32\u0e17 "
-            f"\u0e16\u0e49\u0e32\u0e40\u0e2d\u0e32\u0e01\u0e33\u0e44\u0e23 {_format_number(fixed_profit)} \u0e1a\u0e32\u0e17 "
-            f"\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22\u0e04\u0e37\u0e2d {_format_number(selling_price)} \u0e1a\u0e32\u0e17\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19"
-        )
-    elif requested_selling_price is not None:
-        selling_price = round(requested_selling_price, 2)
-        profit = round(selling_price - base, 2)
-        margin = round((profit / selling_price) * 100, 2) if selling_price else 0
-        reason = "fixed_price_evaluation_from_completed_cost"
-        verdict = "\u0e02\u0e32\u0e22\u0e44\u0e14\u0e49" if profit > 0 else "\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e04\u0e38\u0e49\u0e21"
-        reply = (
-            f"\u0e16\u0e49\u0e32\u0e02\u0e32\u0e22 {_format_number(selling_price)} \u0e1a\u0e32\u0e17 "
-            f"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19 {_format_number(base)} \u0e1a\u0e32\u0e17 "
-            f"\u0e08\u0e30\u0e44\u0e14\u0e49\u0e01\u0e33\u0e44\u0e23 {_format_number(profit)} \u0e1a\u0e32\u0e17\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19\n\n"
-            f"\u0e21\u0e32\u0e23\u0e4c\u0e08\u0e34\u0e49\u0e19\u0e1b\u0e23\u0e30\u0e21\u0e32\u0e13 {_format_number(margin)}% \u0e2a\u0e23\u0e38\u0e1b\u0e04\u0e37\u0e2d{verdict}"
-        )
-    else:
-        selling_price = round(base / 0.65, 2)
-        profit = round(selling_price - base, 2)
-        reason = "default_35_percent_margin_from_completed_cost"
-        reply = (
-            f"\u0e08\u0e32\u0e01\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19 {_format_number(base)} \u0e1a\u0e32\u0e17 "
-            f"\u0e41\u0e19\u0e30\u0e19\u0e33\u0e15\u0e31\u0e49\u0e07\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22\u0e1b\u0e23\u0e30\u0e21\u0e32\u0e13 {_format_number(selling_price)} \u0e1a\u0e32\u0e17\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19\n\n"
-            f"\u0e08\u0e30\u0e40\u0e2b\u0e25\u0e37\u0e2d\u0e01\u0e33\u0e44\u0e23\u0e02\u0e31\u0e49\u0e19\u0e15\u0e49\u0e19\u0e1b\u0e23\u0e30\u0e21\u0e32\u0e13 {_format_number(profit)} \u0e1a\u0e32\u0e17\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19"
-        )
-
-    return {
-        "reply": reply,
-        "response_reason": reason,
-        "calculation_trace": {
-            **trace,
-            "requested_profit_percent": profit_percent,
-            "requested_fixed_profit": fixed_profit,
-            "requested_selling_price": requested_selling_price,
-            "computed_selling_price": selling_price,
-            "computed_profit_per_unit": profit,
-        },
-    }
-
-
 def _content_post_from_fields(fields: dict, *, variant: dict | None = None) -> str:
     variant = variant or {}
     product = fields.get("product") or fields.get("business_type") or "\u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32"
@@ -257,39 +137,6 @@ def completed_workflow_followup_reply(
     *,
     workflow_variant_mode: str | None = None,
 ) -> dict | None:
-    completed = completed_workflow or {}
-    workflow_id = completed.get("workflow_id")
-    fields = dict(completed.get("collected_fields") or {})
-    variant = {
-        **variant_instruction_from_message(user_message),
-        "generate_variant": bool(workflow_variant_mode),
-    }
-
-    if workflow_id == WORKFLOW_COST_CALCULATION:
-        pricing = pricing_followup_reply(completed, user_message)
-        if pricing:
-            return {
-                **pricing,
-                "response_type": "pricing_followup",
-                "response_source": "completed_workflow",
-                "variant_source": None,
-                "composer_trace": ["completed_workflow", "cost_pricing_followup"],
-            }
-        return None
-
-    if workflow_id == WORKFLOW_CONTENT_PLAN:
-        if variant.get("youth"):
-            fields["target_customer"] = "\u0e27\u0e31\u0e22\u0e23\u0e38\u0e48\u0e19"
-        reply = _content_post_from_fields(fields, variant=variant)
-        return {
-            "reply": reply,
-            "response_type": "content_short_version" if variant.get("short") else "content_long_version" if variant.get("long") else "content_variant",
-            "response_source": "completed_workflow",
-            "response_reason": "summarized_previous_generated_content" if variant.get("short") else "expanded_previous_generated_content" if variant.get("long") else "generated_variant_from_completed_content_workflow",
-            "variant_source": "previous_completed_content",
-            "composer_trace": ["completed_workflow", "content_fields", "short_version" if variant.get("short") else "long_version" if variant.get("long") else "variant"],
-        }
-
     return None
 
 

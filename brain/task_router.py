@@ -39,7 +39,6 @@ from brain.intent_resolver import resolve_intent
 from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
 from brain.planner_engine import build_execution_plan
 from brain.reasoning_engine import build_reasoning
-from brain.response_transformation_engine import detect_response_transformation, transformation_source
 from brain.response_envelope_runtime import build_response_envelope, response_envelope_diagnostics
 from brain.skill_loader import load_skills
 from brain.business_skill_registry import registry_diagnostics
@@ -485,86 +484,8 @@ def _with_response_gate(route: dict) -> dict:
     return {**route, **gate}
 
 
-def _planner_skipped_route(
-    user_message: str | None,
-    *,
-    reason: str,
-    response_source: str,
-    extra: dict | None = None,
-) -> dict:
-    return _with_response_gate({
-        "planner_output": {
-            "goal": str(user_message or "").strip(),
-            "task_type": "Conversation Continuation",
-            "workflow": None,
-            "required_skills": [],
-            "required_information": [],
-            "known_information": ["previous_response"],
-            "missing_information": [],
-            "can_execute": True,
-            "next_step": "skip_planner",
-            "priority": "high",
-            "estimated_response_mode": response_source,
-            "planner_skipped": True,
-        },
-        "conversation_understanding": {},
-        "conversation_intelligence": {},
-        "intent_resolution": {"resolved_intent": reason, "resolved_workflow": None},
-        "detected_intent": {},
-        "extracted_entities": {},
-        "business_workflow": {},
-        "business_context": {},
-        "conversation_memory": {},
-        "task_type": "Conversation Continuation",
-        "selected_capability": None,
-        "loaded_skills": [],
-        "reasoning": {"action": reason, "workflow_ready": False},
-        "reasoning_mode": "conversation_continuation",
-        "llm_reasoning_context": {},
-        "llm_decision": {"should_use_llm": False, "reason": "Planner skipped for response continuation."},
-        "workflow_ready": False,
-        "llm_needed": False,
-        "capability_available": True,
-        "placeholders": dict(PLACEHOLDER_ENGINES),
-        "planner_skipped": True,
-        "direct_answer_mode": True,
-        "continuation_mode": reason,
-        "response_source": response_source,
-        "response_generation_mode": response_source,
-        **(extra or {}),
-    })
-
-
-def _continuation_route_if_planner_should_skip(state: dict, user_message: str | None) -> dict | None:
-    transformation = detect_response_transformation(user_message)
-    source = transformation_source(state)
-    if transformation.get("is_transformation") and source.get("text"):
-        return _planner_skipped_route(
-            user_message,
-            reason="response_transformation",
-            response_source="response_transformation",
-            extra={
-                "transformation_type": transformation.get("transformation_type"),
-                "transformation_reason": transformation.get("transformation_reason"),
-                "transformation_source": source.get("source"),
-                "transformation_chain": source.get("transformation_chain") or [],
-                "transformation_history": source.get("transformation_history") or [],
-                "used_previous_response": True,
-                "rewrite_mode": transformation.get("rewrite_mode"),
-                "translation_mode": transformation.get("translation_mode"),
-                "reuse_reason": "previous_generated_response_available",
-            },
-        )
-
-    return None
-
-
 def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
-    continuation_route = _continuation_route_if_planner_should_skip(state, user_message)
-    if continuation_route:
-        return continuation_route
-
     business_intent = detect_business_intent(user_message)
     entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
     workflow_decision = {}
