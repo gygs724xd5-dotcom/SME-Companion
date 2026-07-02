@@ -3433,10 +3433,16 @@ def _handle_state_machine_workflow(
             "allow_field_extraction": bool(priority_decision.get("allow_field_extraction")),
         },
     )
+    planner_authorized_workflow = (
+        detected_workflow
+        if priority_decision.get("allow_field_extraction")
+        else None
+    )
+
     workflow_state, extracted_fields, authorization = update_workflow_state_if_authorized(
         state.get("workflow_state_v2") or {},
         user_message,
-        authorized_workflow=detected_workflow,
+        authorized_workflow=planner_authorized_workflow,
         detected_workflow=detected_workflow,
     )
     add_pipeline_event(
