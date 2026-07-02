@@ -105,6 +105,24 @@ _REQUEST_WORDS = (
     "read",
 )
 
+_QUESTION_WORDS = (
+    "?",
+    "\u0e01\u0e35\u0e48",
+    "\u0e2d\u0e30\u0e44\u0e23",
+    "\u0e17\u0e33\u0e44\u0e21",
+    "\u0e43\u0e04\u0e23",
+    "\u0e17\u0e35\u0e48\u0e44\u0e2b\u0e19",
+    "\u0e40\u0e21\u0e37\u0e48\u0e2d\u0e44\u0e2b\u0e23\u0e48",
+    "\u0e2d\u0e22\u0e48\u0e32\u0e07\u0e44\u0e23",
+    "\u0e44\u0e2b\u0e21",
+    "what",
+    "why",
+    "how",
+    "who",
+    "where",
+    "when",
+)
+
 
 @dataclass(frozen=True)
 class PriorityDecision:
@@ -273,7 +291,7 @@ def _is_small_talk(normalized: str) -> bool:
 
 
 def _looks_like_short_field_answer(message: str, normalized: str) -> bool:
-    if "?" in message or "\u0e44\u0e2b\u0e21" in normalized:
+    if _contains_any(normalized, _QUESTION_WORDS):
         return False
     if _contains_any(normalized, _REQUEST_WORDS):
         return False

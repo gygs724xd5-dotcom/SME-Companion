@@ -81,6 +81,7 @@ from brain.goal_engine import (
     evaluate_business_goal,
     get_active_business_goal,
 )
+from brain.general_response_router import build_general_direct_response, select_general_response_route
 from brain.llm_context_builder import build_llm_context
 from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
 from brain.promotion_engine import get_promotion_idea
@@ -3433,9 +3434,13 @@ def _handle_state_machine_workflow(
             "allow_field_extraction": bool(priority_decision.get("allow_field_extraction")),
         },
     )
+    current_workflow = workflow_before.get("workflow")
     planner_authorized_workflow = (
         detected_workflow
-        if priority_decision.get("allow_field_extraction")
+        if (
+            priority_decision.get("allow_field_extraction")
+            or (detected_workflow and current_workflow != detected_workflow)
+        )
         else None
     )
 
@@ -4502,6 +4507,10 @@ def _show_chat_companion(
             "workflow_authorization": workflow_authorization,
         }
     )
+    if select_general_response_route(task_route, conversation_intent).get("handled"):
+        detected_workflow = None
+        detected_workflow_v2 = None
+        active_workflow = None
 
     direct_reply = None
     if should_answer_directly(conversation_understanding):
@@ -4626,6 +4635,114 @@ def _show_chat_companion(
         response = _handle_receipt_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "receipt_legacy"})
         _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
+        return
+
+    demo_mode = bool(st.session_state.get("demo_mode"))
+    general_route = select_general_response_route(task_route, conversation_intent)
+    if general_route.get("handled"):
+        general_reply = build_general_direct_response(user_message)
+        general_source = "general_direct_response" if general_reply else "general_response"
+        general_candidates = []
+        if general_reply:
+            general_candidates.append({"source": "direct_conversation_response", "text": general_reply})
+        else:
+            general_llm_context = build_prompt_context(
+                application_state=_sync_session_to_application_state(),
+                planner=task_route.get("planner_output"),
+                capability=task_route.get("selected_capability"),
+                loaded_skill=task_route.get("loaded_skills"),
+                reasoning=task_route.get("reasoning"),
+                conversation_memory=(_get_application_state().get("conversation") or {}),
+                workflow_state={},
+                store_profile=chat_profile,
+                business_context=task_route.get("business_context"),
+                current_goal=goal_status or {},
+                current_task=(task_route.get("planner_output") or {}).get("task_type"),
+                llm_decision={
+                    **(task_route.get("llm_decision") or {}),
+                    "should_use_llm": True,
+                    "response_mode": "llm",
+                    "source_of_truth": "task_router",
+                    "reason": "General Response Router selected executable general route.",
+                },
+                developer_mode=bool(st.session_state.get("developer_mode")),
+            )
+            st.session_state["last_prompt_context"] = general_llm_context
+            _update_application_section("developer", {"prompt_context": general_llm_context})
+            if can_call_llm(st) and (not demo_mode or _allow_demo_llm_call(user_message, general_llm_context)):
+                with st.spinner("AI à¸à¸³à¸¥à¸±à¸‡à¸•à¸­à¸š..."):
+                    try:
+                        general_reply = generate_llm_response(
+                            user_message,
+                            context=general_llm_context,
+                            demo_mode=demo_mode,
+                        )
+                    except Exception as llm_error:
+                        general_reply = None
+                        _update_application_section(
+                            "developer",
+                            {"general_response_error": f"{type(llm_error).__name__}: {llm_error}"},
+                        )
+                if general_reply:
+                    record_llm_call(st, 0.002 if demo_mode else 0.01)
+                    general_source = "llm_response"
+                    general_candidates.append({"source": "llm_response", "text": general_reply})
+            if not general_reply:
+                general_reply = "ขออภัยครับ ตอนนี้ยังตอบคำถามทั่วไปด้วย AI ไม่ได้ชั่วคราว"
+                general_source = "general_response_unavailable"
+                general_candidates.append({"source": "fallback_response", "text": general_reply})
+
+        general_reply, general_source, general_empty = _resolve_assistant_reply(
+            _clean_chat_reply(general_reply),
+            general_source,
+        )
+        topic = state.get("current_topic")
+        _update_conversation_state_after_assistant(general_reply, conversation_intent, topic)
+        assistant_message = {
+            "role": "assistant",
+            "content": general_reply,
+            "show_business_insights": False,
+        }
+        commit_assistant_turn(
+            general_reply,
+            intent=conversation_intent,
+            workflow=None,
+            business_topic=topic,
+            response_metadata={
+                "response_source": general_source,
+                "last_response_empty": general_empty,
+                "user_message": user_message,
+            },
+            assistant_message=assistant_message,
+        )
+        finalize_debug(
+            general_source,
+            general_reply,
+            {
+                "response_builder": "general_response_router",
+                "reply_builder": "general_response_router",
+                "response_generation_mode": general_route.get("response_mode"),
+                "response_reason": general_route.get("reason"),
+            },
+            response_candidates=general_candidates,
+        )
+        add_pipeline_event(
+            "response",
+            "general_response_router",
+            "assistant message appended",
+            {"response_source": general_source, "last_response_empty": general_empty},
+        )
+        with st.chat_message("assistant"):
+            _render_assistant_message(general_reply)
+        add_pipeline_event(
+            "render",
+            "general_response_router",
+            "assistant rendered",
+            {"response_source": general_source, "last_response_empty": general_empty},
+        )
+        st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "general_response_router", "pipeline finalized")
+        finalize_pipeline_trace()
         return
 
     simple_reply = None
