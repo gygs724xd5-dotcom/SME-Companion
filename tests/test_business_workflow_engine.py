@@ -110,7 +110,8 @@ class BusinessWorkflowEngineTest(unittest.TestCase):
 
         route = build_task_route(state, "customer says it is too expensive")
 
-        self.assertEqual(route["business_workflow"]["workflow_action"], "interrupt")
+        self.assertEqual(route["business_workflow"]["workflow_action"], "release")
+        self.assertTrue(route["business_workflow"]["workflow_released"])
         self.assertFalse(route.get("planner_locked", False))
 
     def test_task_router_label_explanation_overrides_active_workflow(self):
@@ -119,7 +120,8 @@ class BusinessWorkflowEngineTest(unittest.TestCase):
 
         route = build_task_route(state, "pricing_unclear คืออะไร")
 
-        self.assertEqual(route["business_workflow"]["workflow_action"], "interrupt")
+        self.assertEqual(route["business_workflow"]["workflow_action"], "release")
+        self.assertTrue(route["business_workflow"]["workflow_released"])
         self.assertFalse(route.get("planner_locked", False))
 
     def test_general_question_overrides_active_workflow(self):
@@ -128,7 +130,8 @@ class BusinessWorkflowEngineTest(unittest.TestCase):
 
         route = build_task_route(state, "what time is it?")
 
-        self.assertEqual(route["business_workflow"]["workflow_action"], "interrupt")
+        self.assertEqual(route["business_workflow"]["workflow_action"], "release")
+        self.assertTrue(route["business_workflow"]["workflow_released"])
         self.assertFalse(route.get("planner_locked", False))
 
     def test_returning_to_previous_workflow_is_diagnosed(self):

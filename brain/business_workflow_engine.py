@@ -26,6 +26,7 @@ ACTION_RESUME = "resume"
 ACTION_COMPLETE = "complete"
 ACTION_CANCEL = "cancel"
 ACTION_START_NEW = "start_new"
+ACTION_RELEASE = "release"
 
 WORKFLOW_STATUS_DONE = {"END", "CANCELLED", "TIMEOUT"}
 
@@ -361,13 +362,33 @@ def _decide_planner_owned_workflow(
 
     if not workflow_id:
         override = _override_reason(detected_intent, user_message)
+        if active:
+            return _with_decision(
+                _build_payload(
+                    workflow_action=ACTION_RELEASE,
+                    workflow_state=None,
+                    user_message=user_message,
+                    detected_intent=detected_intent,
+                    workflow_confidence=workflow_confidence,
+                    workflow_reason=override or "planner did not select a workflow; active workflow released",
+                    entity_result=entity_result,
+                    current_entities=current_entities,
+                    canonical_entities=canonical_entities,
+                ),
+                workflow_interrupted=False,
+                workflow_resume_available=False,
+                workflow_released=True,
+                workflow_release_reason="planner_released_active_workflow",
+                previous_workflow_id=active_workflow_id,
+                next_workflow_id=None,
+            )
         return _with_decision(
             base,
-            workflow_action=ACTION_INTERRUPT if active or override else ACTION_CONTINUE,
-            workflow_state=active,
+            workflow_action=ACTION_INTERRUPT if override else ACTION_CONTINUE,
+            workflow_state=None,
             workflow_confidence=workflow_confidence,
             workflow_reason=override or "planner did not select a workflow",
-            workflow_interrupted=bool(active or override),
+            workflow_interrupted=bool(override),
         )
 
     if active and workflow_id == active_workflow_id:
@@ -539,7 +560,44 @@ def _with_decision(payload: dict, **updates) -> dict:
     result = {**payload, **updates}
     if result.get("workflow_action") == ACTION_INTERRUPT:
         result["workflow_interrupted"] = True
-        result["workflow_resume_available"] = bool(result.get("workflow_state"))
+        if "workflow_resume_available" not in updates:
+            result["workflow_resume_available"] = bool(result.get("workflow_state"))
+    if result.get("workflow_action") == ACTION_RELEASE:
+        result["workflow_state"] = None
+        result["workflow_interrupted"] = False
+        result["workflow_resume_available"] = False
+        result["workflow_released"] = True
+        result["workflow_complete"] = False
+        result["required_entities"] = []
+        result["completed_entities"] = []
+        result["missing_entities"] = []
+        result["readiness_required_fields"] = []
+        result["readiness_completed_fields"] = []
+        result["readiness_missing_fields"] = []
+        result["missing_reason_by_field"] = {}
+        result["entity_completeness"] = {"completed": 0, "required": 0, "percent": 1.0}
+        result["next_question"] = None
+        result["workflow_readiness_decision"] = {
+            "workflow_id": None,
+            "required_entities": [],
+            "completed_entities": [],
+            "missing_entities": [],
+            "workflow_complete": False,
+            "reason_by_field": {},
+        }
+        result["readiness_decision"] = {
+            "workflow_executable": False,
+            "missing_fields": [],
+            "reason": "workflow_released",
+        }
+        result["completion_decision"] = {
+            "workflow_complete": False,
+            "reason": None,
+        }
+        result["transition_decision"] = {
+            "to": STATUS_COLLECTING,
+            "reason": "active workflow released",
+        }
     if result.get("workflow_action") == ACTION_COMPLETE:
         result["workflow_complete"] = True
     return result

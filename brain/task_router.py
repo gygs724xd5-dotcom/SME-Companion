@@ -216,8 +216,15 @@ def _active_workflow_id_from_state(state: dict | None) -> str | None:
 def _workflow_domain_boundary_for_decision(state: dict, workflow_decision: dict) -> dict:
     next_workflow_id = _workflow_id_from_business_workflow(workflow_decision)
     previous_workflow_id = workflow_decision.get("previous_workflow_id") or _active_workflow_id_from_state(state)
+    workflow_action = workflow_decision.get("workflow_action")
+    if workflow_action == "release" and previous_workflow_id:
+        return release_workflow_domain(
+            state,
+            next_workflow_id=workflow_decision.get("next_workflow_id"),
+            reason=workflow_decision.get("workflow_release_reason") or "planner_released_active_workflow",
+        )
     domain_changed = bool(
-        workflow_decision.get("workflow_action") == "start_new"
+        workflow_action == "start_new"
         and previous_workflow_id
         and next_workflow_id
         and previous_workflow_id != next_workflow_id
