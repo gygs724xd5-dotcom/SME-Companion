@@ -592,6 +592,7 @@ def build_task_route(application_state, user_message) -> dict:
             "detected_intent": intent_resolution.get("resolved_intent") or business_intent.get("detected_intent"),
         },
         entity_result=entity_result,
+        canonical_entities=canonical_entities,
         application_state=state,
         planner_decision=plan,
         resolved_workflow=plan.get("workflow") or intent_resolution.get("resolved_workflow"),

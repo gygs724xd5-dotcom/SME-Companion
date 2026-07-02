@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from brain.canonical_entity_adapter import merge_canonical_fields_first
+
 
 _NUMBER_PATTERN = r"\d+(?:,\d{3})*(?:\.\d+)?"
 _CHANNELS = ["หน้าร้าน", "ออนไลน์", "facebook", "line", "tiktok", "ตลาดนัด"]
@@ -189,11 +191,15 @@ def _extract_profit_fields(message: str) -> dict:
     return fields
 
 
-def extract_workflow_fields(message: str, workflow: str | None = None) -> dict:
+def extract_workflow_fields(
+    message: str,
+    workflow: str | None = None,
+    canonical_entities: dict | None = None,
+) -> dict:
     if workflow == "COST_CALCULATION":
-        return _extract_cost_fields(message)
+        return merge_canonical_fields_first(_extract_cost_fields(message), canonical_entities, workflow=workflow)
     if workflow == "PROFIT_CALCULATION":
-        return _extract_profit_fields(message)
+        return merge_canonical_fields_first(_extract_profit_fields(message), canonical_entities, workflow=workflow)
 
     fields = {}
     product = _extract_product(message)
@@ -210,4 +216,4 @@ def extract_workflow_fields(message: str, workflow: str | None = None) -> dict:
     if any(word in str(message or "") for word in ["แป้ง", "ไข่", "น้ำตาล", "ทำได้", "ต้นทุน"]):
         fields.update(_extract_cost_fields(message))
 
-    return fields
+    return merge_canonical_fields_first(fields, canonical_entities, workflow=workflow)

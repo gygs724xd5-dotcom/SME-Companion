@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from brain.business_entity_extractor import REQUIRED_BY_INTENT
+from brain.canonical_entity_adapter import canonical_workflow_fields
 from brain.conversation_manager import active_workflow_state, ensure_conversation_os_state
 from brain.workflow_registry import get_workflow_definition, get_workflow_registry
 from brain.workflow_state_machine import cost_calculation_trace
@@ -89,6 +90,7 @@ def decide_business_workflow(
     application_state: dict | None = None,
     planner_decision: dict | None = None,
     resolved_workflow: str | None = None,
+    canonical_entities: dict | None = None,
 ) -> dict:
     """Decide whether the current message should collect, pause, resume, or bypass workflow."""
     message = str(user_message or "").strip()
@@ -114,6 +116,7 @@ def decide_business_workflow(
         workflow_reason="workflow decision initialized",
         entity_result=entity_result,
         current_entities=entities,
+        canonical_entities=canonical_entities,
     )
 
     if planner_decision is not None or resolved_workflow is not None:
@@ -125,6 +128,7 @@ def decide_business_workflow(
             workflow_confidence=max(intent_confidence, 0.7 if planner_workflow else 0.45),
             entity_result=entity_result,
             current_entities=entities,
+            canonical_entities=canonical_entities,
             active=active,
             paused=paused,
             active_workflow_id=active_workflow_id,
@@ -152,6 +156,7 @@ def decide_business_workflow(
                 workflow_reason="user requested workflow resume",
                 entity_result=entity_result,
                 current_entities=entities,
+                canonical_entities=canonical_entities,
             ),
             workflow_interrupted=False,
         )
@@ -168,6 +173,7 @@ def decide_business_workflow(
                 workflow_reason="profit calculation interrupts active cost workflow",
                 entity_result=entity_result,
                 current_entities=entities,
+                canonical_entities=canonical_entities,
             ),
             workflow_interrupted=True,
         )
@@ -187,6 +193,7 @@ def decide_business_workflow(
                 workflow_reason="workflow domain changed; previous workflow released",
                 entity_result=entity_result,
                 current_entities=entities,
+                canonical_entities=canonical_entities,
             ),
             workflow_interrupted=True,
             workflow_domain_changed=True,
@@ -205,6 +212,7 @@ def decide_business_workflow(
                 workflow_reason=_override_reason(intent, message),
                 entity_result=entity_result,
                 current_entities=entities,
+                canonical_entities=canonical_entities,
             ),
             workflow_interrupted=True,
         )
@@ -219,6 +227,7 @@ def decide_business_workflow(
             workflow_reason="current message continues active workflow",
             entity_result=entity_result,
             current_entities=entities,
+            canonical_entities=canonical_entities,
         )
         if workflow_payload["workflow_complete"]:
             return _with_decision(
@@ -256,6 +265,7 @@ def decide_business_workflow(
             workflow_reason="business intent starts a workflow",
             entity_result=entity_result,
             current_entities=entities,
+            canonical_entities=canonical_entities,
         )
         if workflow_payload["workflow_complete"]:
             return _with_decision(
@@ -277,6 +287,7 @@ def decide_business_workflow(
                 workflow_reason="paused workflow is available and user asked to continue",
                 entity_result=entity_result,
                 current_entities=entities,
+                canonical_entities=canonical_entities,
             ),
             workflow_interrupted=False,
         )
@@ -310,6 +321,7 @@ def _decide_planner_owned_workflow(
     workflow_confidence: float,
     entity_result: dict | None,
     current_entities: dict,
+    canonical_entities: dict | None,
     active: dict | None,
     paused: dict | None,
     active_workflow_id: str | None,
@@ -342,6 +354,7 @@ def _decide_planner_owned_workflow(
                 workflow_reason="user requested workflow resume",
                 entity_result=entity_result,
                 current_entities=current_entities,
+                canonical_entities=canonical_entities,
             ),
             workflow_interrupted=False,
         )
@@ -367,6 +380,7 @@ def _decide_planner_owned_workflow(
             workflow_reason="planner selected active workflow",
             entity_result=entity_result,
             current_entities=current_entities,
+            canonical_entities=canonical_entities,
         )
         if workflow_payload["workflow_complete"]:
             return _with_decision(
@@ -387,6 +401,7 @@ def _decide_planner_owned_workflow(
         workflow_reason="planner selected workflow execution",
         entity_result=entity_result,
         current_entities=current_entities,
+        canonical_entities=canonical_entities,
     )
     if active and active_workflow_id and active_workflow_id != workflow_id:
         workflow_payload = _with_decision(
@@ -426,9 +441,15 @@ def _build_payload(
     workflow_reason: str,
     entity_result: dict | None,
     current_entities: dict,
+    canonical_entities: dict | None = None,
 ) -> dict:
     workflow = _workflow_id(workflow_state) or _intent_to_workflow(detected_intent)
-    current_entities, mapping_trace = _normalize_workflow_entities(workflow, current_entities, user_message)
+    current_entities, mapping_trace = _normalize_workflow_entities(
+        workflow,
+        current_entities,
+        user_message,
+        canonical_entities=canonical_entities,
+    )
     required_entities = list(_required_entities(workflow, detected_intent, workflow_state))
     completed_entities = _completed_entities(workflow_state, current_entities, required_entities, user_message)
     missing_entities = [entity for entity in required_entities if entity not in completed_entities]
@@ -553,13 +574,27 @@ def _completed_entities(workflow_state: dict | None, current_entities: dict, req
     return [entity for entity in required_entities if entity in completed]
 
 
-def _normalize_workflow_entities(workflow: str | None, entities: dict | None, user_message: str = "") -> tuple[dict, list[dict]]:
+def _normalize_workflow_entities(
+    workflow: str | None,
+    entities: dict | None,
+    user_message: str = "",
+    canonical_entities: dict | None = None,
+) -> tuple[dict, list[dict]]:
     data = deepcopy(entities or {})
     trace = list(data.get("entity_mapping_trace") or [])
+    canonical_fields = canonical_workflow_fields(canonical_entities, workflow=workflow)
+    canonical_trace = list(canonical_fields.pop("entity_mapping_trace", []))
+    if canonical_fields:
+        for field, value in canonical_fields.items():
+            if value not in (None, "", [], {}):
+                data[field] = value
+        trace = canonical_trace + trace
+
     if workflow != "COST_CALCULATION":
+        data["entity_mapping_trace"] = trace
         return data, trace
 
-    unit_cost = _unit_cost_from_message(user_message)
+    unit_cost = None if data.get("cost") not in (None, "", [], {}) else _unit_cost_from_message(user_message)
     if unit_cost not in (None, "", [], {}):
         for field in ("cost", "unit_cost", "cost_per_unit"):
             if data.get(field) in (None, "", [], {}):
@@ -575,7 +610,7 @@ def _normalize_workflow_entities(workflow: str | None, entities: dict | None, us
             }
         )
 
-    quantity = _quantity_from_entities_or_message(data, user_message)
+    quantity = data.get("quantity") if data.get("quantity") not in (None, "", [], {}) else _quantity_from_entities_or_message(data, user_message)
     if quantity not in (None, "", [], {}):
         for field in ("quantity", "total_units"):
             if data.get(field) in (None, "", [], {}):

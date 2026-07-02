@@ -448,6 +448,7 @@ def update_workflow_state(
     current_state: dict | None,
     user_message: str,
     detected_workflow: str | None = None,
+    canonical_entities: dict | None = None,
 ) -> tuple[dict, dict]:
     current = current_state or {}
     workflow = detected_workflow or current.get("workflow")
@@ -456,7 +457,7 @@ def update_workflow_state(
     if detected_workflow and detected_workflow != current.get("workflow"):
         current = new_workflow_state(detected_workflow)
 
-    extracted = extract_workflow_fields(user_message, workflow=workflow)
+    extracted = extract_workflow_fields(user_message, workflow=workflow, canonical_entities=canonical_entities)
     direct_answer = _direct_answer_fields(workflow, current, user_message, extracted)
     collected_fields = _merge_fields(current.get("collected_fields") or {}, {**extracted, **direct_answer})
     required_fields = list(current.get("required_fields") or REQUIRED_FIELDS.get(workflow, []))
