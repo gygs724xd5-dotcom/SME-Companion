@@ -13,10 +13,13 @@ from brain.perception_models import (
     PERCEPTION_VERSION,
     Percept,
 )
+from brain.perception_signals import build_signal_set_from_percept_fields
 
 
 PERCEPTION_DIAGNOSTICS = {
     "perception_created": True,
+    "signal_registry_created": True,
+    "signal_set_created": True,
     "runtime_mode": PERCEPTION_RUNTIME_MODE,
     "routing_changed": False,
     "planner_changed": False,
@@ -123,6 +126,18 @@ def build_percept(
     detected_signal_types = tuple(signal_type for _, signal_type in detected)
     signal_sources = tuple(field_name for field_name, _ in detected)
     normalized_timestamp = str(timestamp or "")
+    build_signal_set_from_percept_fields(
+        user_message=signals["user_message"],
+        conversation_history_reference=signals["conversation_history_reference"],
+        business_memory_reference=signals["business_memory_reference"],
+        store_profile_reference=signals["store_profile_reference"],
+        uploaded_documents=signals["uploaded_documents"],
+        uploaded_images=signals["uploaded_images"],
+        dashboard_state=signals["dashboard_state"],
+        active_workspace=signals["active_workspace"],
+        current_context=signals["current_context"],
+        captured_at=normalized_timestamp,
+    )
 
     id_payload = {
         "timestamp": normalized_timestamp,
