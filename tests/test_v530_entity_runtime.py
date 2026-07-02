@@ -24,11 +24,11 @@ class V530EntityRuntimeTest(unittest.TestCase):
                 data = entity.to_dict()
                 self.assertIn("entity_id", data)
                 self.assertIn("entity_type", data)
-                self.assertEqual(data["version"], "5.3.0")
+                self.assertEqual(data["version"], "5.3.1")
                 self.assertEqual(data["source"], "entity_runtime")
 
         payload = EntityPayload(entities=[entity.to_dict() for entity in entities])
-        self.assertEqual(payload.version, "5.3.0")
+        self.assertEqual(payload.version, "5.3.1")
         self.assertEqual(payload.source, "entity_runtime")
 
     def test_profit_message_extracts_cost_and_selling_price(self):

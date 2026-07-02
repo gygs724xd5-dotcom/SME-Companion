@@ -8,7 +8,7 @@ from copy import deepcopy
 import re
 
 
-ENTITY_RUNTIME_VERSION = "5.3.0"
+ENTITY_RUNTIME_VERSION = "5.3.1"
 ENTITY_RUNTIME_SOURCE = "entity_runtime"
 DEFAULT_CURRENCY = "THB"
 
@@ -144,6 +144,7 @@ class EntityPayload(_CanonicalEntity):
 MONEY_LABELS = {
     "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e23\u0e27\u0e21": ("cost", "cost"),
     "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19": ("cost", "cost"),
+    "\u0e0b\u0e37\u0e49\u0e2d\u0e27\u0e31\u0e15\u0e16\u0e38\u0e14\u0e34\u0e1a": ("cost", "cost"),
     "\u0e17\u0e38\u0e19": ("cost", "cost"),
     "\u0e02\u0e32\u0e22": ("selling_price", "selling_price"),
     "\u0e23\u0e32\u0e04\u0e32": ("price", "price"),
@@ -208,6 +209,15 @@ def extract_money_entities(message: str | None) -> list[MoneyEntity]:
         role, field_name = MONEY_LABELS.get(match.group("label"), ("amount", "amount"))
         entities.append(_money_entity(match, role, field_name))
 
+    raw_material_cost_pattern = (
+        r"\u0e0b\u0e37\u0e49\u0e2d\s*"
+        r"\u0e27\u0e31\u0e15\u0e16\u0e38\u0e14\u0e34\u0e1a"
+        r"[\s:=\uff1a-]*(?P<amount>\d[\d,]*(?:\.\d+)?)\s*"
+        r"(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)?"
+    )
+    for match in re.finditer(raw_material_cost_pattern, text, flags=re.IGNORECASE):
+        entities.append(_money_entity(match, "cost", "cost"))
+
     unit_price_pattern = (
         rf"(?:\u0e02\u0e32\u0e22)?(?P<product>[A-Za-z\u0e00-\u0e7f]{{2,40}}?)"
         rf"(?P<unit>{'|'.join(re.escape(unit) for unit in QUANTITY_UNITS)})\u0e25\u0e30"
@@ -225,7 +235,11 @@ def extract_quantity_entities(message: str | None) -> list[QuantityEntity]:
     text = str(message or "")
     entities = []
     unit_pattern = "|".join(re.escape(unit) for unit in QUANTITY_UNITS)
-    pattern = rf"(?:(?P<label>\u0e17\u0e33\u0e44\u0e14\u0e49)\s*)?(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>{unit_pattern})"
+    pattern = (
+        rf"(?:(?P<label>\u0e17\u0e33\u0e44\u0e14\u0e49)"
+        rf"(?:\s*\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14)?\s*)?"
+        rf"(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>{unit_pattern})"
+    )
     for match in re.finditer(pattern, text, flags=re.IGNORECASE):
         role = "production_output" if match.group("label") else "quantity"
         field_name = "quantity"
@@ -367,3 +381,28 @@ def extract_canonical_entities(message: str | None) -> dict:
 
 def canonical_entity_payload(message: str | None) -> dict:
     return extract_canonical_entities(message)
+
+
+def inspect_canonical_entities(message_or_payload: str | dict | None) -> dict:
+    """Return a compact debug summary for canonical entity payloads."""
+    payload = (
+        message_or_payload
+        if isinstance(message_or_payload, dict)
+        else extract_canonical_entities(message_or_payload)
+    )
+    grouped = payload.get("grouped_entities") or _group_entities(payload.get("entities") or [])
+    money_by_role: dict[str, list[dict]] = {}
+    for entity in grouped.get("money", []):
+        role = entity.get("role") or "amount"
+        money_by_role.setdefault(role, []).append(entity)
+
+    return {
+        "version": payload.get("version", ENTITY_RUNTIME_VERSION),
+        "money_entities_by_role": money_by_role,
+        "quantity_entities": list(grouped.get("quantity", [])),
+        "product_entities": list(grouped.get("product", [])),
+        "date_entities": list(grouped.get("date", [])),
+        "slots": dict(payload.get("slots") or {}),
+        "grouped_entities": grouped,
+        "diagnostics": dict(payload.get("diagnostics") or {}),
+    }
