@@ -42,6 +42,30 @@ class V522WorkflowDomainIsolationTest(unittest.TestCase):
         self.assertEqual(state["store"], {"store_id": "store-1", "name": "Demo Store"})
         self.assertEqual(state["product_catalog"], {"items": [{"name": "Thai tea"}]})
 
+    def test_completed_workflow_context_does_not_skip_planner_or_rebuild_workflow(self):
+        state = {
+            "business_memory": {
+                "completed_workflows": [
+                    {
+                        "workflow_id": WORKFLOW_CONTENT_PLAN,
+                        "collected_fields": {"product": "Thai tea"},
+                    }
+                ]
+            },
+            "conversation": {
+                "missing_entities": ["product_or_business_type"],
+                "next_question": "stale content question",
+            },
+        }
+
+        route = build_task_route(state, "ต้นทุนรวม 200 ทำได้ 100 ชิ้น")
+        workflow = route["business_workflow"]
+
+        self.assertFalse((route.get("planner_output") or {}).get("planner_skipped"))
+        self.assertEqual(route["planner_output"]["workflow"], WORKFLOW_COST_CALCULATION)
+        self.assertEqual((workflow.get("workflow_state") or {}).get("workflow_id"), WORKFLOW_COST_CALCULATION)
+        self.assertNotEqual(workflow.get("next_question"), "stale content question")
+
 
 if __name__ == "__main__":
     unittest.main()

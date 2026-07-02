@@ -68,6 +68,7 @@ from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN as V2_WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION as V2_WORKFLOW_COST_CALCULATION,
     WORKFLOW_DASHBOARD_REQUEST as V2_WORKFLOW_DASHBOARD_REQUEST,
+    WORKFLOW_PROFIT_CALCULATION as V2_WORKFLOW_PROFIT_CALCULATION,
     WORKFLOW_RECEIPT_CAPTURE as V2_WORKFLOW_RECEIPT_CAPTURE,
     WORKFLOW_SALES_PLAN_7_DAY as V2_WORKFLOW_SALES_PLAN_7_DAY,
 )
@@ -3234,6 +3235,47 @@ def _generate_cost_calculation(workflow_state: dict) -> str:
     return "\n".join(lines)
 
 
+def _numeric_workflow_value(value):
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, dict):
+        for key in ("amount", "cost", "value", "total"):
+            nested = _numeric_workflow_value(value.get(key))
+            if nested is not None:
+                return nested
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            nested = _numeric_workflow_value(item)
+            if nested is not None:
+                return nested
+        return None
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _generate_profit_calculation(workflow_state: dict) -> str:
+    fields = workflow_state.get("collected_fields") or {}
+    price = _numeric_workflow_value(fields.get("price") or fields.get("selling_price") or fields.get("prices"))
+    cost = _numeric_workflow_value(fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit") or fields.get("costs"))
+    if price is None or cost is None:
+        return _workflow_missing_reply(workflow_state)
+    profit = price - cost
+    margin = (profit / price) * 100 if price else 0
+    return "\n".join(
+        [
+            "คำนวณกำไร",
+            "",
+            f"ราคาขาย: {_format_number(price)} บาท",
+            f"ต้นทุน: {_format_number(cost)} บาท",
+            f"กำไร: {_format_number(profit)} บาท",
+            f"Margin: {_format_number(margin)}%",
+        ]
+    )
+
+
 def _generate_content_plan(workflow_state: dict) -> str:
     fields = workflow_state.get("collected_fields") or {}
     product = fields.get("product") or fields.get("business_type") or "สินค้า"
@@ -3250,6 +3292,8 @@ def _generate_workflow_reply(workflow_state: dict) -> str:
     workflow = workflow_state.get("workflow")
     if workflow == V2_WORKFLOW_SALES_PLAN_7_DAY:
         return _generate_sales_plan_7_day(workflow_state)
+    if workflow == V2_WORKFLOW_PROFIT_CALCULATION:
+        return _generate_profit_calculation(workflow_state)
     if workflow == V2_WORKFLOW_COST_CALCULATION:
         return _generate_cost_calculation(workflow_state)
     if workflow == V2_WORKFLOW_CONTENT_PLAN:
@@ -4374,9 +4418,6 @@ def _show_chat_companion(
             _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
             return
 
-    if not strong_cost_intent and _handle_completed_workflow_followup(user_message):
-        return
-
     understanding_state = _sync_session_to_application_state()
     add_pipeline_event("understanding", "understand_conversation", "understanding engine start")
     conversation_understanding = understand_conversation(user_message, understanding_state)
@@ -4399,7 +4440,7 @@ def _show_chat_companion(
     conversation_mode = get_conversation_mode(conversation_intent)
     planner_message = conversation_understanding.get("planner_message") or user_message
     debug_trace = _new_ai_pipeline_debug_trace(user_message, conversation_understanding)
-    workflow_detection = detect_workflow(planner_message, is_product_feedback=is_product_feedback(user_message))
+    workflow_detection = {"workflow": None, "confidence": 0.0, "should_skip_generic_companion": False}
     state = _update_conversation_state_after_user(user_message, conversation_intent, profile)
     chat_profile = _profile_with_conversation_memory(profile) or profile
     add_pipeline_event("planner", "build_task_route", "planner/router start")
@@ -4458,6 +4499,13 @@ def _show_chat_companion(
     )
     _sync_route_intelligence_to_session(task_route)
     _update_ai_pipeline_debug_trace_from_route(debug_trace, task_route)
+    planner_workflow_for_execution = (task_route.get("planner_output") or {}).get("workflow")
+    workflow_detection = {
+        "workflow": planner_workflow_for_execution,
+        "confidence": 1.0 if planner_workflow_for_execution else 0.0,
+        "should_skip_generic_companion": bool(planner_workflow_for_execution),
+        "source": "planner_output.workflow",
+    }
 
     def finalize_debug(
         response_source: str,
@@ -4523,21 +4571,22 @@ def _show_chat_companion(
         },
     )
     _update_application_section("conversation", {"conversation_priority": priority_decision})
-    detected_workflow_v2 = detect_workflow_intent(planner_message, is_product_feedback=is_product_feedback(user_message))
-    if priority_decision.get("classification") in {PRIORITY_NEW_INTENT, PRIORITY_WORKFLOW_SWITCH}:
-        detected_workflow_v2 = priority_decision.get("detected_new_intent") or detected_workflow_v2
     planner_workflow_v2 = (task_route.get("planner_output") or {}).get("workflow")
+    detected_workflow_v2 = planner_workflow_v2
     if (
         not detected_workflow_v2
         and planner_workflow_v2
         and planner_workflow_v2 in {
             V2_WORKFLOW_SALES_PLAN_7_DAY,
+            V2_WORKFLOW_PROFIT_CALCULATION,
             V2_WORKFLOW_COST_CALCULATION,
             V2_WORKFLOW_CONTENT_PLAN,
         }
     ):
         detected_workflow_v2 = planner_workflow_v2
     if (
+        not planner_workflow_v2
+        and
         conversation_understanding.get("detected_intent") == "continue_previous_workflow"
         and active_workflow_v2
         and priority_decision.get("classification") == PRIORITY_WORKFLOW_ANSWER
@@ -4545,6 +4594,7 @@ def _show_chat_companion(
         detected_workflow_v2 = active_workflow_v2
     if (
         not detected_workflow_v2
+        and not planner_workflow_v2
         and active_workflow_v2
         and active_workflow_step_v2 not in {"completed", "route_to_product_brain"}
         and priority_decision.get("classification") == PRIORITY_WORKFLOW_ANSWER
@@ -4615,6 +4665,7 @@ def _show_chat_companion(
 
     if detected_workflow_v2 in {
         V2_WORKFLOW_SALES_PLAN_7_DAY,
+        V2_WORKFLOW_PROFIT_CALCULATION,
         V2_WORKFLOW_COST_CALCULATION,
         V2_WORKFLOW_CONTENT_PLAN,
     }:
@@ -4647,7 +4698,7 @@ def _show_chat_companion(
         )
         return
 
-    if active_workflow == WORKFLOW_COST_CALCULATION and state.get("workflow_step") == "collecting_cost_inputs" and detected_workflow not in {
+    if not planner_workflow_v2 and active_workflow == WORKFLOW_COST_CALCULATION and state.get("workflow_step") == "collecting_cost_inputs" and detected_workflow not in {
         WORKFLOW_DASHBOARD_REQUEST,
         WORKFLOW_RECEIPT_CAPTURE,
         WORKFLOW_PRODUCT_FEEDBACK,
@@ -4657,19 +4708,19 @@ def _show_chat_companion(
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
-    if detected_workflow == WORKFLOW_COST_CALCULATION:
+    if not planner_workflow_v2 and detected_workflow == WORKFLOW_COST_CALCULATION:
         response = _handle_cost_workflow(user_message, starting=True)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "cost_legacy_start"})
         _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
         return
 
-    if detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
+    if not planner_workflow_v2 and detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "dashboard_legacy"})
         _append_workflow_reply(response["reply"], response["intent"], "แดชบอร์ดร้านค้า")
         return
 
-    if detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
+    if not planner_workflow_v2 and detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
         response = _handle_receipt_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "receipt_legacy"})
         _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")

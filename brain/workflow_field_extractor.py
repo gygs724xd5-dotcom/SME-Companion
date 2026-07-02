@@ -176,9 +176,24 @@ def _extract_cost_fields(message: str) -> dict:
     return fields
 
 
+def _extract_profit_fields(message: str) -> dict:
+    text = str(message or "")
+    fields = {}
+    cost_match = re.search(r"(?:\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19|\u0e17\u0e38\u0e19|cost)\D*(" + _NUMBER_PATTERN + r")", text, flags=re.IGNORECASE)
+    if cost_match:
+        fields["cost"] = _to_number(cost_match.group(1))
+    price_match = re.search(r"(?:\u0e02\u0e32\u0e22|\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22|sell|selling price)\D*(" + _NUMBER_PATTERN + r")", text, flags=re.IGNORECASE)
+    if price_match:
+        fields["price"] = _to_number(price_match.group(1))
+        fields["selling_price"] = fields["price"]
+    return fields
+
+
 def extract_workflow_fields(message: str, workflow: str | None = None) -> dict:
     if workflow == "COST_CALCULATION":
         return _extract_cost_fields(message)
+    if workflow == "PROFIT_CALCULATION":
+        return _extract_profit_fields(message)
 
     fields = {}
     product = _extract_product(message)

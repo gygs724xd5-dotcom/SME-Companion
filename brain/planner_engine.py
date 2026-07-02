@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+
 from brain.conversation_intent_engine import detect_conversation_intent, is_product_feedback
+from brain.conversation_manager import active_workflow_state
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION,
@@ -129,6 +132,18 @@ def _future_capability_from_message(message: str) -> tuple[str, str] | None:
     return None
 
 
+def _looks_like_workflow_answer(message: str) -> bool:
+    text = str(message or "").strip()
+    lowered = text.lower()
+    if not text or "?" in text:
+        return False
+    if any(token in lowered for token in ("what", "why", "how", "customer says", "customer asked")):
+        return False
+    if re.search(r"\d", text):
+        return True
+    return len(text.split()) <= 4
+
+
 def _workflow_task(workflow: str | None) -> tuple[str, str, str | None] | None:
     definition = get_workflow_definition(workflow)
     if not definition:
@@ -183,7 +198,11 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
     resolved_intent = intent_resolution.get("resolved_intent")
     resolved_workflow = intent_resolution.get("resolved_workflow")
     understood_intent = understanding.get("detected_intent")
-    active_workflow = ((application_state.get("workflow") or {}).get("workflow_state_v2") or {}).get("workflow")
+    active_runtime = active_workflow_state(application_state)
+    active_workflow = (
+        (active_runtime or {}).get("workflow_id")
+        or ((application_state.get("workflow") or {}).get("workflow_state_v2") or {}).get("workflow")
+    )
 
     if resolved_intent == "business_planning":
         return "Dashboard Request", "dashboard_request", WORKFLOW_DASHBOARD_REQUEST, ["dashboard_builder"], "workflow"
@@ -246,7 +265,7 @@ def _select_task(application_state: dict, user_message: str) -> tuple[str, str, 
             if any(keyword in lowered for keyword in keywords):
                 workflow = candidate_workflow
                 break
-    if not workflow and active_workflow:
+    if not workflow and active_workflow and _looks_like_workflow_answer(user_message):
         workflow = active_workflow
 
     task = _workflow_task(workflow)

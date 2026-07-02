@@ -42,7 +42,6 @@ from brain.reasoning_engine import build_reasoning
 from brain.response_transformation_engine import detect_response_transformation, transformation_source
 from brain.response_envelope_runtime import build_response_envelope, response_envelope_diagnostics
 from brain.skill_loader import load_skills
-from brain.workflow_lifecycle import classify_completed_workflow_followup
 from brain.business_skill_registry import registry_diagnostics
 
 
@@ -159,9 +158,10 @@ def workflow_response_gate(task_route: dict | None) -> dict:
     route = task_route or {}
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or ((route.get("llm_reasoning_context") or {}).get("workflow_intelligence")) or {}
     intent = (
-        workflow.get("detected_intent")
-        or ((route.get("detected_intent") or {}).get("detected_intent"))
+        ((route.get("business_context") or {}).get("current_message_intent"))
         or ((route.get("business_context") or {}).get("detected_intent"))
+        or workflow.get("detected_intent")
+        or ((route.get("detected_intent") or {}).get("detected_intent"))
     )
     action = workflow.get("workflow_action")
     missing_entities = list(workflow.get("missing_entities") or [])
@@ -178,7 +178,7 @@ def workflow_response_gate(task_route: dict | None) -> dict:
     if action in {"interrupt", "resume", "complete", "cancel"}:
         blocked_reason = f"workflow_action_{action}"
     elif intent in BYPASS_WORKFLOW_RESPONSE_INTENTS:
-        blocked_reason = f"intent_{intent}"
+        blocked_reason = "intent_customer_reply" if intent == "customer_says_expensive" else f"intent_{intent}"
     elif is_complete:
         blocked_reason = "entity_completeness_complete"
     elif action not in {"continue", "start_new"}:
@@ -556,27 +556,6 @@ def _continuation_route_if_planner_should_skip(state: dict, user_message: str | 
             },
         )
 
-    completed_followup = classify_completed_workflow_followup(state, user_message)
-    if completed_followup.get("reuse_completed_workflow"):
-        completed = completed_followup.get("completed_workflow") or {}
-        return _planner_skipped_route(
-            user_message,
-            reason="completed_workflow_followup",
-            response_source="completed_workflow",
-            extra={
-                "reuse_completed_workflow": True,
-                "reuse_reason": (
-                    "completed_cost_result_available"
-                    if completed.get("workflow_id") == "cost_calculation"
-                    else "completed_workflow_context_available"
-                ),
-                "followup_chain": completed_followup.get("followup_chain") or [],
-                "workflow_followup_mode": completed_followup.get("workflow_followup_mode"),
-                "workflow_variant_mode": completed_followup.get("workflow_variant_mode"),
-                "workflow_transition_reason": completed_followup.get("workflow_transition_reason"),
-            },
-        )
-
     return None
 
 
@@ -588,79 +567,8 @@ def build_task_route(application_state, user_message) -> dict:
 
     business_intent = detect_business_intent(user_message)
     entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
-    workflow_decision = decide_business_workflow(
-        user_message,
-        business_intent=business_intent,
-        entity_result=entity_result,
-        application_state=state,
-    )
-    workflow_domain_boundary = _workflow_domain_boundary_for_decision(state, workflow_decision)
-    if workflow_domain_boundary.get("workflow_domain_boundary_applied"):
-        workflow_decision = {
-            **workflow_decision,
-            **workflow_domain_boundary,
-            "workflow_reason": workflow_decision.get("workflow_reason") or "workflow domain changed; previous workflow released",
-            "workflow_release_reason": workflow_domain_boundary.get("workflow_release_reason"),
-        }
-    if planner_locked(state) and workflow_decision.get("workflow_action") not in {"interrupt", "start_new"}:
-        workflow_state = active_workflow_state(state) or {}
-        isolation = _context_isolation_metadata(
-            business_intent.get("detected_intent"),
-            _previous_context_intent(state),
-        )
-        return _with_response_gate({
-            "planner_output": {
-                "goal": str(user_message or "").strip(),
-                "task_type": workflow_state.get("workflow_name"),
-                "workflow": workflow_state.get("workflow_id"),
-                "required_skills": [],
-                "required_information": workflow_state.get("required_fields") or [],
-                "known_information": ["conversation_os"],
-                "missing_information": workflow_state.get("missing_fields") or [],
-                "can_execute": not bool(workflow_state.get("missing_fields")),
-                "next_step": "continue_active_workflow",
-                "priority": "high",
-                "estimated_response_mode": "workflow",
-                "planner_locked": True,
-                "workflow_intelligence": workflow_decision,
-                "workflow_domain_boundary": workflow_domain_boundary,
-            },
-            "conversation_understanding": {},
-            "conversation_intelligence": {},
-            "intent_resolution": {"resolved_intent": "continue_previous_workflow", "resolved_workflow": workflow_state.get("workflow_id")},
-            "detected_intent": business_intent,
-            "extracted_entities": entity_result,
-            "business_workflow": workflow_decision,
-            "business_context": {
-                **isolation,
-                "detected_intent": business_intent.get("detected_intent"),
-                "intent_confidence": business_intent.get("intent_confidence"),
-                "matched_intent_keywords": business_intent.get("matched_intent_keywords") or [],
-                "extracted_entities": entity_result.get("extracted_entities") or {},
-                "missing_entities": entity_result.get("missing_entities") or [],
-                "entity_confidence": entity_result.get("entity_confidence"),
-                "workflow_intelligence": workflow_decision,
-                "workflow_domain_boundary": workflow_domain_boundary,
-            },
-            "conversation_memory": {},
-            "task_type": workflow_state.get("workflow_name"),
-            "selected_capability": None,
-            "loaded_skills": [],
-            "reasoning": {
-                "action": "continue_active_workflow",
-                "workflow_ready": not bool(workflow_state.get("missing_fields")) or bool(workflow_decision.get("workflow_complete")),
-                "workflow_intelligence": workflow_decision,
-            },
-            "reasoning_mode": "workflow",
-            "llm_reasoning_context": {"workflow_intelligence": workflow_decision, **isolation},
-            "llm_decision": {"should_use_llm": False, "reason": "Planner locked by Conversation OS."},
-            "workflow_ready": not bool(workflow_state.get("missing_fields")) or bool(workflow_decision.get("workflow_complete")),
-            "llm_needed": False,
-            "capability_available": True,
-            "placeholders": dict(PLACEHOLDER_ENGINES),
-            **isolation,
-            "planner_locked": True,
-        })
+    workflow_decision = {}
+    workflow_domain_boundary = {"workflow_domain_boundary_applied": False}
 
     existing_interpretation = state.get("conversation_understanding") or ((state.get("conversation") or {}).get("understanding")) or {}
     if existing_interpretation.get("raw_text") == str(user_message or ""):
@@ -753,6 +661,53 @@ def build_task_route(application_state, user_message) -> dict:
 
     planner_message = intent_resolution.get("planner_message") or interpretation.get("planner_message") or user_message
     plan = build_execution_plan(routing_state, planner_message)
+    workflow_decision = decide_business_workflow(
+        user_message,
+        business_intent={
+            **business_intent,
+            "detected_intent": intent_resolution.get("resolved_intent") or business_intent.get("detected_intent"),
+        },
+        entity_result=entity_result,
+        application_state=state,
+        planner_decision=plan,
+        resolved_workflow=plan.get("workflow") or intent_resolution.get("resolved_workflow"),
+    )
+    workflow_domain_boundary = _workflow_domain_boundary_for_decision(state, workflow_decision)
+    if workflow_domain_boundary.get("workflow_domain_boundary_applied"):
+        workflow_decision = {
+            **workflow_decision,
+            **workflow_domain_boundary,
+            "workflow_reason": workflow_decision.get("workflow_reason") or "workflow domain changed; previous workflow released",
+            "workflow_release_reason": workflow_domain_boundary.get("workflow_release_reason"),
+        }
+    planner_lock_active = bool(
+        planner_locked(state)
+        and workflow_decision.get("workflow_action") == "continue"
+        and plan.get("workflow")
+        and plan.get("workflow") == _active_workflow_id_from_state(state)
+    )
+    if planner_lock_active:
+        plan = {
+            **plan,
+            "next_step": "continue_active_workflow",
+            "planner_locked": True,
+        }
+    business_context = {
+        **business_context,
+        "workflow_intelligence": workflow_decision,
+        "workflow_domain_boundary": workflow_domain_boundary,
+    }
+    conversation_intelligence = {
+        **conversation_intelligence,
+        "business_context": business_context,
+    }
+    enriched_state["business_context"] = business_context
+    enriched_state["conversation_intelligence"] = conversation_intelligence
+    enriched_state["conversation"] = {
+        **(enriched_state.get("conversation") or {}),
+        "business_context": business_context,
+        "business_intelligence": (enriched_state.get("conversation") or {}).get("business_intelligence"),
+    }
     plan["workflow_intelligence"] = workflow_decision
     bridge_result = run_business_intelligence_bridge(
         user_message,
@@ -861,6 +816,7 @@ def build_task_route(application_state, user_message) -> dict:
         "llm_needed": llm_needed,
         "capability_available": capability_available,
         "placeholders": dict(PLACEHOLDER_ENGINES),
+        "planner_locked": planner_lock_active,
     })
 
 

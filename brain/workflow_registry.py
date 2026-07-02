@@ -8,6 +8,7 @@ from brain.workflow_readiness import (
     WORKFLOW_COST_CALCULATION,
     WORKFLOW_DASHBOARD_REQUEST,
     WORKFLOW_GENERAL_BUSINESS_HELP,
+    WORKFLOW_PROFIT_CALCULATION,
     WORKFLOW_RECEIPT_CAPTURE,
     WORKFLOW_SALES_PLAN_7_DAY,
 )
@@ -108,6 +109,16 @@ WORKFLOW_REGISTRY = _register_many(
             priority=70,
             aliases=("cost calculator", "cost calculation", "calculate cost", "คำนวณต้นทุน", "ต้นทุน"),
             quick_action="cost_calculator",
+        ),
+        WorkflowDefinition(
+            workflow_id=WORKFLOW_PROFIT_CALCULATION,
+            workflow_name="profit_calculation",
+            mode="workflow",
+            capability_key="cost_calculation",
+            skill_name="cost_calculation",
+            required_fields=("price", "cost"),
+            priority=75,
+            aliases=("profit calculation", "profit", "margin", "\u0e01\u0e33\u0e44\u0e23"),
         ),
         WorkflowDefinition(
             workflow_id=WORKFLOW_RECEIPT_CAPTURE,

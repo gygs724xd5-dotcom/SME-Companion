@@ -55,7 +55,7 @@ class V410FoundationPipelineTest(unittest.TestCase):
             )
             previous_reply = result["reply"]
 
-    def test_completed_cost_followup_chain_skips_planner(self):
+    def test_completed_cost_followup_chain_does_not_skip_planner(self):
         state = {
             "store": {
                 "last_completed_workflow": {
@@ -69,11 +69,11 @@ class V410FoundationPipelineTest(unittest.TestCase):
         for message in ["profit 40", "sell 50", "profit 15 baht"]:
             with self.subTest(message=message):
                 route = build_task_route(state, message)
-                self.assertTrue(route["planner_skipped"])
-                self.assertTrue(route["reuse_completed_workflow"])
-                self.assertEqual(route["continuation_mode"], "completed_workflow_followup")
-                self.assertEqual(route["response_source"], "completed_workflow")
-                self.assertEqual((route["planner_output"] or {})["next_step"], "skip_planner")
+                self.assertFalse(route.get("planner_skipped", False))
+                self.assertFalse(route.get("reuse_completed_workflow", False))
+                self.assertNotEqual(route.get("continuation_mode"), "completed_workflow_followup")
+                self.assertNotEqual(route.get("response_source"), "completed_workflow")
+                self.assertNotEqual((route["planner_output"] or {})["next_step"], "skip_planner")
 
     def test_diagnostics_are_grouped_without_removing_flat_fields(self):
         memory = build_response_memory("Original response", response_type="content_post")

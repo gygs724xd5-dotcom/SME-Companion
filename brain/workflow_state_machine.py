@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.planner_intent_priority import (
-    WORKFLOW_PROFIT_CALCULATION,
     has_profit_calculation_intent,
 )
 from brain.workflow_field_extractor import extract_workflow_fields
@@ -14,6 +13,7 @@ from brain.workflow_readiness import (
     WORKFLOW_COST_CALCULATION,
     WORKFLOW_DASHBOARD_REQUEST,
     WORKFLOW_GENERAL_BUSINESS_HELP,
+    WORKFLOW_PROFIT_CALCULATION,
     WORKFLOW_RECEIPT_CAPTURE,
     WORKFLOW_SALES_PLAN_7_DAY,
     is_workflow_ready,
@@ -23,6 +23,7 @@ from brain.workflow_lifecycle import attach_lifecycle_diagnostics
 
 REQUIRED_FIELDS = {
     WORKFLOW_SALES_PLAN_7_DAY: ["product", "daily_capacity_or_available_quantity", "selling_window_or_sales_channel"],
+    WORKFLOW_PROFIT_CALCULATION: ["price", "cost"],
     WORKFLOW_COST_CALCULATION: ["ingredients_costs", "total_units"],
     WORKFLOW_CONTENT_PLAN: ["product_or_business_type"],
     WORKFLOW_DASHBOARD_REQUEST: [],
@@ -116,6 +117,7 @@ def cost_calculation_trace(fields: dict | None) -> dict:
 
 WORKFLOW_START_STEPS = {
     WORKFLOW_SALES_PLAN_7_DAY: "collecting_sales_plan_inputs",
+    WORKFLOW_PROFIT_CALCULATION: "collecting_profit_inputs",
     WORKFLOW_COST_CALCULATION: "collecting_cost_inputs",
     WORKFLOW_CONTENT_PLAN: "collecting_content_inputs",
     WORKFLOW_DASHBOARD_REQUEST: "route_to_product_brain",
@@ -213,6 +215,10 @@ def _field_has_value(field: str, fields: dict) -> bool:
         return bool(fields.get("ingredients_costs") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit"))
     if field == "total_units":
         return bool(fields.get("total_units") or fields.get("quantity"))
+    if field == "price":
+        return bool(fields.get("price") or fields.get("selling_price") or fields.get("prices"))
+    if field == "cost":
+        return bool(fields.get("cost") or fields.get("costs") or fields.get("unit_cost") or fields.get("cost_per_unit") or fields.get("ingredients_costs"))
     return bool(fields.get(field))
 
 
@@ -235,6 +241,13 @@ def _missing_fields(workflow: str, fields: dict, required_fields: list[str] | No
         if not (fields.get("total_units") or fields.get("quantity")):
             missing.append("total_units")
         return missing
+    if workflow == WORKFLOW_PROFIT_CALCULATION:
+        missing = []
+        if not (fields.get("price") or fields.get("selling_price") or fields.get("prices")):
+            missing.append("price")
+        if not (fields.get("cost") or fields.get("costs") or fields.get("unit_cost") or fields.get("cost_per_unit")):
+            missing.append("cost")
+        return missing
     if workflow == WORKFLOW_CONTENT_PLAN:
         return [] if fields.get("product") or fields.get("business_type") else ["product_or_business_type"]
     return []
@@ -248,6 +261,10 @@ def _missing_reason_by_field(required_fields: list[str], fields: dict, missing_f
             checked = ["ingredients_costs", "cost", "unit_cost", "cost_per_unit"]
         elif field == "total_units":
             checked = ["total_units", "quantity"]
+        elif field == "price":
+            checked = ["price", "selling_price", "prices"]
+        elif field == "cost":
+            checked = ["cost", "costs", "unit_cost", "cost_per_unit", "ingredients_costs"]
         elif field == "daily_capacity_or_available_quantity":
             checked = ["daily_capacity", "available_quantity"]
         elif field == "selling_window_or_sales_channel":
@@ -433,7 +450,9 @@ def update_workflow_state(
     detected_workflow: str | None = None,
 ) -> tuple[dict, dict]:
     current = current_state or {}
-    workflow = detected_workflow or current.get("workflow") or WORKFLOW_GENERAL_BUSINESS_HELP
+    workflow = detected_workflow or current.get("workflow")
+    if workflow is None:
+        return new_workflow_state(None), {}
     if detected_workflow and detected_workflow != current.get("workflow"):
         current = new_workflow_state(detected_workflow)
 

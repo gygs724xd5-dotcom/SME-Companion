@@ -87,6 +87,8 @@ def decide_business_workflow(
     business_intent: dict | None = None,
     entity_result: dict | None = None,
     application_state: dict | None = None,
+    planner_decision: dict | None = None,
+    resolved_workflow: str | None = None,
 ) -> dict:
     """Decide whether the current message should collect, pause, resume, or bypass workflow."""
     message = str(user_message or "").strip()
@@ -100,6 +102,8 @@ def decide_business_workflow(
     active_or_paused = active or paused
     active_workflow_id = _workflow_id(active)
     resume_available = bool(paused or _conversation_stack(state))
+    planner_workflow = _planner_resolved_workflow(planner_decision, resolved_workflow)
+    planner_intent = _planner_resolved_intent(planner_decision) or intent
 
     base = _build_payload(
         workflow_action=ACTION_CONTINUE if active else ACTION_START_NEW,
@@ -111,6 +115,21 @@ def decide_business_workflow(
         entity_result=entity_result,
         current_entities=entities,
     )
+
+    if planner_decision is not None or resolved_workflow is not None:
+        return _decide_planner_owned_workflow(
+            base=base,
+            user_message=message,
+            detected_intent=planner_intent,
+            workflow_id=planner_workflow,
+            workflow_confidence=max(intent_confidence, 0.7 if planner_workflow else 0.45),
+            entity_result=entity_result,
+            current_entities=entities,
+            active=active,
+            paused=paused,
+            active_workflow_id=active_workflow_id,
+            resume_available=resume_available,
+        )
 
     if _is_cancel(message):
         return _with_decision(
@@ -270,6 +289,123 @@ def decide_business_workflow(
         workflow_reason=_override_reason(intent, message) or "no active business workflow",
         workflow_interrupted=False,
     )
+
+
+def _planner_resolved_workflow(planner_decision: dict | None, resolved_workflow: str | None) -> str | None:
+    plan = planner_decision or {}
+    return resolved_workflow or plan.get("workflow") or ((plan.get("intent_resolution") or {}).get("resolved_workflow"))
+
+
+def _planner_resolved_intent(planner_decision: dict | None) -> str | None:
+    plan = planner_decision or {}
+    return (plan.get("intent_resolution") or {}).get("resolved_intent")
+
+
+def _decide_planner_owned_workflow(
+    *,
+    base: dict,
+    user_message: str,
+    detected_intent: str,
+    workflow_id: str | None,
+    workflow_confidence: float,
+    entity_result: dict | None,
+    current_entities: dict,
+    active: dict | None,
+    paused: dict | None,
+    active_workflow_id: str | None,
+    resume_available: bool,
+) -> dict:
+    """Build execution state from the planner-selected workflow only.
+
+    This path deliberately avoids trigger matching, intent-to-workflow mapping,
+    registry detection, and completed-context reuse. Planner owns the workflow
+    decision; this module only computes execution progress for that workflow.
+    """
+    if _is_cancel(user_message):
+        return _with_decision(
+            base,
+            workflow_action=ACTION_CANCEL,
+            workflow_state=active,
+            workflow_confidence=0.95,
+            workflow_reason="user requested workflow cancellation",
+            workflow_interrupted=False,
+        )
+
+    if _is_resume(user_message) and resume_available:
+        return _with_decision(
+            _build_payload(
+                workflow_action=ACTION_RESUME,
+                workflow_state=paused or active,
+                user_message=user_message,
+                detected_intent=detected_intent,
+                workflow_confidence=0.92,
+                workflow_reason="user requested workflow resume",
+                entity_result=entity_result,
+                current_entities=current_entities,
+            ),
+            workflow_interrupted=False,
+        )
+
+    if not workflow_id:
+        override = _override_reason(detected_intent, user_message)
+        return _with_decision(
+            base,
+            workflow_action=ACTION_INTERRUPT if active or override else ACTION_CONTINUE,
+            workflow_state=active,
+            workflow_confidence=workflow_confidence,
+            workflow_reason=override or "planner did not select a workflow",
+            workflow_interrupted=bool(active or override),
+        )
+
+    if active and workflow_id == active_workflow_id:
+        workflow_payload = _build_payload(
+            workflow_action=ACTION_CONTINUE,
+            workflow_state=active,
+            user_message=user_message,
+            detected_intent=detected_intent,
+            workflow_confidence=max(workflow_confidence, 0.74),
+            workflow_reason="planner selected active workflow",
+            entity_result=entity_result,
+            current_entities=current_entities,
+        )
+        if workflow_payload["workflow_complete"]:
+            return _with_decision(
+                workflow_payload,
+                workflow_action=ACTION_CONTINUE,
+                workflow_confidence=max(workflow_payload["workflow_confidence"], 0.88),
+                workflow_reason="required entities are complete",
+            )
+        return workflow_payload
+
+    workflow_state = _synthetic_workflow_state_for_workflow(workflow_id, current_entities)
+    workflow_payload = _build_payload(
+        workflow_action=ACTION_START_NEW,
+        workflow_state=workflow_state,
+        user_message=user_message,
+        detected_intent=detected_intent,
+        workflow_confidence=workflow_confidence,
+        workflow_reason="planner selected workflow execution",
+        entity_result=entity_result,
+        current_entities=current_entities,
+    )
+    if active and active_workflow_id and active_workflow_id != workflow_id:
+        workflow_payload = _with_decision(
+            workflow_payload,
+            workflow_action=ACTION_START_NEW,
+            workflow_interrupted=True,
+            workflow_domain_changed=True,
+            previous_workflow_id=active_workflow_id,
+            next_workflow_id=workflow_id,
+            workflow_reason="planner selected a different workflow",
+        )
+    if workflow_payload["workflow_complete"]:
+        return _with_decision(
+            workflow_payload,
+            workflow_action=ACTION_COMPLETE if not active else workflow_payload.get("workflow_action"),
+            workflow_confidence=max(workflow_payload["workflow_confidence"], 0.9),
+            workflow_reason="all required entities were supplied in the current message",
+        )
+    return workflow_payload
 
 
 def smart_question_for_missing(missing_entities: list[str] | tuple[str, ...] | None) -> str | None:
@@ -634,12 +770,16 @@ def _workflow_to_intent(workflow: str | None) -> str:
 
 def _synthetic_workflow_state(intent: str, entities: dict) -> dict:
     workflow = _intent_to_workflow(intent)
+    return _synthetic_workflow_state_for_workflow(workflow, entities, intent=intent)
+
+
+def _synthetic_workflow_state_for_workflow(workflow: str | None, entities: dict, *, intent: str | None = None) -> dict:
     definition = get_workflow_definition(workflow)
-    required_entities = REQUIRED_ENTITIES_BY_WORKFLOW.get(workflow, REQUIRED_ENTITIES_BY_INTENT.get(intent, ()))
+    required_entities = REQUIRED_ENTITIES_BY_WORKFLOW.get(workflow, REQUIRED_ENTITIES_BY_INTENT.get(intent or "", ()))
     return {
         "__synthetic": True,
         "workflow_id": workflow,
-        "workflow_name": definition.workflow_name if definition else intent,
+        "workflow_name": definition.workflow_name if definition else (workflow or intent),
         "workflow_status": "COLLECT",
         "current_step": "collecting_entities",
         "collected_fields": _entities_to_fields(entities),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 WORKFLOW_SALES_PLAN_7_DAY = "SALES_PLAN_7_DAY"
+WORKFLOW_PROFIT_CALCULATION = "PROFIT_CALCULATION"
 WORKFLOW_COST_CALCULATION = "COST_CALCULATION"
 WORKFLOW_CONTENT_PLAN = "CONTENT_PLAN"
 WORKFLOW_DASHBOARD_REQUEST = "DASHBOARD_REQUEST"
@@ -25,6 +26,12 @@ def is_workflow_ready(workflow_state: dict | None) -> bool:
         return bool(
             (fields.get("ingredients_costs") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit"))
             and (fields.get("total_units") or fields.get("quantity"))
+        )
+
+    if workflow == WORKFLOW_PROFIT_CALCULATION:
+        return bool(
+            (fields.get("price") or fields.get("selling_price") or fields.get("prices"))
+            and (fields.get("cost") or fields.get("costs") or fields.get("unit_cost") or fields.get("cost_per_unit"))
         )
 
     if workflow == WORKFLOW_CONTENT_PLAN:
