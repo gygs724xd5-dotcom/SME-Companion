@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from brain.evidence_runtime import build_evidence_runtime
+
 
 BUSINESS_SITUATION_VERSION = "5.5.3"
 BUSINESS_SITUATION_SOURCE = "business_situation_runtime"
@@ -509,4 +511,20 @@ def build_business_situation(
             "perception": _as_dict(perception_diagnostics),
         },
     )
-    return situation.to_dict()
+    payload = situation.to_dict()
+    evidence_runtime = build_evidence_runtime(
+        business_situation=payload,
+        perception_diagnostics=perception_diagnostics,
+        conversation_context={
+            "conversation_understanding": understanding,
+            "business_context": context,
+            "intent_resolution": intent,
+        },
+        business_memory_reference=state.get("business_memory"),
+        structured_business_data={
+            "canonical_entities": canonical_entities or {},
+            "extracted_entities": extracted_entities or {},
+        },
+    )
+    payload["diagnostics"]["evidence"] = evidence_runtime
+    return payload

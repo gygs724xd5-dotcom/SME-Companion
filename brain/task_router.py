@@ -904,6 +904,17 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "potential_business_risks": diagnostics.get("potential_business_risks"),
             "potential_opportunities": diagnostics.get("potential_opportunities"),
         },
+        "Evidence": {
+            "evidence_runtime": diagnostics.get("evidence_runtime"),
+            "evidence_runtime_created": diagnostics.get("evidence_runtime_created"),
+            "evidence_runtime_version": diagnostics.get("evidence_runtime_version"),
+            "evidence_available": diagnostics.get("evidence_available"),
+            "evidence_item_count": diagnostics.get("evidence_item_count"),
+            "missing_evidence_count": diagnostics.get("missing_evidence_count"),
+            "conflicting_evidence_count": diagnostics.get("conflicting_evidence_count"),
+            "diagnostic_only": diagnostics.get("evidence_diagnostic_only"),
+            "runtime_only": diagnostics.get("evidence_runtime_only"),
+        },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
             "registered_domains": diagnostics.get("registered_domains"),
@@ -1041,6 +1052,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     response_envelope_audit = response_envelope_diagnostics(response_envelope)
     business_situation = route.get("business_situation") or (route.get("planner_output") or {}).get("business_situation") or {}
     business_situation_diagnostics = business_situation.get("diagnostics") or {}
+    evidence_runtime = business_situation_diagnostics.get("evidence") or {}
+    evidence_diagnostics = evidence_runtime.get("evidence_diagnostics") or {}
 
     diagnostics = {
         "Planner Output": route.get("planner_output") or {},
@@ -1053,6 +1066,15 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "material_uncertainty_count": len(business_situation.get("material_uncertainty") or []),
         "potential_business_risks": business_situation.get("potential_business_risks") or [],
         "potential_opportunities": business_situation.get("potential_opportunities") or [],
+        "evidence_runtime": evidence_runtime,
+        "evidence_runtime_created": bool(evidence_diagnostics.get("evidence_runtime_created")),
+        "evidence_runtime_version": evidence_diagnostics.get("evidence_runtime_version") or evidence_runtime.get("version"),
+        "evidence_available": bool(evidence_runtime.get("evidence_available")),
+        "evidence_item_count": evidence_diagnostics.get("evidence_item_count", len(evidence_runtime.get("evidence_items") or [])),
+        "missing_evidence_count": evidence_diagnostics.get("missing_evidence_count", len(evidence_runtime.get("missing_evidence") or [])),
+        "conflicting_evidence_count": evidence_diagnostics.get("conflicting_evidence_count", len(evidence_runtime.get("conflicting_evidence") or [])),
+        "evidence_diagnostic_only": bool(evidence_runtime.get("diagnostic_only")),
+        "evidence_runtime_only": bool(evidence_runtime.get("runtime_only")),
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
         "intent_priority_audit": route.get("intent_priority_audit") or _intent_priority_audit(route),
