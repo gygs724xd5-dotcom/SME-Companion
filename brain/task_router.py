@@ -4,6 +4,7 @@ from dataclasses import asdict, is_dataclass
 import json
 
 from brain.business_situation import build_business_situation
+from brain.brain_observatory import build_brain_observatory
 from brain.business_workflow_engine import decide_business_workflow
 from brain.conversation_manager import active_workflow_state, planner_locked, release_workflow_domain
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
@@ -969,6 +970,7 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "response_envelope_source": diagnostics.get("response_envelope_source"),
             "response_envelope_present": diagnostics.get("response_envelope_present"),
         },
+        "Brain Observatory": diagnostics.get("Brain Observatory") or {},
     }
     return {**diagnostics, "diagnostic_groups": grouped}
 
@@ -1054,8 +1056,13 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     business_situation_diagnostics = business_situation.get("diagnostics") or {}
     evidence_runtime = business_situation_diagnostics.get("evidence") or {}
     evidence_diagnostics = evidence_runtime.get("evidence_diagnostics") or {}
+    brain_observatory = build_brain_observatory(route)
 
     diagnostics = {
+        "Brain Observatory": brain_observatory,
+        "brain_observatory_created": bool(brain_observatory.get("observatory_created")),
+        "brain_observatory_version": brain_observatory.get("observatory_version"),
+        "brain_observatory_source": brain_observatory.get("observatory_source"),
         "Planner Output": route.get("planner_output") or {},
         "Business Situation": business_situation,
         "business_situation_created": bool(business_situation_diagnostics.get("business_situation_created")),
