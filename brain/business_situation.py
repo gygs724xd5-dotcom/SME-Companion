@@ -5,8 +5,17 @@ from typing import Any
 from uuid import uuid4
 
 
-BUSINESS_SITUATION_VERSION = "5.4.0"
-BUSINESS_SITUATION_SOURCE = "business_situation_migration"
+BUSINESS_SITUATION_VERSION = "5.5.3"
+BUSINESS_SITUATION_SOURCE = "business_situation_runtime"
+
+
+BUSINESS_ALIASES = {
+    "bakery": "bakery",
+    "coffee shop": "coffee_shop",
+    "fish shop": "fish_shop",
+    "restaurant": "restaurant",
+    "tea shop": "tea_shop",
+}
 
 
 def _new_id() -> str:
@@ -30,6 +39,152 @@ def _first_text(*values: Any, default: str = "") -> str:
         if value not in (None, "", [], {}):
             return str(value)
     return default
+
+
+def _normalize_business(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = text.replace("-", " ").replace("_", " ")
+    for alias, normalized in BUSINESS_ALIASES.items():
+        if alias in text:
+            return normalized
+    words = [word for word in text.split() if word not in {"a", "an", "the", "my", "our", "business", "store"}]
+    if len(words) <= 4 and any(word in words for word in {"shop", "store", "bakery", "restaurant"}):
+        return "_".join(words)
+    return ""
+
+
+def _extract_conversation_business(user_message: str, business_context: dict) -> str:
+    message_value = _normalize_business(user_message)
+    if message_value:
+        return message_value
+    source = str(business_context.get("source") or "")
+    if source in {"current_message", "workflow", "conversation_memory"}:
+        return _normalize_business(
+            _first_text(
+                business_context.get("business_type"),
+                business_context.get("current_product"),
+            )
+        )
+    return ""
+
+
+def _latest_memory_payload(memory: Any) -> dict:
+    if isinstance(memory, list):
+        for event in reversed(memory):
+            payload = event.get("payload") if isinstance(event, dict) and isinstance(event.get("payload"), dict) else event
+            if isinstance(payload, dict) and payload:
+                return payload
+        return {}
+    memory_dict = _as_dict(memory)
+    events = _as_list(memory_dict.get("events"))
+    for event in reversed(events):
+        payload = event.get("payload") if isinstance(event, dict) and isinstance(event.get("payload"), dict) else event
+        if isinstance(payload, dict) and payload:
+            return payload
+    return memory_dict
+
+
+def _store_profile(state: dict) -> dict:
+    store = _as_dict(state.get("store"))
+    if isinstance(store.get("profile"), dict):
+        return _as_dict(store.get("profile"))
+    return store
+
+
+def _extract_memory_business(application_state: dict) -> str:
+    memory = _latest_memory_payload(application_state.get("business_memory"))
+    store = _store_profile(application_state)
+    return _normalize_business(
+        _first_text(
+            memory.get("business_type"),
+            memory.get("store_type"),
+            memory.get("business"),
+            store.get("business_type"),
+            store.get("store_type"),
+            store.get("business"),
+        )
+    )
+
+
+def _runtime_situation(
+    *,
+    user_message: str,
+    application_state: dict,
+    business_context: dict,
+    planner_output: dict,
+    perception_diagnostics: dict | None,
+) -> dict:
+    conversation_business = _extract_conversation_business(user_message, business_context)
+    situation_business = _normalize_business(business_context.get("business_type"))
+    memory_business = _extract_memory_business(application_state)
+    current_business = conversation_business or situation_business or memory_business
+    if conversation_business:
+        business_source = "conversation_runtime"
+    elif situation_business:
+        business_source = "business_situation"
+    elif memory_business:
+        business_source = "business_memory"
+    else:
+        business_source = "unknown"
+
+    current_goal = _first_text(
+        business_context.get("current_goal"),
+        planner_output.get("goal"),
+        default="",
+    )
+    goal_source = "conversation_runtime" if business_context.get("current_goal") else ("planner" if planner_output.get("goal") else "unknown")
+    current_problem = _first_text(business_context.get("current_problem"), default="")
+    problem_source = "conversation_runtime" if current_problem else "unknown"
+    current_operation = _first_text(
+        planner_output.get("workflow"),
+        planner_output.get("task_type"),
+        business_context.get("current_campaign"),
+        default="",
+    )
+    current_focus = _first_text(
+        business_context.get("current_discussion_topic"),
+        business_context.get("current_product"),
+        current_goal,
+        user_message,
+        default="",
+    )
+    memory_conflict = bool(
+        conversation_business
+        and memory_business
+        and conversation_business != memory_business
+    )
+    situation_confidence = 0.95 if conversation_business else float(business_context.get("confidence") or (0.45 if memory_business else 0.0))
+    diagnostics = {
+        "business_source": business_source,
+        "goal_source": goal_source,
+        "problem_source": problem_source,
+        "memory_conflict": memory_conflict,
+        "memory_value": memory_business,
+        "conversation_value": conversation_business,
+        "current_value": current_business,
+        "override_reason": "conversation_runtime_overrides_durable_memory" if memory_conflict else "",
+        "runtime_only": True,
+        "diagnostic_only": True,
+        "routing_changed": False,
+        "planner_changed": False,
+        "workflow_changed": False,
+        "responses_changed": False,
+        "memory_changed": False,
+        "execution_changed": False,
+        "commit_boundary_changed": False,
+    }
+    return {
+        "current_business": current_business,
+        "current_goal": current_goal,
+        "current_problem": current_problem,
+        "current_operation": current_operation,
+        "current_focus": current_focus,
+        "situation_confidence": situation_confidence,
+        "situation_source": business_source,
+        "situation_diagnostics": diagnostics,
+    }
 
 
 def _unique(values: list[Any]) -> list:
@@ -239,6 +394,14 @@ class BusinessSituation:
     potential_business_risks: list = field(default_factory=list)
     potential_opportunities: list = field(default_factory=list)
     assumptions: list = field(default_factory=list)
+    current_business: str = ""
+    current_goal: str = ""
+    current_problem: str = ""
+    current_operation: str = ""
+    current_focus: str = ""
+    situation_confidence: float = 0.0
+    situation_source: str = "unknown"
+    situation_diagnostics: dict = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
     version: str = BUSINESS_SITUATION_VERSION
 
@@ -288,6 +451,13 @@ def build_business_situation(
     )
     task_type = plan.get("task_type")
     required_capabilities = _unique(_as_list(plan.get("required_skills")) + _as_list(plan.get("task_type")))
+    runtime = _runtime_situation(
+        user_message=user_message,
+        application_state=state,
+        business_context=context,
+        planner_output=plan,
+        perception_diagnostics=perception_diagnostics,
+    )
 
     situation = BusinessSituation(
         objective=objective,
@@ -310,9 +480,18 @@ def build_business_situation(
         potential_business_risks=_risks(resolved_intent, task_type, context),
         potential_opportunities=_opportunities(resolved_intent, task_type, context),
         assumptions=[
-            "Business Situation is supporting context only in V5.4.",
+            "Business Situation is runtime context only in V5.5.3.",
             "Existing routing, response, and commit behavior remain authoritative for runtime compatibility.",
+            "Current Business Situation may override durable Business Memory only inside the active runtime.",
         ],
+        current_business=runtime["current_business"],
+        current_goal=runtime["current_goal"],
+        current_problem=runtime["current_problem"],
+        current_operation=runtime["current_operation"],
+        current_focus=runtime["current_focus"],
+        situation_confidence=runtime["situation_confidence"],
+        situation_source=runtime["situation_source"],
+        situation_diagnostics=runtime["situation_diagnostics"],
         diagnostics={
             "business_situation_created": True,
             "business_situation_version": BUSINESS_SITUATION_VERSION,
@@ -326,6 +505,7 @@ def build_business_situation(
             "memory_changed": False,
             "execution_changed": False,
             "commit_boundary_changed": False,
+            "runtime": runtime["situation_diagnostics"],
             "perception": _as_dict(perception_diagnostics),
         },
     )
