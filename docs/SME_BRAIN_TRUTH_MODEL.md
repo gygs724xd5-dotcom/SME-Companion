@@ -2,6 +2,8 @@
 
 This document defines how SME Brain determines what may be treated as true enough for business judgment. It describes ideal cognition, not implementation.
 
+Architecture Review VI expands this doctrine in `SME_BRAIN_TRUTH_STATUS_ARCHITECTURE_REVIEW.md`.
+
 ## 1. Purpose
 
 Truth in SME Brain is not absolute certainty. It is justified reliance for a current business decision.
@@ -241,4 +243,3 @@ Truth Status can treat this as a reported policy, but Policy evaluation and Prin
 Truth Status is justified reliance, not certainty.
 
 SME Brain must know the difference between what it saw, what it inferred, what it assumes, what it believes, and what it can responsibly act on.
-
