@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from brain.evidence_runtime import build_evidence_runtime
 from brain.evidence_gap_runtime import build_evidence_gap_runtime
+from brain.perspective_runtime import build_perspective_runtime
 from brain.truth_runtime import build_truth_runtime
 
 
@@ -535,5 +536,11 @@ def build_business_situation(
         business_situation=payload,
         evidence_runtime=evidence_runtime,
         truth_runtime=truth_runtime,
+    )
+    payload["diagnostics"]["perspective"] = build_perspective_runtime(
+        business_situation=payload,
+        evidence_runtime=evidence_runtime,
+        truth_runtime=truth_runtime,
+        evidence_gap_runtime=payload["diagnostics"]["evidence_gap"],
     )
     return payload

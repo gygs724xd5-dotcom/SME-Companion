@@ -941,6 +941,20 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "diagnostic_only": diagnostics.get("evidence_gap_diagnostic_only"),
             "runtime_only": diagnostics.get("evidence_gap_runtime_only"),
         },
+        "Perspective": {
+            "perspective_runtime": diagnostics.get("perspective_runtime"),
+            "perspective_runtime_created": diagnostics.get("perspective_runtime_created"),
+            "perspective_runtime_version": diagnostics.get("perspective_runtime_version"),
+            "selected_frame": diagnostics.get("perspective_selected_frame"),
+            "candidate_frame_count": diagnostics.get("perspective_candidate_frame_count"),
+            "frame_confidence": diagnostics.get("perspective_frame_confidence"),
+            "frame_selection_reason": diagnostics.get("perspective_frame_selection_reason"),
+            "frame_status": diagnostics.get("perspective_frame_status"),
+            "source_layers": diagnostics.get("perspective_source_layers"),
+            "constitutional_invariants": diagnostics.get("perspective_constitutional_invariants"),
+            "diagnostic_only": diagnostics.get("perspective_diagnostic_only"),
+            "runtime_only": diagnostics.get("perspective_runtime_only"),
+        },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
             "registered_domains": diagnostics.get("registered_domains"),
@@ -1085,6 +1099,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     truth_diagnostics = truth_runtime.get("diagnostics") or {}
     evidence_gap_runtime = business_situation_diagnostics.get("evidence_gap") or {}
     evidence_gap_diagnostics = evidence_gap_runtime.get("diagnostics") or {}
+    perspective_runtime = business_situation_diagnostics.get("perspective") or {}
+    perspective_diagnostics = perspective_runtime.get("diagnostics") or {}
     brain_observatory = build_brain_observatory(route)
 
     diagnostics = {
@@ -1132,6 +1148,18 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "evidence_gap_completeness_status": evidence_gap_diagnostics.get("completeness_status") or (evidence_gap_runtime.get("completeness_status") or {}).get("status"),
         "evidence_gap_diagnostic_only": bool(evidence_gap_runtime.get("diagnostic_only")),
         "evidence_gap_runtime_only": bool(evidence_gap_runtime.get("runtime_only")),
+        "perspective_runtime": perspective_runtime,
+        "perspective_runtime_created": bool(perspective_diagnostics.get("perspective_runtime_created")),
+        "perspective_runtime_version": perspective_diagnostics.get("perspective_runtime_version") or perspective_runtime.get("version"),
+        "perspective_selected_frame": perspective_runtime.get("selected_frame"),
+        "perspective_candidate_frame_count": perspective_diagnostics.get("candidate_frame_count", len(perspective_runtime.get("candidate_frames") or [])),
+        "perspective_frame_confidence": perspective_runtime.get("frame_confidence"),
+        "perspective_frame_selection_reason": perspective_runtime.get("frame_selection_reason"),
+        "perspective_frame_status": perspective_runtime.get("frame_status"),
+        "perspective_source_layers": perspective_runtime.get("source_layers") or perspective_diagnostics.get("source_layers") or {},
+        "perspective_constitutional_invariants": perspective_runtime.get("constitutional_invariants") or perspective_diagnostics.get("constitutional_invariants") or {},
+        "perspective_diagnostic_only": bool(perspective_runtime.get("diagnostic_only")),
+        "perspective_runtime_only": bool(perspective_runtime.get("runtime_only")),
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
         "intent_priority_audit": route.get("intent_priority_audit") or _intent_priority_audit(route),
