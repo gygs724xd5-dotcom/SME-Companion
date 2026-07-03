@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from brain.evidence_runtime import build_evidence_runtime
+from brain.evidence_gap_runtime import build_evidence_gap_runtime
 from brain.truth_runtime import build_truth_runtime
 
 
@@ -528,5 +529,11 @@ def build_business_situation(
         },
     )
     payload["diagnostics"]["evidence"] = evidence_runtime
-    payload["diagnostics"]["truth"] = build_truth_runtime(evidence_runtime=evidence_runtime)
+    truth_runtime = build_truth_runtime(evidence_runtime=evidence_runtime)
+    payload["diagnostics"]["truth"] = truth_runtime
+    payload["diagnostics"]["evidence_gap"] = build_evidence_gap_runtime(
+        business_situation=payload,
+        evidence_runtime=evidence_runtime,
+        truth_runtime=truth_runtime,
+    )
     return payload

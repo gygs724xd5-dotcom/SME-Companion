@@ -928,6 +928,19 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "diagnostic_only": diagnostics.get("truth_diagnostic_only"),
             "runtime_only": diagnostics.get("truth_runtime_only"),
         },
+        "Evidence Gap": {
+            "evidence_gap_runtime": diagnostics.get("evidence_gap_runtime"),
+            "evidence_gap_runtime_created": diagnostics.get("evidence_gap_runtime_created"),
+            "evidence_gap_runtime_version": diagnostics.get("evidence_gap_runtime_version"),
+            "gap_item_count": diagnostics.get("evidence_gap_item_count"),
+            "missing_evidence_count": diagnostics.get("evidence_gap_missing_evidence_count"),
+            "priority_queue_count": diagnostics.get("evidence_gap_priority_queue_count"),
+            "next_best_question_present": diagnostics.get("evidence_gap_next_best_question_present"),
+            "duplicate_question_guard_enabled": diagnostics.get("evidence_gap_duplicate_question_guard_enabled"),
+            "completeness_status": diagnostics.get("evidence_gap_completeness_status"),
+            "diagnostic_only": diagnostics.get("evidence_gap_diagnostic_only"),
+            "runtime_only": diagnostics.get("evidence_gap_runtime_only"),
+        },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
             "registered_domains": diagnostics.get("registered_domains"),
@@ -1070,6 +1083,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     evidence_diagnostics = evidence_runtime.get("evidence_diagnostics") or {}
     truth_runtime = business_situation_diagnostics.get("truth") or {}
     truth_diagnostics = truth_runtime.get("diagnostics") or {}
+    evidence_gap_runtime = business_situation_diagnostics.get("evidence_gap") or {}
+    evidence_gap_diagnostics = evidence_gap_runtime.get("diagnostics") or {}
     brain_observatory = build_brain_observatory(route)
 
     diagnostics = {
@@ -1106,6 +1121,17 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "truth_unknown_truth_count": truth_diagnostics.get("unknown_truth_count", len(truth_runtime.get("unknown_truths") or [])),
         "truth_diagnostic_only": bool(truth_runtime.get("diagnostic_only")),
         "truth_runtime_only": bool(truth_runtime.get("runtime_only")),
+        "evidence_gap_runtime": evidence_gap_runtime,
+        "evidence_gap_runtime_created": bool(evidence_gap_diagnostics.get("evidence_gap_runtime_created")),
+        "evidence_gap_runtime_version": evidence_gap_diagnostics.get("evidence_gap_runtime_version") or evidence_gap_runtime.get("version"),
+        "evidence_gap_item_count": evidence_gap_diagnostics.get("gap_item_count", len(evidence_gap_runtime.get("gap_items") or [])),
+        "evidence_gap_missing_evidence_count": evidence_gap_diagnostics.get("missing_evidence_count", len(evidence_gap_runtime.get("missing_evidence") or [])),
+        "evidence_gap_priority_queue_count": evidence_gap_diagnostics.get("priority_queue_count", len(evidence_gap_runtime.get("priority_queue") or [])),
+        "evidence_gap_next_best_question_present": bool(evidence_gap_diagnostics.get("next_best_question_present") or evidence_gap_runtime.get("next_best_question")),
+        "evidence_gap_duplicate_question_guard_enabled": bool(evidence_gap_diagnostics.get("duplicate_question_guard_enabled")),
+        "evidence_gap_completeness_status": evidence_gap_diagnostics.get("completeness_status") or (evidence_gap_runtime.get("completeness_status") or {}).get("status"),
+        "evidence_gap_diagnostic_only": bool(evidence_gap_runtime.get("diagnostic_only")),
+        "evidence_gap_runtime_only": bool(evidence_gap_runtime.get("runtime_only")),
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
         "intent_priority_audit": route.get("intent_priority_audit") or _intent_priority_audit(route),

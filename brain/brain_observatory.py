@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any
 
 
-BRAIN_OBSERVATORY_VERSION = "5.6.1"
+BRAIN_OBSERVATORY_VERSION = "5.7.1"
 BRAIN_OBSERVATORY_SOURCE = "brain_observatory"
 BRAIN_OBSERVATORY_RUNTIME_MODE = "developer_diagnostics_only"
 
@@ -16,6 +16,7 @@ COGNITIVE_LAYERS = (
     "Business Situation",
     "Evidence",
     "Truth Status",
+    "Evidence Gap",
     "Perspective",
     "Knowledge",
     "Business Judgment",
@@ -214,6 +215,25 @@ def _truth_status_layer(business_situation: dict) -> dict:
     )
 
 
+def _evidence_gap_layer(business_situation: dict) -> dict:
+    evidence_gap = _as_dict(_as_dict(business_situation.get("diagnostics")).get("evidence_gap"))
+    diagnostics = _as_dict(evidence_gap.get("diagnostics"))
+    return _layer(
+        name="Evidence Gap",
+        runtime_state={
+            "gap_items": evidence_gap.get("gap_items") or [],
+            "missing_evidence": evidence_gap.get("missing_evidence") or [],
+            "priority_queue": evidence_gap.get("priority_queue") or [],
+            "next_best_question": evidence_gap.get("next_best_question") or {},
+            "duplicate_question_guard": evidence_gap.get("duplicate_question_guard") or {},
+            "completeness_status": evidence_gap.get("completeness_status") or {},
+        },
+        diagnostics=diagnostics,
+        confidence=None,
+        source=evidence_gap.get("source") or diagnostics.get("evidence_gap_runtime_source"),
+    )
+
+
 def _placeholder_layer(name: str) -> dict:
     return _layer(
         name=name,
@@ -284,6 +304,7 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         _business_situation_layer(business_situation),
         _evidence_layer(business_situation),
         _truth_status_layer(business_situation),
+        _evidence_gap_layer(business_situation),
         _placeholder_layer("Perspective"),
         _placeholder_layer("Knowledge"),
         _placeholder_layer("Business Judgment"),
