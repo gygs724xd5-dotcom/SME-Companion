@@ -2,7 +2,7 @@
 
 Business Cognitive Architecture Specification
 
-Version: V5.6.0
+Version: V5.8.0
 
 Status: Living Constitutional Document
 
@@ -154,7 +154,7 @@ Evidence Gap Intelligence asks:
 
 Perspective asks:
 
-> What viewpoints should be considered?
+> What kind of situation does this reality represent?
 
 Knowledge asks:
 
@@ -372,37 +372,41 @@ Evidence Gap Intelligence evolves from runtime foundation toward a gap registry,
 
 ### Purpose
 
-Perspective determines which viewpoints should be considered before judgment.
+Perspective identifies the Situation Frame represented by validated reality.
 
-Business decisions are rarely evaluated from a single angle. The owner, customer, operator, finance, risk, brand, legal, market, and execution viewpoints may all matter.
+Humans do not begin understanding by deciding. They first recognize what kind of situation they are in. SME Brain needs this same cognitive step before recalling knowledge, evaluating implications, or choosing action.
+
+Perspective answers only:
+
+> What kind of situation does this reality represent?
 
 ### Inputs
 
-Perspective receives the business situation, truth status, evidence-gap diagnostics, known actors, constraints, business goals, uncertainty, and relevant stakeholder context.
+Perspective receives the business situation, truth status, evidence-gap diagnostics, validated facts, assumptions, reliance boundaries, material uncertainty, constraints, and relevant current signals.
 
 ### Outputs
 
-Perspective outputs selected viewpoints, stakeholder concerns, tradeoff frames, omitted perspectives, conflict between viewpoints, and the reason each perspective matters.
+Perspective outputs Situation Frame diagnostics: selected frame, candidate frames, frame confidence, frame selection reason, unresolved ambiguity, and evidence limitations affecting frame confidence.
 
 ### Responsibilities
 
-Perspective must widen reasoning where appropriate. It must identify whose interests matter, which tradeoffs are relevant, what blind spots may exist, and what point of view should constrain judgment.
+Perspective must identify the kind of situation represented by validated reality. It must produce candidate frames, expose frame confidence, explain why a frame was selected, preserve ambiguity when several frames remain plausible, and select Unknown Situation when no responsible frame can be chosen.
 
 ### Non-responsibilities
 
-Perspective must not decide the final business judgment, select action, execute, or communicate final advice. It must not include every imaginable viewpoint when doing so adds noise rather than business value.
+Perspective must not diagnose root causes, recommend actions, make business judgments, choose decisions, trigger workflows, modify memory, modify evidence, modify truth status, modify business situation, modify routing, modify planner behavior, modify workflow behavior, modify responses, modify execution, or modify commit.
 
 ### Constitutional Invariants
 
-Perspective must be relevant to the situation. It must not become performative balance. It must improve judgment by selecting useful viewpoints, not by multiplying abstract considerations.
+Perspective is recognitional, not evaluative. It names the situation frame; it does not explain why the situation happened, decide what should be done, determine who is correct, or select the best solution.
 
 ### Diagnostic Responsibilities
 
-Perspective diagnostics should expose which viewpoints were considered, why they were selected, which were excluded, and what tradeoffs they create.
+Perspective diagnostics should expose the selected frame, candidate frames, frame confidence, frame selection reason, unresolved ambiguity, and evidence limitations that reduce confidence.
 
 ### Future Evolution
 
-Perspective evolves toward richer stakeholder and tradeoff modeling. Future versions may support industry-specific perspective sets, owner preference profiles, and dynamic conflict mapping, while keeping perspective separate from final judgment.
+Perspective evolves toward a disciplined Situation Frame registry and accountable frame diagnostics. Future versions may support industry-specific frames, aliases, ambiguity rules, Unknown Situation behavior, and runtime state, while keeping Perspective separate from root-cause diagnosis, judgment, decision, execution, conversation, and commit.
 
 ## 13. Layer Specification: Knowledge
 
@@ -414,7 +418,7 @@ Knowledge includes principles, patterns, domain concepts, operating methods, fin
 
 ### Inputs
 
-Knowledge receives the business situation, truth status, selected perspectives, owner context, business domain, durable memory, business principles, and relevant knowledge sources.
+Knowledge receives the business situation, truth status, selected Situation Frame, Perspective diagnostics, owner context, business domain, durable memory, business principles, and relevant knowledge sources.
 
 ### Outputs
 
@@ -444,11 +448,11 @@ Knowledge evolves toward stronger domain intelligence and owner-specific busines
 
 ### Purpose
 
-Business Judgment forms the best contextual business judgment given the situation, truth status, perspectives, and applicable knowledge.
+Business Judgment forms the best contextual business judgment given the situation, truth status, recognized Situation Frame, and applicable knowledge.
 
 ### Inputs
 
-Business Judgment receives the framed situation, justified claims, uncertainty, selected perspectives, applicable knowledge, constraints, risks, opportunities, owner goals, and authority rules.
+Business Judgment receives the framed situation, justified claims, uncertainty, recognized Situation Frame, applicable knowledge, constraints, risks, opportunities, owner goals, and authority rules.
 
 ### Outputs
 
@@ -464,7 +468,7 @@ Business Judgment must not execute the chosen action, decide communication style
 
 ### Constitutional Invariants
 
-Business Judgment must be grounded in Truth Status, informed by Perspective, and supported by Knowledge. It must not be a language-generation flourish. It must produce accountable business reasoning.
+Business Judgment must be grounded in Truth Status, informed by the recognized Situation Frame, and supported by Knowledge. It must not be a language-generation flourish. It must produce accountable business reasoning.
 
 ### Diagnostic Responsibilities
 
@@ -662,11 +666,27 @@ Truth enables judgment, but it does not replace judgment.
 
 ### Evidence Gap Is Not Perspective
 
-Evidence Gap Intelligence says what material evidence is missing. Perspective says which viewpoints should interpret truth-labeled reality.
+Evidence Gap Intelligence says what material evidence is missing. Perspective says what Situation Frame the truth-labeled reality represents.
 
-This separation exists because knowing that evidence is missing is not the same as understanding what the situation means. If missing-evidence diagnosis becomes interpretation, SME Brain may ask leading questions, smuggle recommendations into clarification, or treat missing fields as strategic conclusions.
+This separation exists because knowing that evidence is missing is not the same as recognizing the kind of situation currently represented. If missing-evidence diagnosis becomes frame recognition, SME Brain may ask leading questions, smuggle recommendations into clarification, or treat missing fields as strategic conclusions.
 
 Evidence Gap Intelligence may provide a smallest next question candidate, but it must not decide to ask it or phrase the final response.
+
+### Perspective Is Not Knowledge
+
+Perspective recognizes the Situation Frame. Knowledge supplies accumulated business experience, doctrine, principles, methods, and patterns relevant to that frame.
+
+This separation exists because a system cannot responsibly recall relevant knowledge until it knows what kind of situation it is facing. If Knowledge becomes Perspective, general business patterns may force the frame before validated reality supports it.
+
+Perspective may say "this is Profit Compression." Knowledge may then recall common experience associated with Profit Compression. Perspective must not contain or apply that experience itself.
+
+### Perspective Is Not Judgment
+
+Perspective recognizes. Judgment evaluates.
+
+This separation exists because naming a situation is not the same as deciding what explanation is most plausible, what risk matters most, or what response would help. If Perspective becomes Judgment, the system may present a frame as though it already knows cause, responsibility, or best action.
+
+Perspective may say "this is Sales Decline." Judgment may later evaluate whether marketing weakness, seasonality, pricing pressure, operational limits, or another explanation is most plausible.
 
 ### Business Memory Is Not Business Situation
 

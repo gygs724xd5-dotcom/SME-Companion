@@ -6,7 +6,7 @@ This document defines Business Judgment. It describes ideal cognition, not imple
 
 Business Judgment is the central cognitive act of SME Brain.
 
-It is the reasoned assessment of a business situation under uncertainty. It synthesizes situation, evidence, truth-status, perspectives, knowledge, principles, policies, risks, opportunities, constraints, and expected business impact.
+It is the reasoned assessment of a business situation under uncertainty. It synthesizes situation, evidence, truth-status, recognized Situation Frame, knowledge, principles, policies, risks, opportunities, constraints, and expected business impact.
 
 Judgment answers:
 
@@ -20,7 +20,7 @@ It cannot merge with Evidence because evidence supports judgment but does not we
 
 It cannot merge with Truth Status because truth-status decides justified reliance, not business wisdom.
 
-It cannot merge with Perspective because perspectives are lenses, not synthesis.
+It cannot merge with Perspective because Perspective recognizes the Situation Frame, while Judgment evaluates implications, explanations, alternatives, risks, and recommendations.
 
 It cannot merge with Knowledge because knowledge is reusable understanding, not contextual assessment.
 
@@ -30,7 +30,7 @@ It cannot merge with Decision because judgment says what appears wise; decision 
 
 Judgment must:
 
-- synthesize multiple perspectives;
+- synthesize the recognized Situation Frame with knowledge, evidence, risks, opportunities, and constraints;
 - weigh evidence according to TruthState;
 - reason under uncertainty;
 - identify risks, opportunities, and trade-offs;
@@ -60,7 +60,7 @@ Judgment receives:
 - BusinessSituation;
 - EvidenceSet;
 - TruthState;
-- PerspectiveSet;
+- Perspective diagnostics;
 - KnowledgeContext;
 - MaterialUncertainty;
 - risks;
@@ -125,7 +125,7 @@ Judgment forms through:
 1. Situation framing.
 2. Evidence evaluation.
 3. Truth-status assignment.
-4. Perspective selection.
+4. Situation Frame recognition.
 5. Knowledge application.
 6. Hypothesis generation.
 7. Risk and opportunity evaluation.
@@ -185,9 +185,9 @@ Judgment confidence should be based on:
 
 - evidence confidence;
 - truth-status confidence;
-- perspective completeness;
+- frame confidence;
 - knowledge applicability;
-- consistency across perspectives;
+- consistency between the recognized frame, evidence, and knowledge;
 - severity of unresolved uncertainty;
 - reversibility of recommended action;
 - business consequence;
@@ -196,22 +196,23 @@ Judgment confidence should be based on:
 
 Confidence should be explainable, not just numeric.
 
-## 12. Multiple Perspectives
+## 12. Frame-Aware Judgment
 
-Judgment should integrate perspectives by:
+Judgment should use Perspective diagnostics by:
 
-- identifying where they agree;
-- identifying where they conflict;
-- weighing them by business consequence;
-- preserving high-risk minority perspectives;
+- preserving the selected Situation Frame;
+- considering candidate frames when confidence is limited;
+- respecting Unknown Situation when no frame is responsible;
+- weighing business consequence after the frame is recognized;
+- preserving high-risk alternative hypotheses;
 - avoiding commercial capture by revenue-only logic;
 - avoiding principle capture by impractical abstraction.
 
 Example:
 
-A discount may improve conversion from a sales perspective, harm margin from a financial perspective, weaken brand from a positioning perspective, and preserve trust from a customer-service perspective if framed carefully.
+A customer complaint may be framed as Pricing Pressure, Customer Retention Risk, or Unknown Situation depending on validated evidence. Judgment then evaluates causes, tradeoffs, and possible recommendations.
 
-Judgment must synthesize, not average.
+Judgment must evaluate from the frame; it must not ask Perspective to perform evaluation.
 
 ## 13. Principles And Judgment
 
@@ -236,7 +237,7 @@ Judgment may depend on:
 - BusinessSituation;
 - EvidenceSet;
 - TruthState;
-- PerspectiveSet;
+- Perspective diagnostics;
 - KnowledgeContext;
 - principles;
 - policies;
@@ -263,9 +264,9 @@ Judgment must not depend on:
 
 Judgment becomes procedural completion.
 
-### Single-Perspective Judgment
+### Single-Frame Capture
 
-One domain lens dominates.
+One Situation Frame dominates after evidence changes or candidate frames remain materially plausible.
 
 ### Evidence-Free Judgment
 
@@ -302,4 +303,3 @@ Judgment should consider demand, cash flow, workload, service quality, owner cap
 Business Judgment is practical wisdom under uncertainty.
 
 SME Brain succeeds when it can explain not only what it recommends, but why that recommendation fits this business situation now.
-

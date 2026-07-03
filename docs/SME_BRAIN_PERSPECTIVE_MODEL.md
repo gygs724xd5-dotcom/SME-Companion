@@ -1,146 +1,172 @@
 # SME Brain Perspective Model
 
-This document defines how SME Brain uses perspectives to interpret a business situation. It describes ideal cognition, not implementation.
+This document defines Perspective as a constitutional cognitive layer of SME Brain. It describes ideal cognition, not implementation.
+
+Perspective is doctrine only until a future runtime is explicitly designed.
 
 ## 1. Purpose
 
-Perspective is the interpretive lens applied to a situation before judgment.
+Perspective identifies the Situation Frame represented by validated reality.
 
-Experienced business decision-makers do not view every problem from one angle. They consider financial impact, customer trust, operations, brand, ethics, owner constraints, market timing, execution feasibility, and risk.
+Perspective answers only:
 
-Perspective answers:
+> What kind of situation does this reality represent?
 
-> From which business lenses should this situation be evaluated before judgment is formed?
+Perspective does not explain why the situation happened. It does not decide what should be done. It does not evaluate which explanation is best.
 
-## 2. Why Perspective Must Exist
+## 2. Definition
 
-Perspective cannot merge with Business Situation because the situation describes what is happening; perspective decides how to look at it.
+Perspective is the process of recognizing and naming the kind of business situation now represented by the available, truth-labeled reality.
 
-It cannot merge with Evidence because evidence evaluates information quality, while perspective selects interpretive relevance.
+It transforms:
 
-It cannot merge with Knowledge because knowledge supplies content, methods, rules, and patterns; perspective decides which kinds of knowledge matter.
+```text
+Validated Reality
+    -> Recognized Situation Frame
+```
 
-It cannot merge with Judgment because judgment synthesizes perspectives and chooses a reasoned assessment.
+Examples:
 
-## 3. Responsibilities
+```text
+Customers up
+Revenue up
+Profit down
+    -> Profit Compression
+```
+
+```text
+Inventory remaining: 3 units
+    -> Low Inventory Risk
+```
+
+```text
+Revenue declining for several weeks
+    -> Sales Decline
+```
+
+Perspective identifies the frame only.
+
+## 3. Why Perspective Must Exist
+
+Perspective exists before Knowledge because SME Brain cannot know which experience, concepts, patterns, or principles to recall until it knows what kind of situation it is facing.
+
+Without Perspective, Knowledge retrieval risks becoming generic, domain-keyword driven, or premature. A sales metric could trigger sales knowledge, finance knowledge, operations knowledge, or inventory knowledge. Perspective determines the situation frame first.
+
+Perspective cannot merge with Business Situation because Business Situation organizes the active business reality under attention, while Perspective recognizes the kind of situation represented by validated reality.
+
+Perspective cannot merge with Evidence Gap Intelligence because missing-evidence diagnosis is not frame recognition.
+
+Perspective cannot merge with Knowledge because Knowledge supplies accumulated experience and doctrine after the situation frame has been identified.
+
+Perspective cannot merge with Business Judgment because Judgment evaluates. Perspective does not evaluate.
+
+## 4. Responsibilities
 
 Perspective must:
 
-- identify relevant business lenses;
-- prevent premature single-domain framing;
-- expose competing stakeholder concerns;
-- determine which knowledge categories are needed;
-- identify which risks and opportunities matter;
-- ensure principles and policies are considered when relevant;
-- support multi-perspective judgment;
-- preserve minority perspectives when they materially change risk.
+- identify Situation Frames;
+- produce candidate frames;
+- expose frame confidence;
+- explain frame selection diagnostics;
+- preserve uncertainty when the frame is ambiguous;
+- surface Unknown Situation when no responsible frame can be selected.
 
 Perspective must not:
 
-- decide the final answer;
-- override Truth Status;
-- select execution;
-- become a domain router;
-- let a domain label claim cognitive authority;
-- ignore principles or policy because a commercial perspective is stronger.
+- recommend actions;
+- diagnose root causes;
+- make business judgments;
+- choose decisions;
+- trigger workflows;
+- modify business memory;
+- modify evidence;
+- modify truth status;
+- modify business situation;
+- modify routing;
+- modify planner behavior;
+- modify responses;
+- modify execution;
+- modify commit.
 
-## 4. Inputs
+## 5. Inputs
 
-Perspective receives:
+Perspective may receive:
 
 - BusinessSituation;
 - TruthState;
+- validated facts;
+- assumptions and reliance boundaries;
+- EvidenceGapProfile diagnostics;
 - material uncertainty;
-- risks;
-- opportunities;
-- constraints;
-- objectives;
-- stakeholder context;
-- policies;
-- principles;
-- domain signals;
-- expected consequence.
+- known constraints;
+- relevant current signals.
 
-## 5. Outputs
+Perspective must not fill missing evidence, call tools, search externally, execute workflows, or write memory.
 
-Perspective produces a `PerspectiveSet`.
+## 6. Outputs
 
-`PerspectiveSet` includes:
+Perspective produces Situation Frame diagnostics.
 
-- selected perspectives;
-- why each perspective matters;
-- priority or salience;
-- risks each perspective sees;
-- opportunities each perspective sees;
-- knowledge needs;
-- conflict between perspectives;
-- perspectives intentionally excluded and why.
+Future architectural outputs may include:
 
-## 6. Semantic Objects
+- `selected_frame`;
+- `candidate_frames`;
+- `frame_confidence`;
+- `frame_selection_reason`;
+- unresolved ambiguity;
+- evidence limitations affecting frame confidence.
 
-### Perspective
+These are doctrine categories, not implementation fields.
 
-A business lens for interpreting the situation.
+## 7. Situation Frame
 
-### PerspectiveSet
+A Situation Frame is a recognized class of business reality.
 
-The selected group of perspectives relevant to judgment.
+It names what kind of situation the current validated reality represents without explaining causes, evaluating implications, or choosing action.
 
-### PerspectiveWeight
+Examples:
 
-The current importance of a perspective for this situation.
+- Profit Compression;
+- Sales Decline;
+- Inventory Risk;
+- Cash Flow Stress;
+- Demand Surge;
+- Demand Weakness;
+- Operational Bottleneck;
+- Capacity Constraint;
+- Supplier Disruption;
+- Pricing Pressure;
+- Customer Retention Risk;
+- Growth Opportunity;
+- Seasonality;
+- Market Expansion;
+- Competitive Pressure;
+- Unknown Situation.
 
-### PerspectiveConflict
-
-A tension between perspectives, such as revenue versus trust or speed versus accuracy.
-
-### StakeholderLens
-
-A perspective tied to a stakeholder, such as owner, customer, staff, supplier, regulator, platform, or community.
-
-## 7. Standard Perspectives
-
-SME Brain should support at least:
-
-- financial perspective;
-- customer perspective;
-- operational perspective;
-- sales perspective;
-- marketing perspective;
-- brand perspective;
-- strategic perspective;
-- policy perspective;
-- principle perspective;
-- execution perspective;
-- risk perspective;
-- owner capacity perspective;
-- market perspective;
-- learning perspective.
-
-Domain perspectives such as pricing, sales, finance, marketing, customer service, inventory, and operations should live here, not as constitutional authority layers.
+These examples are not a runtime registry.
 
 ## 8. Ownership
 
-Perspective Authority owns lens selection and perspective conflict surfacing.
+Perspective Authority owns Situation Frame recognition.
 
-Business Judgment Authority owns synthesis across perspectives.
+Evidence Gap Intelligence owns missing support.
 
-Knowledge Authority owns the quality of knowledge used by each perspective.
+Knowledge Authority owns relevant accumulated experience, principles, patterns, methods, and doctrine.
 
-Principles and Policy Authorities constrain judgment when their perspectives are relevant.
+Business Judgment Authority owns evaluation.
+
+Decision Authority owns action selection.
 
 ## 9. Allowed Dependencies
 
 Perspective may depend on:
 
-- Business Situation;
-- TruthState;
-- EvidenceSet;
-- Knowledge categories;
-- stakeholder model;
-- risk model;
-- principle and policy triggers;
-- business domain ontology.
+- Business Situation framing;
+- Truth Status classifications;
+- Evidence Gap diagnostics;
+- current validated reality;
+- known material uncertainty;
+- business ontology for naming Situation Frames.
 
 ## 10. Forbidden Dependencies
 
@@ -148,108 +174,106 @@ Perspective must not depend on:
 
 - workflow availability;
 - skill availability;
-- current implementation modules;
-- keyword-only domain matching;
+- planner convenience;
+- routing labels;
 - desired response format;
 - execution convenience;
-- the easiest answer.
+- memory write needs;
+- the easiest recommendation to explain.
 
 ## 11. Confidence
 
-Perspective confidence means confidence that a lens is relevant and weighted appropriately.
+Frame confidence means confidence that the selected Situation Frame matches the validated reality.
 
-It is not confidence that the final judgment is correct.
+It is not confidence that:
 
-Perspective confidence should be lower when:
+- the cause is known;
+- the business is healthy or unhealthy;
+- a recommendation is correct;
+- a decision should be taken;
+- execution should proceed.
 
-- the situation is ambiguous;
+Frame confidence should be lower when:
+
 - evidence is thin;
-- domains overlap;
-- stakes are high;
-- important stakeholders are unclear;
-- multiple perspectives conflict.
+- truth status is uncertain;
+- missing evidence could change the frame;
+- multiple frames fit the same facts;
+- the situation is new or poorly represented by known frames.
 
 ## 12. Uncertainty
 
 Perspective uncertainty asks:
 
-- Are we looking at the right problem?
-- Is this mainly financial, operational, customer, strategic, or brand-related?
-- Are we missing a stakeholder?
-- Is a hidden risk lens needed?
-- Does a principle or policy lens change what is acceptable?
+- Is this Profit Compression or Pricing Pressure?
+- Is this Sales Decline or Seasonality?
+- Is this Inventory Risk or Supplier Disruption?
+- Is this Demand Weakness or Capacity Constraint?
+- Is no responsible frame currently selectable?
 
-This uncertainty can justify asking only when the selected perspective would materially change the next action.
+Perspective uncertainty does not ask:
+
+- Why did this happen?
+- What should the owner do?
+- Which explanation is best?
+- Which action is most useful?
 
 ## 13. Explainability
 
-Perspective should explain:
+Perspective diagnostics should explain:
 
-- why a lens was used;
-- why a lens was not used;
-- which perspectives conflict;
-- how perspective weighting affected judgment;
-- why a non-obvious lens matters.
+- which frame was selected;
+- which candidate frames were considered;
+- why the selected frame fits the validated reality;
+- what evidence limitations reduced confidence;
+- why a frame remains unknown when applicable.
 
-For user-facing communication, this often appears as concise reasoning:
+For example:
 
-> I would look at this as both a margin issue and a customer trust issue.
+```text
+Selected frame: Profit Compression.
+Reason: Revenue and customer activity are up while profit is down.
+Confidence limit: Cost evidence is not yet detailed enough to explain the cause.
+```
+
+The explanation identifies the frame. It does not diagnose the cause.
 
 ## 14. Failure Modes
 
-### Single-Lens Capture
+### Cause Leakage
 
-The Brain treats every issue as sales, marketing, finance, or workflow.
+The layer explains why the situation happened.
 
-### Domain Authority Confusion
+### Recommendation Leakage
 
-Domain labels become final authority.
+The layer suggests what should be done.
 
-### Principle Blindness
+### Judgment Leakage
 
-Commercial benefit hides ethical or trust risk.
+The layer evaluates which explanation or strategy is best.
 
-### Policy Blindness
+### Domain Capture
 
-Advice ignores business rules or compliance constraints.
+A domain label such as sales, finance, or inventory is treated as the situation frame without recognizing the actual business condition.
+
+### Workflow Capture
+
+Workflow fields or planner needs determine the frame.
 
 ### Over-Framing
 
-The Brain applies too many lenses and slows down simple help.
+The layer selects a precise frame when validated reality supports only Unknown Situation or broad ambiguity.
 
-### Perspective Bias
+### Knowledge Capture
 
-The first detected lens dominates all later reasoning.
+General business knowledge forces the frame before current truth-labeled reality supports it.
 
-## 15. Examples
+## 15. Final Standard
 
-### Customer Says Price Is Expensive
+Perspective prevents premature knowledge retrieval, judgment, and decision.
 
-Relevant perspectives:
+SME Brain should not ask "What should we do?" at the Perspective layer.
 
-- pricing;
-- sales;
-- customer trust;
-- margin;
-- brand positioning.
+It should ask:
 
-Judgment should not default to discounting. It should evaluate whether the issue is value communication, wrong audience, margin problem, or service trust problem.
-
-### Staff Shortage
-
-Relevant perspectives:
-
-- operations;
-- customer service;
-- owner capacity;
-- financial;
-- risk.
-
-The Brain should not only suggest hiring. It may consider hours, menu simplification, demand smoothing, automation, or service expectations.
-
-## 16. Final Standard
-
-Perspective prevents premature judgment.
-
-SME Brain should not ask "Which domain owns this?" first. It should ask "Which lenses must be considered for a responsible business judgment?"
-
+> What kind of situation does this reality represent?

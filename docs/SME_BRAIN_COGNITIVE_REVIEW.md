@@ -16,7 +16,7 @@ It should not answer:
 
 > Which business domain is this?
 
-Domain labels such as pricing, sales, marketing, finance, inventory, operations, and customer service should become Perspectives or Knowledge domains.
+Domain labels such as pricing, sales, marketing, finance, inventory, operations, and customer service should become Situation Frames, Knowledge domains, or subordinate domain concepts. They should not become constitutional authorities.
 
 ### Finding 2: Truth Status is a missing explicit layer.
 
@@ -26,9 +26,9 @@ Without Truth Status, tool output, memory, user statements, and knowledge can si
 
 ### Finding 3: Perspective is required before Knowledge and Judgment.
 
-Experienced business operators reason through lenses. A customer complaint may be a trust issue, policy issue, operations issue, financial issue, and brand issue at once.
+Experienced business operators first recognize what kind of situation they are in. A set of validated facts may represent Profit Compression, Sales Decline, Inventory Risk, Demand Surge, Pricing Pressure, or Unknown Situation before any cause or action is evaluated.
 
-Perspective prevents premature domain capture.
+Perspective prevents premature domain capture by naming the Situation Frame before Knowledge and Judgment act.
 
 ### Finding 4: Knowledge must be decomposed.
 
@@ -87,6 +87,7 @@ Perception
     -> Business Situation
     -> Evidence
     -> Truth Status
+    -> Evidence Gap Intelligence
     -> Perspective
     -> Knowledge
     -> Business Judgment
@@ -120,13 +121,14 @@ The Knowledge model should explicitly separate:
 - procedures;
 - domain models.
 
-### Redesign 4: Add TruthState and PerspectiveSet before Judgment.
+### Redesign 4: Add TruthState, EvidenceGapProfile, and Perspective diagnostics before Judgment.
 
 Judgment should not form directly from raw context and evidence. It should receive:
 
 - evidence quality;
 - truth-status;
-- selected perspectives;
+- evidence-gap diagnostics;
+- selected Situation Frame;
 - relevant knowledge;
 - material uncertainty.
 
@@ -167,11 +169,11 @@ Improve by preventing evidence from becoming fact automatically.
 
 ### Truth to Perspective
 
-Improve by requiring each perspective to respect fact, assumption, and conflict labels.
+Improve by requiring Perspective to identify Situation Frames only from truth-labeled reality and visible evidence limitations.
 
 ### Perspective to Knowledge
 
-Improve by using perspectives to select relevant knowledge categories.
+Improve by using the recognized Situation Frame to select relevant knowledge categories and experience.
 
 ### Knowledge to Judgment
 
@@ -197,8 +199,8 @@ Improve by requiring governance for finality, persistence, external action, and 
 
 This is doctrine only, but future migration should prioritize:
 
-1. Define TruthState and PerspectiveSet before Judgment Runtime.
-2. Reclassify current domain authorities as perspectives or domain knowledge.
+1. Define TruthState, EvidenceGapProfile, and Perspective diagnostics before Judgment Runtime.
+2. Reclassify current domain authorities as Situation Frames, domain knowledge, or subordinate domain concepts.
 3. Preserve constitutional authority as ownership governance.
 4. Define BusinessJudgment as the central assessment object.
 5. Define Decision as the next-action object.
@@ -219,7 +221,9 @@ Evidence evaluates information relevant to that situation.
 
 Truth Status determines justified reliance.
 
-Perspective selects the lenses needed for responsible interpretation.
+Evidence Gap Intelligence identifies material missing evidence.
+
+Perspective identifies the Situation Frame represented by validated reality.
 
 Knowledge supplies principles, policies, rules, domain models, skills, procedures, methods, and experience.
 
@@ -249,11 +253,11 @@ The model scales to:
 - multiple execution engines;
 - multiple workflows.
 
-It scales because new domains become Perspectives and Knowledge domains, not authorities over cognition.
+It scales because new domains become Situation Frames, Knowledge domains, or subordinate domain concepts, not authorities over cognition.
 
 New skills become Execution capabilities, not conversation owners.
 
-New models become contributors to perception, evidence evaluation, knowledge retrieval, judgment drafting, or conversation drafting, not owners of final responsibility.
+New models become contributors to perception, evidence evaluation, frame recognition, knowledge retrieval, judgment drafting, or conversation drafting, not owners of final responsibility.
 
 New memory systems become evidence and context sources, not truth owners.
 
@@ -268,10 +272,9 @@ Before Judgment Runtime begins, SME Brain should adopt this constitutional rule:
 The center of SME Brain V6 should be:
 
 ```text
-Truth-aware, perspective-rich, knowledge-informed Business Judgment,
+Truth-aware, frame-recognized, knowledge-informed Business Judgment,
 followed by explicit Decision,
 followed by authorized Execution,
 followed by faithful Conversation,
 governed by Commit.
 ```
-

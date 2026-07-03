@@ -12,7 +12,7 @@ The Brain must not be designed around workflows, routers, planner states, skills
 
 The cognitive model should answer:
 
-> What is happening in this business, what matters, what is sufficiently known, what remains uncertain, what perspectives should be considered, what judgment is warranted, what action is most useful, what may be executed, and how should this be communicated?
+> What is happening in this business, what matters, what is sufficiently known, what remains uncertain, what kind of situation this reality represents, what knowledge applies, what judgment is warranted, what action is most useful, what may be executed, and how should this be communicated?
 
 ## 2. Recommended Cognitive Flow
 
@@ -53,7 +53,7 @@ Second, Evidence Gap Intelligence becomes explicit between Truth Status and Pers
 
 Third, "Commit" is explicit and final. Conversation and execution may produce candidate outputs, but nothing becomes durable, external, or user-final until commitment is governed.
 
-Fourth, Knowledge follows Perspective as well as Evidence. Knowledge is not merely lookup. An experienced operator asks which frame is relevant before selecting methods, principles, domain patterns, rules, or experience.
+Fourth, Knowledge follows Perspective as well as Evidence. Knowledge is not merely lookup. An experienced operator recognizes the situation frame before selecting methods, principles, domain patterns, rules, or experience.
 
 ## 4. Layer Summary
 
@@ -95,15 +95,15 @@ Purpose: determine what material evidence is still missing and which missing evi
 
 Output: EvidenceGapProfile with evidence completeness, missing evidence, priority queue, duplicate-question guard, and smallest next question candidate.
 
-Cannot merge with Perspective because missing-evidence diagnosis is not interpretation. It identifies what is still required before lenses are selected.
+Cannot merge with Perspective because missing-evidence diagnosis is not frame recognition. It identifies what is still required before the situation is named.
 
 ### Perspective
 
-Purpose: decide which business lenses should evaluate the situation.
+Purpose: identify the Situation Frame represented by validated reality.
 
-Output: PerspectiveSet such as financial, customer, operational, strategic, brand, policy, principle, market, owner, or execution perspective.
+Output: Situation Frame diagnostics such as selected frame, candidate frames, frame confidence, and frame selection reason.
 
-Cannot merge with Knowledge because perspectives select the kind of interpretation needed; knowledge supplies content.
+Cannot merge with Knowledge because Perspective names the situation frame; Knowledge supplies relevant experience, doctrine, principles, methods, and patterns.
 
 ### Knowledge
 
@@ -197,23 +197,23 @@ Owner: Truth Status owns epistemic labels; Evidence Gap Intelligence owns missin
 
 ### Evidence Gap Intelligence -> Perspective
 
-Why: interpretation should know which material evidence is absent before selecting and weighting lenses.
+Why: frame recognition should know which material evidence is absent before naming the situation.
 
 Crosses: evidence completeness, known evidence summary, missing evidence, priority queue, smallest next question candidate, unresolved uncertainty.
 
 Must never cross: business evaluation, recommendation, strategy ranking, outcome prediction, or user-facing response authority.
 
-Owner: Evidence Gap Intelligence owns missing support; Perspective owns lens selection and interpretation.
+Owner: Evidence Gap Intelligence owns missing support; Perspective owns Situation Frame recognition.
 
 ### Perspective -> Knowledge
 
-Why: the Brain should retrieve the kind of knowledge relevant to the lens.
+Why: the Brain should retrieve knowledge relevant to the recognized Situation Frame.
 
-Crosses: selected lenses, domain needs, principle needs, policy needs, skill needs.
+Crosses: selected frame, candidate frames, frame confidence, frame selection reason, ambiguity, evidence limitations affecting frame confidence.
 
-Must never cross: a domain label claiming final judgment.
+Must never cross: root-cause diagnosis, recommendation, action selection, or a frame claiming final judgment.
 
-Owner: Perspective owns lens relevance; Knowledge owns content quality.
+Owner: Perspective owns Situation Frame recognition; Knowledge owns content quality.
 
 ### Knowledge -> Judgment
 
@@ -278,8 +278,8 @@ The complete cognitive model requires:
 - `Assumption`
 - `Hypothesis`
 - `MaterialUncertainty`
-- `Perspective`
-- `PerspectiveSet`
+- `SituationFrame`
+- `PerspectiveDiagnostics`
 - `KnowledgeReference`
 - `KnowledgeContext`
 - `Principle`
@@ -301,7 +301,7 @@ The complete cognitive model requires:
 
 ## 8. Five-Year Scalability
 
-This architecture scales to 100+ domains and 1000+ skills only if domains and skills remain subordinate. New domains should add perspectives and knowledge. New skills should add execution capabilities. New models should contribute perception, evidence evaluation, knowledge retrieval, judgment drafts, or conversation drafts, but never own authority by virtue of generation.
+This architecture scales to 100+ domains and 1000+ skills only if domains and skills remain subordinate. New domains should add Situation Frames and knowledge domains where appropriate. New skills should add execution capabilities. New models should contribute perception, evidence evaluation, frame recognition, knowledge retrieval, judgment drafts, or conversation drafts, but never own authority by virtue of generation.
 
 The stable center must remain:
 

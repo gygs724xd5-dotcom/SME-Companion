@@ -36,6 +36,7 @@ Reality
     -> Business Situation
     -> Evidence
     -> Truth Status
+    -> Evidence Gap Intelligence
     -> Perspective
     -> Knowledge
     -> Business Judgment
@@ -47,7 +48,7 @@ Reality
 
 Authority governs every layer but is not itself a cognitive layer.
 
-Truth Status sits after Evidence and before Perspective because SME Brain must know how strongly it may rely on claims before selecting interpretive lenses, applying knowledge, forming judgment, choosing action, executing, communicating, or committing durable state.
+Truth Status sits after Evidence and before Evidence Gap Intelligence and Perspective because SME Brain must know how strongly it may rely on claims before identifying missing support, recognizing the Situation Frame, applying knowledge, forming judgment, choosing action, executing, communicating, or committing durable state.
 
 ## 3. Doctrine
 
@@ -55,7 +56,9 @@ Evidence represents information.
 
 Truth Status evaluates reliance.
 
-Perspective reasons over truth.
+Evidence Gap Intelligence identifies missing support.
+
+Perspective identifies the Situation Frame.
 
 Knowledge applies doctrine.
 
@@ -134,7 +137,7 @@ Conflicting evidence exists when two or more credible evidence items support inc
 Conflict is material when resolving it could change:
 
 - the truth status of a claim;
-- the perspective selected;
+- the Situation Frame selected;
 - the applicable knowledge;
 - the business judgment;
 - the next decision;
@@ -289,9 +292,9 @@ It must not collect evidence, retrieve information, classify business situations
 
 ### Perspective
 
-Perspective selects interpretive lenses using Truth Status.
+Perspective identifies the Situation Frame using Truth Status.
 
-It reasons over facts, assumptions, hypotheses, and conflicts at their proper strength.
+It recognizes frames from facts, assumptions, hypotheses, and conflicts at their proper strength.
 
 It must not override truth labels.
 
@@ -307,7 +310,7 @@ It must not turn general doctrine into current fact.
 
 Business Judgment evaluates business implications.
 
-It weighs truth, uncertainty, perspectives, knowledge, risk, opportunity, constraints, and goals.
+It weighs truth, uncertainty, Situation Frames, knowledge, risk, opportunity, constraints, and goals.
 
 It must not silently upgrade assumptions into facts.
 
@@ -413,7 +416,7 @@ Perspective is downstream of Truth Status.
 
 Perspective receives claims with reliance labels, not raw certainty.
 
-Perspective may reason differently depending on whether a claim is:
+Perspective may recognize frames differently depending on whether a claim is:
 
 - fact;
 - assumption;
@@ -427,11 +430,11 @@ Perspective may reason differently depending on whether a claim is:
 
 Perspective must not strip those labels.
 
-If a customer-trust perspective depends on a disputed complaint, it must preserve that dispute. If a financial perspective depends on an estimated margin, it must preserve that estimate. If a strategic perspective depends on stale memory, it must keep the temporal limitation visible.
+If a Customer Retention Risk frame depends on a disputed complaint, it must preserve that dispute. If a Profit Compression frame depends on an estimated margin, it must preserve that estimate. If a Seasonality frame depends on stale memory, it must keep the temporal limitation visible.
 
-Truth Status constrains Perspective by defining the epistemic strength of material used for lenses.
+Truth Status constrains Perspective by defining the epistemic strength of material used for Situation Frame recognition.
 
-Perspective constrains later Judgment by ensuring that truth-labeled material is interpreted through relevant business viewpoints.
+Perspective constrains later Judgment by ensuring that truth-labeled material is first recognized as a Situation Frame before evaluation begins.
 
 ## 16. Relationship With Knowledge
 
@@ -565,7 +568,9 @@ Runtime state must remain temporary unless Commit later authorizes durability.
 
 ### Phase 5: Downstream Integration
 
-Perspective should consume Truth Status labels.
+Evidence Gap Intelligence should consume Truth Status labels when identifying missing support.
+
+Perspective should consume Truth Status labels when recognizing Situation Frames.
 
 Knowledge should apply doctrine only within truth boundaries.
 
@@ -594,7 +599,8 @@ The official boundary is:
 ```text
 Evidence represents information.
 Truth Status evaluates reliance.
-Perspective reasons over truth.
+Evidence Gap Intelligence identifies missing support.
+Perspective identifies the Situation Frame.
 Knowledge applies doctrine.
 Business Judgment evaluates business implications.
 Decision selects action.

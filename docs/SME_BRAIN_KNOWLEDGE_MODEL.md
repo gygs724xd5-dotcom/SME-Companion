@@ -18,7 +18,7 @@ Knowledge cannot merge with Evidence because knowledge is often general, while e
 
 Knowledge cannot merge with Truth Status because general knowledge is not automatically local truth.
 
-Knowledge cannot merge with Perspective because perspective selects lenses; knowledge supplies content within those lenses.
+Knowledge cannot merge with Perspective because Perspective identifies the Situation Frame; Knowledge supplies reusable experience, doctrine, methods, rules, and patterns relevant to that frame.
 
 Knowledge cannot merge with Judgment because knowledge informs assessment but does not decide what helps now.
 
@@ -64,7 +64,7 @@ Structured understanding of domains such as pricing, marketing, sales, customer 
 
 Knowledge must:
 
-- identify relevant knowledge by situation and perspective;
+- identify relevant knowledge by situation and recognized Situation Frame;
 - separate general knowledge from local evidence;
 - preserve applicability limits;
 - expose decay and freshness where relevant;
@@ -90,7 +90,7 @@ Knowledge receives:
 
 - BusinessSituation;
 - TruthState;
-- PerspectiveSet;
+- Perspective diagnostics;
 - EvidenceSet;
 - material uncertainty;
 - domain needs;
@@ -174,7 +174,7 @@ Judgment Authority owns synthesis.
 
 Knowledge may depend on:
 
-- PerspectiveSet for lens-specific retrieval;
+- Perspective diagnostics for frame-specific retrieval;
 - TruthState for local fact constraints;
 - EvidenceSet for situation relevance;
 - Memory for experience patterns;
@@ -279,4 +279,3 @@ Conversation should receive judgment, not raw policy.
 Knowledge is disciplined reusable understanding.
 
 SME Brain must separate what is generally known, locally true, morally required, organizationally permitted, procedurally executable, and judgment-worthy.
-

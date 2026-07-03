@@ -36,6 +36,7 @@ Its scope includes:
 Business Knowledge must:
 
 - remain subordinate to the actual business situation;
+- follow recognized Situation Frames rather than forcing a frame from generic patterns;
 - be applied with context sensitivity;
 - support reasoning rather than produce generic advice;
 - distinguish principles from facts about the user's business;
@@ -45,6 +46,7 @@ Business Knowledge must:
 Business Knowledge must not:
 
 - replace evidence about the present situation;
+- identify the Situation Frame before Perspective;
 - override durable memory without justification;
 - force every situation into a textbook pattern;
 - produce recommendations without Judgment;
@@ -60,5 +62,6 @@ The constitutional role remains stable: Business Knowledge supplies reusable und
 
 Within the Cognitive Runtime, Knowledge appears after Perspective and before Business Judgment.
 
-It informs Judgment after the situation, evidence, truth status, and perspective have been considered. It must not bypass those prior layers.
+Perspective identifies what kind of situation the validated reality represents. Knowledge then recalls relevant reusable experience, concepts, principles, patterns, and methods for that recognized frame.
 
+Knowledge informs Judgment after the situation, evidence, truth status, evidence gaps, and Perspective diagnostics have been considered. It must not bypass those prior layers.

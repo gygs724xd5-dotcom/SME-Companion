@@ -24,9 +24,9 @@ Evidence already owns that responsibility.
 
 It does not answer:
 
-> What does this reality mean?
+> What kind of situation does this reality represent?
 
-Perspective owns that responsibility.
+Perspective owns Situation Frame recognition.
 
 Evidence Gap Intelligence exists because a business advisor should not ask generic clarification questions when the evidence gap is knowable. If SME Brain already knows which missing evidence would reduce uncertainty most, it should surface that missing evidence precisely instead of saying only "please provide more information."
 
@@ -54,7 +54,7 @@ Reality
 
 Evidence Gap Intelligence sits after Truth Status because missing evidence is only meaningful after the system knows which claims are unsupported, uncertain, stale, disputed, or insufficient for reliance.
 
-It sits before Perspective because Perspective should interpret a reality whose evidence limitations are explicit. Perspective must not invent missing evidence or silently select lenses around generic uncertainty.
+It sits before Perspective because Perspective should identify a Situation Frame from reality whose evidence limitations are explicit. Perspective must not invent missing evidence or silently name frames around generic uncertainty.
 
 ## 3. Doctrine
 
@@ -64,7 +64,7 @@ Truth Status evaluates reliance.
 
 Evidence Gap Intelligence identifies missing evidence.
 
-Perspective interprets truth-labeled reality.
+Perspective identifies the Situation Frame represented by truth-labeled reality.
 
 Business Judgment evaluates business implications.
 
@@ -295,17 +295,17 @@ Perspective is downstream.
 
 Perspective receives truth-labeled claims and evidence-gap diagnostics.
 
-Perspective may use gap diagnostics to avoid over-interpreting a thin evidence base. It may recognize that customer, financial, operational, or market lenses are premature or conditional when material evidence is missing.
+Perspective may use gap diagnostics to avoid over-framing a thin evidence base. It may recognize that Profit Compression, Sales Decline, Inventory Risk, Demand Weakness, or Unknown Situation remains conditional when material evidence is missing.
 
 Perspective must not ask its own evidence questions as a substitute for Evidence Gap Intelligence.
 
-Evidence Gap Intelligence must not select interpretive lenses.
+Evidence Gap Intelligence must not select Situation Frames.
 
 The boundary is:
 
 ```text
 Evidence Gap Intelligence says: customer-count evidence is missing.
-Perspective says: customer perspective is limited until customer-count evidence is known.
+Perspective says: Sales Decline remains a candidate frame, but confidence is limited until customer-count evidence is known.
 ```
 
 ## 15. Relationship With Decision and Conversation
@@ -502,7 +502,7 @@ The official boundary is:
 Evidence represents information.
 Truth Status evaluates reliance.
 Evidence Gap Intelligence identifies missing support.
-Perspective interprets truth-labeled reality.
+Perspective identifies the Situation Frame.
 Knowledge applies doctrine.
 Business Judgment evaluates business implications.
 Decision selects action.

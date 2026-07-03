@@ -96,17 +96,18 @@ The constitutional authorities are:
 1. Business Situation Authority
 2. Evidence Authority
 3. Truth Authority
-4. Business Judgment Authority
-5. Principles Authority
-6. Policy Authority
-7. Decision Authority
-8. Conversation Authority
-9. Memory Authority
-10. Knowledge Authority
-11. Skill Authority
-12. Tool Authority
-13. Execution Authority
-14. Commit Authority
+4. Perspective Authority
+5. Business Judgment Authority
+6. Principles Authority
+7. Policy Authority
+8. Decision Authority
+9. Conversation Authority
+10. Memory Authority
+11. Knowledge Authority
+12. Skill Authority
+13. Tool Authority
+14. Execution Authority
+15. Commit Authority
 
 Some candidate authorities are intentionally not separate:
 
@@ -184,7 +185,33 @@ Must never own:
 
 Truth Authority does not claim absolute truth. It owns justified truth-status for the current business context.
 
-### 4.4 Business Judgment Authority
+### 4.4 Perspective Authority
+
+Owns:
+
+- Situation Frame recognition;
+- selected frame diagnostics;
+- candidate frame diagnostics;
+- frame confidence;
+- frame selection reason;
+- Unknown Situation when validated reality does not support a responsible frame.
+
+Must never own:
+
+- root-cause diagnosis;
+- final judgment;
+- recommendations;
+- final decision;
+- memory persistence;
+- policy enforcement;
+- execution;
+- workflow triggering;
+- final conversation rendering;
+- final commit.
+
+Perspective Authority names what kind of situation the validated reality represents. It does not explain why the situation happened or what should be done.
+
+### 4.5 Business Judgment Authority
 
 Owns:
 
@@ -206,7 +233,7 @@ Must never own:
 
 Business Judgment Authority proposes what may help. It does not decide what is acceptable, permitted, executed, or persisted.
 
-### 4.5 Principles Authority
+### 4.6 Principles Authority
 
 Owns:
 
@@ -227,7 +254,7 @@ Must never own:
 
 Principles Authority can reject or reshape a judgment proposal. It does not replace business realism.
 
-### 4.6 Policy Authority
+### 4.7 Policy Authority
 
 Owns:
 
@@ -248,7 +275,7 @@ Must never own:
 
 Policy Authority constrains what is permitted in this organization. It may be stricter than Principles, but it must not weaken the universal moral floor.
 
-### 4.7 Decision Authority
+### 4.8 Decision Authority
 
 Owns:
 
@@ -269,7 +296,7 @@ Must never own:
 
 Decision Authority authorizes the next move. It does not invent facts or bypass constraints.
 
-### 4.8 Conversation Authority
+### 4.9 Conversation Authority
 
 Owns:
 
@@ -290,7 +317,7 @@ Must never own:
 
 Conversation Authority may clarify presentation. It must not alter substance.
 
-### 4.9 Memory Authority
+### 4.10 Memory Authority
 
 Owns:
 
@@ -310,7 +337,7 @@ Must never own:
 
 Memory Authority contributes context and continuity. It does not decide what should be done.
 
-### 4.10 Knowledge Authority
+### 4.11 Knowledge Authority
 
 Owns:
 
@@ -330,7 +357,7 @@ Must never own:
 
 Knowledge Authority improves interpretation. It does not override strong business-specific evidence without reason.
 
-### 4.11 Skill Authority
+### 4.12 Skill Authority
 
 Owns:
 
@@ -351,7 +378,7 @@ Must never own:
 
 Skill Authority owns the integrity of Skill output, not the business conversation.
 
-### 4.12 Tool Authority
+### 4.13 Tool Authority
 
 Owns:
 
@@ -372,7 +399,7 @@ Must never own:
 
 Tool Authority produces outputs. Other authorities determine meaning, truth-status, acceptability, and action.
 
-### 4.13 Execution Authority
+### 4.14 Execution Authority
 
 Owns:
 
@@ -393,7 +420,7 @@ Must never own:
 
 Execution Authority executes what has been authorized. It does not authorize itself.
 
-### 4.14 Commit Authority
+### 4.15 Commit Authority
 
 Owns:
 
@@ -513,6 +540,8 @@ The following must never cross authority boundaries:
 - Memory changing judgment without Business Judgment Authority.
 - Memory writing itself from Skill output without Commit Authority.
 - Knowledge overriding local business evidence without Truth Authority.
+- Knowledge forcing a Situation Frame before Perspective Authority recognizes it.
+- Perspective diagnosing causes, recommending actions, triggering workflows, or choosing decisions.
 - Composer changing decisions.
 - Conversation Authority hiding material uncertainty that Judgment or Principles require disclosed.
 - Execution modifying truth.
@@ -537,6 +566,10 @@ Business Situation Authority
 Evidence Authority
         connects to
 Truth Authority
+        connects to
+Perspective Authority
+        connects to
+Knowledge Authority
         connects to
 Business Judgment Authority
 
@@ -581,7 +614,7 @@ There is no universal next step.
 
 There is no hidden state machine.
 
-The same business situation may require only Conversation Authority and Business Judgment Authority. Another may require Evidence, Truth, Policy, Commit, Execution, and Memory. Another may require only Knowledge and Conversation.
+The same business situation may require only Conversation Authority and Business Judgment Authority. Another may require Evidence, Truth, Perspective, Policy, Commit, Execution, and Memory. Another may require only Knowledge and Conversation.
 
 The runtime question should never be:
 
@@ -743,6 +776,8 @@ Business Situation Authority would still interpret business reality.
 Evidence Authority would still evaluate information.
 
 Truth Authority would still determine what is justified enough to rely on.
+
+Perspective Authority would still identify what kind of situation the validated reality represents.
 
 Business Judgment Authority would still assess what appears beneficial.
 
