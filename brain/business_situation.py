@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from brain.evidence_runtime import build_evidence_runtime
+from brain.truth_runtime import build_truth_runtime
 
 
 BUSINESS_SITUATION_VERSION = "5.5.3"
@@ -527,4 +528,5 @@ def build_business_situation(
         },
     )
     payload["diagnostics"]["evidence"] = evidence_runtime
+    payload["diagnostics"]["truth"] = build_truth_runtime(evidence_runtime=evidence_runtime)
     return payload

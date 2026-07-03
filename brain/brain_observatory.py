@@ -195,6 +195,25 @@ def _evidence_layer(business_situation: dict) -> dict:
     )
 
 
+def _truth_status_layer(business_situation: dict) -> dict:
+    truth = _as_dict(_as_dict(business_situation.get("diagnostics")).get("truth"))
+    diagnostics = _as_dict(truth.get("diagnostics"))
+    return _layer(
+        name="Truth Status",
+        runtime_state={
+            "truth_items": truth.get("truth_items") or [],
+            "truth_summary": truth.get("truth_summary") or {},
+            "runtime_truth": truth.get("runtime_truth") or [],
+            "historical_truth": truth.get("historical_truth") or [],
+            "conflicting_truths": truth.get("conflicting_truths") or [],
+            "unknown_truths": truth.get("unknown_truths") or [],
+        },
+        diagnostics=diagnostics,
+        confidence=None,
+        source=truth.get("source") or diagnostics.get("truth_runtime_source"),
+    )
+
+
 def _placeholder_layer(name: str) -> dict:
     return _layer(
         name=name,
@@ -264,7 +283,7 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         _perception_layer(business_situation),
         _business_situation_layer(business_situation),
         _evidence_layer(business_situation),
-        _placeholder_layer("Truth Status"),
+        _truth_status_layer(business_situation),
         _placeholder_layer("Perspective"),
         _placeholder_layer("Knowledge"),
         _placeholder_layer("Business Judgment"),

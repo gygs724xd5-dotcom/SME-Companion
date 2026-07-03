@@ -51,7 +51,8 @@ class BrainObservatoryTest(unittest.TestCase):
             layers["Evidence"]["runtime_state"]["evidence_available"],
             route["business_situation"]["diagnostics"]["evidence"]["evidence_available"],
         )
-        self.assertEqual(layers["Truth Status"]["status"], "placeholder")
+        self.assertEqual(layers["Truth Status"]["status"], "observed")
+        self.assertTrue(layers["Truth Status"]["diagnostics"]["truth_runtime_created"])
         self.assertEqual(layers["Decision"]["status"], "placeholder")
 
     def test_constitution_monitor_highlights_violations(self):

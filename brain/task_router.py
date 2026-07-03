@@ -916,6 +916,18 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "diagnostic_only": diagnostics.get("evidence_diagnostic_only"),
             "runtime_only": diagnostics.get("evidence_runtime_only"),
         },
+        "Truth Runtime": {
+            "truth_runtime": diagnostics.get("truth_runtime"),
+            "truth_runtime_created": diagnostics.get("truth_runtime_created"),
+            "truth_runtime_version": diagnostics.get("truth_runtime_version"),
+            "truth_item_count": diagnostics.get("truth_item_count"),
+            "runtime_truth_count": diagnostics.get("runtime_truth_count"),
+            "historical_truth_count": diagnostics.get("historical_truth_count"),
+            "conflicting_truth_count": diagnostics.get("truth_conflicting_truth_count"),
+            "unknown_truth_count": diagnostics.get("truth_unknown_truth_count"),
+            "diagnostic_only": diagnostics.get("truth_diagnostic_only"),
+            "runtime_only": diagnostics.get("truth_runtime_only"),
+        },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
             "registered_domains": diagnostics.get("registered_domains"),
@@ -1056,6 +1068,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     business_situation_diagnostics = business_situation.get("diagnostics") or {}
     evidence_runtime = business_situation_diagnostics.get("evidence") or {}
     evidence_diagnostics = evidence_runtime.get("evidence_diagnostics") or {}
+    truth_runtime = business_situation_diagnostics.get("truth") or {}
+    truth_diagnostics = truth_runtime.get("diagnostics") or {}
     brain_observatory = build_brain_observatory(route)
 
     diagnostics = {
@@ -1082,6 +1096,16 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "conflicting_evidence_count": evidence_diagnostics.get("conflicting_evidence_count", len(evidence_runtime.get("conflicting_evidence") or [])),
         "evidence_diagnostic_only": bool(evidence_runtime.get("diagnostic_only")),
         "evidence_runtime_only": bool(evidence_runtime.get("runtime_only")),
+        "truth_runtime": truth_runtime,
+        "truth_runtime_created": bool(truth_diagnostics.get("truth_runtime_created")),
+        "truth_runtime_version": truth_diagnostics.get("truth_runtime_version") or truth_runtime.get("version"),
+        "truth_item_count": truth_diagnostics.get("truth_item_count", len(truth_runtime.get("truth_items") or [])),
+        "runtime_truth_count": truth_diagnostics.get("runtime_truth_count", len(truth_runtime.get("runtime_truth") or [])),
+        "historical_truth_count": truth_diagnostics.get("historical_truth_count", len(truth_runtime.get("historical_truth") or [])),
+        "truth_conflicting_truth_count": truth_diagnostics.get("conflicting_truth_count", len(truth_runtime.get("conflicting_truths") or [])),
+        "truth_unknown_truth_count": truth_diagnostics.get("unknown_truth_count", len(truth_runtime.get("unknown_truths") or [])),
+        "truth_diagnostic_only": bool(truth_runtime.get("diagnostic_only")),
+        "truth_runtime_only": bool(truth_runtime.get("runtime_only")),
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
         "intent_priority_audit": route.get("intent_priority_audit") or _intent_priority_audit(route),
