@@ -23,6 +23,7 @@ Perception
     -> Business Situation
     -> Evidence
     -> Truth Status
+    -> Evidence Gap Intelligence
     -> Perspective
     -> Knowledge
     -> Business Judgment
@@ -44,13 +45,15 @@ The draft flow was:
 Perception -> Business Situation -> Evidence -> Truth -> Perspective -> Knowledge -> Business Judgment -> Decision -> Execution -> Conversation
 ```
 
-The improved flow changes three things.
+The improved flow changes four things.
 
 First, "Truth" becomes "Truth Status" because SME Brain rarely possesses absolute truth. It needs justified reliance for a decision context.
 
-Second, "Commit" is explicit and final. Conversation and execution may produce candidate outputs, but nothing becomes durable, external, or user-final until commitment is governed.
+Second, Evidence Gap Intelligence becomes explicit between Truth Status and Perspective because the Brain must know which material evidence is still missing before it interprets the situation.
 
-Third, Knowledge follows Perspective as well as Evidence. Knowledge is not merely lookup. An experienced operator asks which frame is relevant before selecting methods, principles, domain patterns, rules, or experience.
+Third, "Commit" is explicit and final. Conversation and execution may produce candidate outputs, but nothing becomes durable, external, or user-final until commitment is governed.
+
+Fourth, Knowledge follows Perspective as well as Evidence. Knowledge is not merely lookup. An experienced operator asks which frame is relevant before selecting methods, principles, domain patterns, rules, or experience.
 
 ## 4. Layer Summary
 
@@ -84,7 +87,15 @@ Purpose: determine what may be treated as fact, assumption, observation, belief,
 
 Output: TruthState.
 
-Cannot merge with Perspective because truth-status concerns justified reliance, while perspective concerns interpretive lens.
+Cannot merge with Evidence Gap Intelligence because truth-status concerns justified reliance, while evidence-gap intelligence concerns missing support.
+
+### Evidence Gap Intelligence
+
+Purpose: determine what material evidence is still missing and which missing evidence would most reduce uncertainty.
+
+Output: EvidenceGapProfile with evidence completeness, missing evidence, priority queue, duplicate-question guard, and smallest next question candidate.
+
+Cannot merge with Perspective because missing-evidence diagnosis is not interpretation. It identifies what is still required before lenses are selected.
 
 ### Perspective
 
@@ -150,7 +161,7 @@ Authority is constitutional governance over ownership. It defines who owns each 
 
 Domain authorities such as pricing, sales, finance, marketing, customer service, and operations should be treated as perspectives or knowledge domains, not constitutional authorities.
 
-Constitutional authority belongs to responsibilities: Situation, Evidence, Truth Status, Perspective, Knowledge, Judgment, Decision, Execution, Conversation, Commit, Policy, Principles, Memory, Skill, and Tool.
+Constitutional authority belongs to responsibilities: Situation, Evidence, Truth Status, Evidence Gap Intelligence, Perspective, Knowledge, Judgment, Decision, Execution, Conversation, Commit, Policy, Principles, Memory, Skill, and Tool.
 
 ## 6. Boundary Review
 
@@ -174,15 +185,25 @@ Must never cross: unqualified certainty, tool output as final fact, memory as un
 
 Owner: Truth Status owns justified reliance.
 
-### Truth Status -> Perspective
+### Truth Status -> Evidence Gap Intelligence
 
-Why: interpretation should use facts and assumptions at their proper strength.
+Why: missing evidence should be identified from truth-status limitations, not from generic response needs.
 
-Crosses: facts, assumptions, unresolved conflicts, hypotheses.
+Crosses: facts, assumptions, unsupported claims, stale claims, disputed claims, unresolved conflicts, hypotheses, reliance boundaries.
 
-Must never cross: hidden uncertainty or unsupported certainty.
+Must never cross: permission to change truth classifications, invent evidence, or decide what action should be taken.
 
-Owner: Perspective owns lens selection; Truth Status owns epistemic labels.
+Owner: Truth Status owns epistemic labels; Evidence Gap Intelligence owns missing-evidence diagnosis.
+
+### Evidence Gap Intelligence -> Perspective
+
+Why: interpretation should know which material evidence is absent before selecting and weighting lenses.
+
+Crosses: evidence completeness, known evidence summary, missing evidence, priority queue, smallest next question candidate, unresolved uncertainty.
+
+Must never cross: business evaluation, recommendation, strategy ranking, outcome prediction, or user-facing response authority.
+
+Owner: Evidence Gap Intelligence owns missing support; Perspective owns lens selection and interpretation.
 
 ### Perspective -> Knowledge
 
@@ -253,6 +274,7 @@ The complete cognitive model requires:
 - `Evidence`
 - `EvidenceSet`
 - `TruthState`
+- `EvidenceGapProfile`
 - `Assumption`
 - `Hypothesis`
 - `MaterialUncertainty`
@@ -284,8 +306,7 @@ This architecture scales to 100+ domains and 1000+ skills only if domains and sk
 The stable center must remain:
 
 ```text
-Situation -> Evidence -> Truth Status -> Perspective -> Knowledge -> Judgment -> Decision -> Execution -> Conversation -> Commit
+Situation -> Evidence -> Truth Status -> Evidence Gap Intelligence -> Perspective -> Knowledge -> Judgment -> Decision -> Execution -> Conversation -> Commit
 ```
 
 If any future system routes directly from user intent to workflow, skill, or response without passing through judgment and decision ownership, it is not SME Brain V6.
-

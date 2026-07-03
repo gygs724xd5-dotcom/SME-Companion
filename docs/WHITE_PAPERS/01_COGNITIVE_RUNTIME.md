@@ -87,6 +87,10 @@ Truth Status
 
 ↓
 
+Evidence Gap Intelligence
+
+↓
+
 Perspective
 
 ↓
@@ -143,6 +147,10 @@ Evidence asks:
 Truth Status asks:
 
 > What information is justified?
+
+Evidence Gap Intelligence asks:
+
+> What evidence is still required?
 
 Perspective asks:
 
@@ -324,7 +332,43 @@ Truth Status diagnostics should expose why a claim is accepted, limited, dispute
 
 Truth Status evolves toward richer epistemic reasoning. Future versions may support confidence policies, contradiction resolution, owner confirmation loops, and domain-specific standards of reliance, while preserving the distinction between evidence and justified belief.
 
-## 11. Layer Specification: Perspective
+## 11. Layer Specification: Evidence Gap Intelligence
+
+### Purpose
+
+Evidence Gap Intelligence identifies what material evidence is still missing.
+
+It determines which missing evidence would most reduce uncertainty before downstream interpretation.
+
+### Inputs
+
+Evidence Gap Intelligence receives the business situation, evidence diagnostics, evidence gaps, truth-status classifications, unsupported claims, stale claims, disputed claims, material uncertainty, prior asked questions, and known answers already supplied by the user.
+
+### Outputs
+
+Evidence Gap Intelligence outputs evidence completeness, known evidence, missing evidence, materiality reasons, a priority queue, duplicate-question guard status, confidence, unresolved uncertainty, downstream cautions, and the smallest next question candidate.
+
+### Responsibilities
+
+Evidence Gap Intelligence must inspect existing evidence, inspect missing information, determine evidence completeness, prioritize missing evidence, identify the smallest next question, and avoid duplicate questions.
+
+### Non-responsibilities
+
+Evidence Gap Intelligence must not evaluate business quality, produce recommendations, rank business strategies, predict outcomes, change truth classifications, change evidence, modify routing, modify planner behavior, modify workflow behavior, execute, converse as final answer, or commit memory.
+
+### Constitutional Invariants
+
+Evidence Gap Intelligence is diagnostic only. It identifies missing support; it does not interpret reality, decide action, or generate the user-facing response. Decision owns whether to ask. Conversation owns how an approved question is expressed.
+
+### Diagnostic Responsibilities
+
+Evidence Gap Intelligence diagnostics should expose Evidence Completeness, Known Evidence, Missing Evidence, Priority Queue, Next Best Question, Confidence, duplicate-question status, materiality reason, and downstream cautions.
+
+### Future Evolution
+
+Evidence Gap Intelligence evolves from runtime foundation toward a gap registry, question prioritization, adaptive question selection, and behavior only after its diagnostic state is stable.
+
+## 12. Layer Specification: Perspective
 
 ### Purpose
 
@@ -334,7 +378,7 @@ Business decisions are rarely evaluated from a single angle. The owner, customer
 
 ### Inputs
 
-Perspective receives the business situation, truth status, known actors, constraints, business goals, uncertainty, and relevant stakeholder context.
+Perspective receives the business situation, truth status, evidence-gap diagnostics, known actors, constraints, business goals, uncertainty, and relevant stakeholder context.
 
 ### Outputs
 
@@ -360,7 +404,7 @@ Perspective diagnostics should expose which viewpoints were considered, why they
 
 Perspective evolves toward richer stakeholder and tradeoff modeling. Future versions may support industry-specific perspective sets, owner preference profiles, and dynamic conflict mapping, while keeping perspective separate from final judgment.
 
-## 12. Layer Specification: Knowledge
+## 13. Layer Specification: Knowledge
 
 ### Purpose
 
@@ -396,7 +440,7 @@ Knowledge diagnostics should expose which principles or patterns were applied, w
 
 Knowledge evolves toward stronger domain intelligence and owner-specific business understanding. Future versions may include richer industry models, playbooks, and learned patterns, but knowledge must remain subordinate to situation, evidence, truth status, and judgment.
 
-## 13. Layer Specification: Business Judgment
+## 14. Layer Specification: Business Judgment
 
 ### Purpose
 
@@ -430,7 +474,7 @@ Business Judgment diagnostics should expose the reasoning basis, tradeoffs consi
 
 Business Judgment evolves toward deeper business decision intelligence. Future versions may support scenario comparison, risk scoring, economic reasoning, strategic planning, and owner-specific judgment calibration while preserving the distinction between judgment and decision.
 
-## 14. Layer Specification: Decision
+## 15. Layer Specification: Decision
 
 ### Purpose
 
@@ -466,7 +510,7 @@ Decision diagnostics should expose the selected action, rejected alternatives, a
 
 Decision evolves toward stronger action selection and authorization intelligence. Future versions may support richer policy gates, multi-step action strategies, and decision review, while preserving separation from execution.
 
-## 15. Layer Specification: Execution
+## 16. Layer Specification: Execution
 
 ### Purpose
 
@@ -502,7 +546,7 @@ Execution diagnostics should expose what was attempted, what succeeded, what fai
 
 Execution evolves toward richer tool, workflow, and skill orchestration. Future versions may perform more complex operations, but execution must remain governed by Decision and Authority.
 
-## 16. Layer Specification: Conversation
+## 17. Layer Specification: Conversation
 
 ### Purpose
 
@@ -538,7 +582,7 @@ Conversation diagnostics should expose the communication intent, whether uncerta
 
 Conversation evolves toward more natural, context-sensitive communication. Future versions may improve tone, brevity, multilingual expression, and user adaptation, but must not become the owner of knowledge, judgment, decision, or commit.
 
-## 17. Layer Specification: Commit
+## 18. Layer Specification: Commit
 
 ### Purpose
 
@@ -574,7 +618,7 @@ Commit diagnostics should expose what was committed, what was rejected, why pers
 
 Commit evolves toward stronger memory governance, auditability, and durable business-state management. Future versions may support richer owner confirmation, state lifecycles, retention rules, and rollback policies while preserving the final commitment boundary.
 
-## 18. Authority Governance
+## 19. Authority Governance
 
 Authority governs all cognitive layers.
 
@@ -590,7 +634,7 @@ Every layer must operate under authority. A layer may reason, but only within it
 
 Authority is the governance constitution of SME Brain.
 
-## 19. Constitutional Separations
+## 20. Constitutional Separations
 
 ### Conversation Is Not Knowledge
 
@@ -615,6 +659,14 @@ Truth Status says what is justified. Business Judgment says what is best.
 This separation exists because knowing facts does not automatically determine the right business response. A true fact may be strategically irrelevant. A high-confidence fact may still require tradeoff reasoning. A judgment must weigh business goals, risks, timing, constraints, and perspective.
 
 Truth enables judgment, but it does not replace judgment.
+
+### Evidence Gap Is Not Perspective
+
+Evidence Gap Intelligence says what material evidence is missing. Perspective says which viewpoints should interpret truth-labeled reality.
+
+This separation exists because knowing that evidence is missing is not the same as understanding what the situation means. If missing-evidence diagnosis becomes interpretation, SME Brain may ask leading questions, smuggle recommendations into clarification, or treat missing fields as strategic conclusions.
+
+Evidence Gap Intelligence may provide a smallest next question candidate, but it must not decide to ask it or phrase the final response.
 
 ### Business Memory Is Not Business Situation
 
@@ -656,7 +708,7 @@ This separation exists because many useful statements should not become memory, 
 
 Conversation may propose commitment, but Commit decides durability.
 
-## 20. Current Runtime Progress
+## 21. Current Runtime Progress
 
 The cognitive runtime is evolving layer by layer.
 
@@ -684,6 +736,7 @@ Phase 2 established Evidence as its own constitutional layer. It made source awa
 Future cognitive runtime work includes:
 
 - Truth Status
+- Evidence Gap Intelligence
 - Perspective
 - Knowledge
 - Business Judgment
@@ -691,7 +744,7 @@ Future cognitive runtime work includes:
 
 Each future layer must follow the constitutional stack. No future implementation should skip the responsibility boundary merely because a foundation model can generate an answer directly.
 
-## 21. Architecture Evolution Model
+## 22. Architecture Evolution Model
 
 Every cognitive layer evolves through the same lifecycle:
 
@@ -737,7 +790,7 @@ Behavior is the final expression of the layer in user-visible or system-visible 
 
 This lifecycle is the standard evolution model for every future cognitive layer.
 
-## 22. Model Independence
+## 23. Model Independence
 
 One of the most important architectural principles of SME Brain is model independence.
 
@@ -759,7 +812,7 @@ This distinction protects the project from model dependency. If the identity of 
 
 SME Brain must be able to improve its execution engine without changing its mind.
 
-## 23. Why The Architecture Exists
+## 24. Why The Architecture Exists
 
 The architecture exists because business reasoning is not the same as text generation.
 
@@ -771,7 +824,7 @@ SME Brain is designed to be more than fluent.
 
 It is designed to be accountable business cognition.
 
-## 24. Chief Architect Doctrine
+## 25. Chief Architect Doctrine
 
 The identity of SME Brain is NOT its language model.
 
