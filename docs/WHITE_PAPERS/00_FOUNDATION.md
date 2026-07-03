@@ -180,8 +180,8 @@ The white papers in this collection define that architecture at the constitution
 - `08_EPISTEMOLOGY.md` defines how SME Brain treats truth, evidence, belief, and uncertainty.
 - `09_ONTOLOGY.md` defines the conceptual universe of business reasoning.
 - `10_SME_BRAIN.md` defines the integrated identity of the complete architecture.
+- `11_KNOWLEDGE_SOURCE_ECOSYSTEM.md` defines the future ecosystem of distributed knowledge sources.
 
 Together, these papers form the official constitutional literature of SME Brain.
 
 They should remain valuable even when every implementation detail has changed.
-
