@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any
 
 
-BRAIN_OBSERVATORY_VERSION = "5.7.1"
+BRAIN_OBSERVATORY_VERSION = "5.7.2"
 BRAIN_OBSERVATORY_SOURCE = "brain_observatory"
 BRAIN_OBSERVATORY_RUNTIME_MODE = "developer_diagnostics_only"
 
@@ -218,15 +218,26 @@ def _truth_status_layer(business_situation: dict) -> dict:
 def _evidence_gap_layer(business_situation: dict) -> dict:
     evidence_gap = _as_dict(_as_dict(business_situation.get("diagnostics")).get("evidence_gap"))
     diagnostics = _as_dict(evidence_gap.get("diagnostics"))
+    gap_items = evidence_gap.get("gap_items") or []
+    priority_queue = evidence_gap.get("priority_queue") or []
+    next_question = evidence_gap.get("next_best_question") or {}
+    duplicate_guard = evidence_gap.get("duplicate_question_guard") or {}
+    completeness = evidence_gap.get("completeness_status") or {}
     return _layer(
         name="Evidence Gap",
         runtime_state={
-            "gap_items": evidence_gap.get("gap_items") or [],
+            "gap_items": gap_items,
+            "gap_type": [item.get("gap_type") for item in _as_list(gap_items) if isinstance(item, dict)],
             "missing_evidence": evidence_gap.get("missing_evidence") or [],
-            "priority_queue": evidence_gap.get("priority_queue") or [],
-            "next_best_question": evidence_gap.get("next_best_question") or {},
-            "duplicate_question_guard": evidence_gap.get("duplicate_question_guard") or {},
-            "completeness_status": evidence_gap.get("completeness_status") or {},
+            "priority_queue": priority_queue,
+            "question_intent": [item.get("question_intent") for item in _as_list(gap_items) if isinstance(item, dict)],
+            "next_best_question": next_question,
+            "duplicate_question_guard": duplicate_guard,
+            "duplicate_guard_reason": duplicate_guard.get("duplicate_guard_reason") or diagnostics.get("duplicate_guard_reason"),
+            "duplicate_guard_hits": duplicate_guard.get("duplicate_guard_hits") or diagnostics.get("duplicate_guard_hits") or {},
+            "suppressed_questions": duplicate_guard.get("suppressed_questions") or diagnostics.get("suppressed_questions") or [],
+            "completeness_status": completeness,
+            "completeness_reason": completeness.get("completeness_reason") or diagnostics.get("completeness_reason"),
         },
         diagnostics=diagnostics,
         confidence=None,
