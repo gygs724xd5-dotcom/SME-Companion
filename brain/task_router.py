@@ -10,6 +10,11 @@ from brain.cognitive_authority_audit import (
     build_cognitive_authority_audit,
 )
 from brain.business_workflow_engine import decide_business_workflow
+from brain.workflow_admission_gate import (
+    WorkflowAdmissionDecision,
+    blocked_workflow_payload,
+    build_workflow_admission_decision,
+)
 from brain.conversation_manager import active_workflow_state, planner_locked, release_workflow_domain
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
 from brain.business_entity_extractor import extract_business_entities
@@ -249,6 +254,12 @@ def _workflow_domain_boundary_for_decision(state: dict, workflow_decision: dict)
         next_workflow_id=next_workflow_id,
         reason="workflow_domain_changed",
     )
+
+
+def _workflow_candidate_for_admission(plan: dict | None, intent_resolution: dict | None) -> str | None:
+    planner_workflow = (plan or {}).get("workflow")
+    resolver_workflow = (intent_resolution or {}).get("resolved_workflow")
+    return planner_workflow or resolver_workflow
 
 
 def _knowledge_context_for_route(route: dict | None) -> dict:
@@ -660,18 +671,49 @@ def build_task_route(application_state, user_message) -> dict:
     )
     enriched_state["business_situation"] = business_situation
     plan["business_situation"] = business_situation
-    workflow_decision = decide_business_workflow(
-        user_message,
-        business_intent={
-            **business_intent,
-            "detected_intent": intent_resolution.get("resolved_intent") or business_intent.get("detected_intent"),
-        },
-        entity_result=entity_result,
-        canonical_entities=canonical_entities,
-        application_state=state,
-        planner_decision=plan,
-        resolved_workflow=plan.get("workflow") or intent_resolution.get("resolved_workflow"),
+    workflow_candidate = _workflow_candidate_for_admission(plan, intent_resolution)
+    workflow_admission_gate = build_workflow_admission_decision(
+        raw_user_message=user_message,
+        conversation_understanding=interpretation,
+        intent_resolution=intent_resolution,
+        planner_output=plan,
+        workflow_candidate=workflow_candidate,
+        extracted_entities=entity_result.get("extracted_entities") or {},
     )
+    active_workflow_present = bool(active_workflow_state(state))
+    if active_workflow_present or (not workflow_candidate) or workflow_admission_gate.get("decision") == WorkflowAdmissionDecision.ADMIT.value:
+        workflow_decision = decide_business_workflow(
+            user_message,
+            business_intent={
+                **business_intent,
+                "detected_intent": intent_resolution.get("resolved_intent") or business_intent.get("detected_intent"),
+            },
+            entity_result=entity_result,
+            canonical_entities=canonical_entities,
+            application_state=state,
+            planner_decision=plan,
+            resolved_workflow=plan.get("workflow") or intent_resolution.get("resolved_workflow"),
+        )
+        workflow_decision["workflow_admission_gate"] = workflow_admission_gate
+        if (
+            active_workflow_present
+            and workflow_admission_gate.get("decision") != WorkflowAdmissionDecision.ADMIT.value
+            and workflow_decision.get("workflow_action") in {"start_new", "continue", "complete", "resume"}
+        ):
+            workflow_admission_gate = {
+                **workflow_admission_gate,
+                "decision": WorkflowAdmissionDecision.ADMIT.value,
+                "reason": "LEGACY_COMPATIBILITY_ALLOW",
+                "admitted": True,
+                "fallback_target": None,
+                "diagnostic_summary": "ADMIT: LEGACY_COMPATIBILITY_ALLOW",
+            }
+            workflow_decision["workflow_admission_gate"] = workflow_admission_gate
+    else:
+        workflow_decision = blocked_workflow_payload(
+            workflow_admission_gate,
+            detected_intent=intent_resolution.get("resolved_intent") or business_intent.get("detected_intent"),
+        )
     workflow_domain_boundary = _workflow_domain_boundary_for_decision(state, workflow_decision)
     if workflow_domain_boundary.get("workflow_domain_boundary_applied"):
         workflow_decision = {
@@ -696,6 +738,7 @@ def build_task_route(application_state, user_message) -> dict:
         **business_context,
         "workflow_intelligence": workflow_decision,
         "workflow_domain_boundary": workflow_domain_boundary,
+        "workflow_admission_gate": workflow_admission_gate,
     }
     conversation_intelligence = {
         **conversation_intelligence,
@@ -709,6 +752,7 @@ def build_task_route(application_state, user_message) -> dict:
         "business_intelligence": (enriched_state.get("conversation") or {}).get("business_intelligence"),
     }
     plan["workflow_intelligence"] = workflow_decision
+    plan["workflow_admission_gate"] = workflow_admission_gate
     bridge_result = run_business_intelligence_bridge(
         user_message,
         {
@@ -718,6 +762,7 @@ def build_task_route(application_state, user_message) -> dict:
             "business_context": business_context,
             "business_workflow": workflow_decision,
             "workflow_domain_boundary": workflow_domain_boundary,
+            "workflow_admission_gate": workflow_admission_gate,
             "intent_resolution": intent_resolution,
             **isolation,
             "intent": business_intent.get("detected_intent"),
@@ -775,6 +820,7 @@ def build_task_route(application_state, user_message) -> dict:
     llm_reasoning_context["extracted_entities"] = entity_result
     llm_reasoning_context["workflow_intelligence"] = workflow_decision
     llm_reasoning_context["workflow_domain_boundary"] = workflow_domain_boundary
+    llm_reasoning_context["workflow_admission_gate"] = workflow_admission_gate
     llm_reasoning_context.update(isolation)
     llm_reasoning_context["prompt_context_size"] = _prompt_context_size(llm_reasoning_context)
     llm_decision = decide_llm_usage(llm_reasoning_context)
@@ -790,6 +836,7 @@ def build_task_route(application_state, user_message) -> dict:
         "extracted_entities": entity_result,
         "canonical_entities": canonical_entities,
         "business_workflow": workflow_decision,
+        "workflow_admission_gate": workflow_admission_gate,
         "workflow_domain_boundary": workflow_domain_boundary,
         "business_context": business_context,
         "normalized_business_context": business_context,
@@ -848,6 +895,16 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
         "Workflow": {
             "workflow_action": diagnostics.get("workflow_action"),
             "workflow_state": diagnostics.get("workflow_state"),
+            "workflow_candidate": diagnostics.get("workflow_admission_candidate"),
+            "workflow_admission_gate": diagnostics.get("workflow_admission_gate"),
+            "workflow_admission_decision": diagnostics.get("workflow_admission_decision"),
+            "workflow_admission_reason": diagnostics.get("workflow_admission_reason"),
+            "workflow_admission_admitted": diagnostics.get("workflow_admission_admitted"),
+            "workflow_admission_executable_request_detected": diagnostics.get("workflow_admission_executable_request_detected"),
+            "workflow_admission_analytical_question_detected": diagnostics.get("workflow_admission_analytical_question_detected"),
+            "workflow_admission_business_level_scope_detected": diagnostics.get("workflow_admission_business_level_scope_detected"),
+            "workflow_admission_keyword_only_match_detected": diagnostics.get("workflow_admission_keyword_only_match_detected"),
+            "workflow_admission_fallback_target": diagnostics.get("workflow_admission_fallback_target"),
             "workflow_status": diagnostics.get("workflow_status"),
             "workflow_complete": diagnostics.get("workflow_complete"),
             "workflow_released": diagnostics.get("workflow_released"),
@@ -966,6 +1023,12 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "selected_intent": diagnostics.get("cognitive_authority_selected_intent"),
             "selected_workflow": diagnostics.get("cognitive_authority_selected_workflow"),
             "selected_response_mode": diagnostics.get("cognitive_authority_selected_response_mode"),
+            "workflow_candidate": diagnostics.get("workflow_admission_candidate"),
+            "workflow_admission_gate_decision": diagnostics.get("cognitive_authority_workflow_admission_gate_decision"),
+            "workflow_admission_gate_reason": diagnostics.get("cognitive_authority_workflow_admission_gate_reason"),
+            "workflow_admission_gate_authoritative": diagnostics.get("cognitive_authority_workflow_admission_gate_authoritative"),
+            "workflow_candidate_rejected": diagnostics.get("cognitive_authority_workflow_candidate_rejected"),
+            "workflow_candidate_deferred": diagnostics.get("cognitive_authority_workflow_candidate_deferred"),
             "workflow_admitted": diagnostics.get("cognitive_authority_workflow_admitted"),
             "workflow_admission_reason": diagnostics.get("cognitive_authority_workflow_admission_reason"),
             "cognitive_runtime_consulted": diagnostics.get("cognitive_authority_runtime_consulted"),
@@ -1120,6 +1183,7 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         or route.get("cognitive_authority_audit")
         or build_cognitive_authority_audit(route)
     )
+    workflow_admission_gate = route.get("workflow_admission_gate") or workflow.get("workflow_admission_gate") or {}
     evidence_runtime = business_situation_diagnostics.get("evidence") or {}
     evidence_diagnostics = evidence_runtime.get("evidence_diagnostics") or {}
     truth_runtime = business_situation_diagnostics.get("truth") or {}
@@ -1153,6 +1217,12 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "cognitive_authority_selected_intent": cognitive_authority_audit.get("selected_intent"),
         "cognitive_authority_selected_workflow": cognitive_authority_audit.get("selected_workflow"),
         "cognitive_authority_selected_response_mode": cognitive_authority_audit.get("selected_response_mode"),
+        "cognitive_authority_workflow_admission_gate_consulted": bool(cognitive_authority_audit.get("workflow_admission_gate_consulted")),
+        "cognitive_authority_workflow_admission_gate_decision": cognitive_authority_audit.get("workflow_admission_gate_decision"),
+        "cognitive_authority_workflow_admission_gate_reason": cognitive_authority_audit.get("workflow_admission_gate_reason"),
+        "cognitive_authority_workflow_admission_gate_authoritative": bool(cognitive_authority_audit.get("workflow_admission_gate_authoritative")),
+        "cognitive_authority_workflow_candidate_rejected": bool(cognitive_authority_audit.get("workflow_candidate_rejected")),
+        "cognitive_authority_workflow_candidate_deferred": bool(cognitive_authority_audit.get("workflow_candidate_deferred")),
         "cognitive_authority_workflow_admitted": bool(cognitive_authority_audit.get("workflow_admitted")),
         "cognitive_authority_workflow_admission_reason": cognitive_authority_audit.get("workflow_admission_reason"),
         "cognitive_authority_runtime_consulted": bool(cognitive_authority_audit.get("cognitive_runtime_consulted")),
@@ -1266,6 +1336,16 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "detected_intent": route.get("detected_intent") or ((route.get("llm_reasoning_context") or {}).get("detected_intent")) or {},
         "extracted_entities": route.get("extracted_entities") or ((route.get("llm_reasoning_context") or {}).get("extracted_entities")) or {},
         "workflow_action": workflow.get("workflow_action"),
+        "workflow_admission_gate": workflow_admission_gate,
+        "workflow_admission_candidate": workflow_admission_gate.get("workflow_candidate"),
+        "workflow_admission_decision": workflow_admission_gate.get("decision"),
+        "workflow_admission_reason": workflow_admission_gate.get("reason"),
+        "workflow_admission_admitted": workflow_admission_gate.get("admitted"),
+        "workflow_admission_executable_request_detected": workflow_admission_gate.get("executable_request_detected"),
+        "workflow_admission_analytical_question_detected": workflow_admission_gate.get("analytical_question_detected"),
+        "workflow_admission_business_level_scope_detected": workflow_admission_gate.get("business_level_scope_detected"),
+        "workflow_admission_keyword_only_match_detected": workflow_admission_gate.get("keyword_only_match_detected"),
+        "workflow_admission_fallback_target": workflow_admission_gate.get("fallback_target"),
         "workflow_state": workflow.get("workflow_state") or {},
         "workflow_status": workflow.get("workflow_status") or (workflow.get("workflow_state") or {}).get("workflow_lifecycle_status") or (workflow.get("workflow_state") or {}).get("workflow_status"),
         "workflow_completion_reason": workflow.get("workflow_completion_reason") or (workflow.get("workflow_state") or {}).get("workflow_completion_reason"),

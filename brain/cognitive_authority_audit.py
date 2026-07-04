@@ -173,6 +173,11 @@ def _workflow_executable(workflow: dict) -> bool:
     return bool(required and not missing)
 
 
+def _workflow_admission_gate(route: dict, workflow: dict) -> dict:
+    gate = _as_dict(route.get("workflow_admission_gate")) or _as_dict(workflow.get("workflow_admission_gate"))
+    return gate
+
+
 def _response_mode(route: dict, workflow_admitted: bool, fallback_selected: bool) -> tuple[str, str, str, float | None]:
     source = _first_present(route.get("response_source"), route.get("response_source_after_gate"), route.get("response_source_before_gate"), default="")
     raw_mode = _first_present(route.get("response_mode"), route.get("response_generation_mode"), route.get("reasoning_mode"), default="")
@@ -250,6 +255,12 @@ class CognitiveAuthorityAudit:
     response_mode_reason: str = ""
     response_mode_confidence: float | None = None
     workflow_candidate: str | None = None
+    workflow_admission_gate_consulted: bool = False
+    workflow_admission_gate_decision: str | None = None
+    workflow_admission_gate_reason: str | None = None
+    workflow_admission_gate_authoritative: bool = False
+    workflow_candidate_rejected: bool = False
+    workflow_candidate_deferred: bool = False
     workflow_admitted: bool = False
     workflow_admitted_by: str | None = None
     workflow_admission_reason: str = ""
@@ -279,15 +290,28 @@ class CognitiveAuthorityAudit:
 def _constitutional_invariants() -> dict:
     return {
         "routing_changed": False,
+        "workflow_admission_changed": True,
+        "routing_outcome_for_blocked_workflow_candidates_changed": True,
         "planner_changed": False,
+        "planner_logic_changed": False,
         "workflow_changed": False,
+        "workflow_internal_logic_changed": False,
         "responses_changed": False,
         "fallback_changed": False,
         "execution_changed": False,
+        "execution_engine_changed": False,
         "commit_changed": False,
+        "commit_boundary_changed": False,
         "business_memory_changed": False,
+        "business_memory_schema_changed": False,
         "business_situation_changed": False,
         "cognitive_authority_changed": False,
+        "perspective_logic_changed": False,
+        "knowledge_invoked": False,
+        "judgment_invoked": False,
+        "decision_invoked": False,
+        "recommendations_generated": False,
+        "root_causes_diagnosed": False,
     }
 
 
@@ -309,6 +333,7 @@ def _records_for_route(
     intent_resolution = _as_dict(route.get("intent_resolution"))
     planner = _as_dict(route.get("planner_output"))
     workflow = _as_dict(route.get("business_workflow"))
+    admission_gate = _workflow_admission_gate(route, workflow)
     gate = {
         "final_response_gate": route.get("final_response_gate"),
         "workflow_response_allowed": route.get("workflow_response_allowed"),
@@ -367,12 +392,17 @@ def _records_for_route(
         ),
         AuthorityDecisionRecord(
             stage=AuthorityStage.WORKFLOW_ADMISSION.value,
-            component="business_workflow_engine",
+            component="workflow_admission_gate" if admission_gate else "business_workflow_engine",
             input_summary={"candidate": selected_workflow, "action": workflow.get("workflow_action")},
-            decision={"workflow_admitted": workflow_admitted, "workflow_executable": workflow_executable},
-            authority_role=AuthorityRole.AUTHORITATIVE.value if workflow_admitted else AuthorityRole.NOT_APPLICABLE.value,
-            confidence=_confidence_score(workflow.get("workflow_confidence")),
-            reason=workflow.get("workflow_reason") or "No workflow admission reason recorded.",
+            decision={
+                "workflow_admitted": workflow_admitted,
+                "workflow_executable": workflow_executable,
+                "gate_decision": admission_gate.get("decision"),
+            },
+            authority_role=AuthorityRole.AUTHORITATIVE.value if workflow_admitted or admission_gate.get("decision") in {"REJECT_TO_CONVERSATION", "DEFER_FOR_CLARIFICATION"} else AuthorityRole.NOT_APPLICABLE.value,
+            confidence=_confidence_score(admission_gate.get("admission_confidence"), workflow.get("workflow_confidence")),
+            reason=admission_gate.get("reason") or workflow.get("workflow_reason") or "No workflow admission reason recorded.",
+            diagnostic_only=False if admission_gate else True,
         ),
         AuthorityDecisionRecord(
             stage=AuthorityStage.WORKFLOW_RUNTIME.value,
@@ -537,11 +567,15 @@ def _winning_authority(
     selected_workflow: str | None,
     planner_workflow: str | None,
     selected_intent: str | None,
+    workflow_admission_gate: dict | None = None,
 ) -> tuple[str, str]:
     if commit_source:
         return commit_source, AuthorityStage.COMMIT.value
     if response_source:
         return response_source, AuthorityStage.RESPONSE_GENERATION.value
+    gate = workflow_admission_gate or {}
+    if gate.get("decision") in {"REJECT_TO_CONVERSATION", "DEFER_FOR_CLARIFICATION"} and gate.get("workflow_candidate"):
+        return "workflow_admission_gate", AuthorityStage.WORKFLOW_ADMISSION.value
     if workflow_admitted:
         return "workflow_path", AuthorityStage.WORKFLOW_ADMISSION.value
     if planner_workflow:
@@ -565,6 +599,7 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
     intent_resolution = _as_dict(route.get("intent_resolution"))
     planner = _as_dict(route.get("planner_output"))
     workflow = _as_dict(route.get("business_workflow"))
+    admission_gate = _workflow_admission_gate(route, workflow)
     business_situation = _as_dict(route.get("business_situation") or planner.get("business_situation"))
     user_message = str(_first_present(overrides.get("user_message"), route.get("user_message"), understanding.get("raw_text"), default="") or "")
     selected_intent = _first_present(overrides.get("selected_intent"), intent_resolution.get("resolved_intent"), default=None)
@@ -603,6 +638,7 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
         selected_workflow=selected_workflow,
         planner_workflow=planner.get("workflow"),
         selected_intent=selected_intent,
+        workflow_admission_gate=admission_gate,
     )
     chain = _records_for_route(
         route,
@@ -638,9 +674,15 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
         response_mode_reason=response_mode_reason,
         response_mode_confidence=response_mode_confidence,
         workflow_candidate=workflow_candidate,
+        workflow_admission_gate_consulted=bool(admission_gate),
+        workflow_admission_gate_decision=admission_gate.get("decision"),
+        workflow_admission_gate_reason=admission_gate.get("reason"),
+        workflow_admission_gate_authoritative=bool(admission_gate.get("decision") in {"ADMIT", "REJECT_TO_CONVERSATION", "DEFER_FOR_CLARIFICATION"}),
+        workflow_candidate_rejected=admission_gate.get("decision") == "REJECT_TO_CONVERSATION",
+        workflow_candidate_deferred=admission_gate.get("decision") == "DEFER_FOR_CLARIFICATION",
         workflow_admitted=admitted,
-        workflow_admitted_by="business_workflow_engine" if admitted else None,
-        workflow_admission_reason=workflow.get("workflow_reason") or "",
+        workflow_admitted_by="workflow_admission_gate" if admitted and admission_gate else "business_workflow_engine" if admitted else None,
+        workflow_admission_reason=admission_gate.get("reason") or workflow.get("workflow_reason") or "",
         workflow_required_entities=required_entities,
         workflow_missing_entities=missing_entities,
         workflow_executable=executable,
@@ -677,6 +719,20 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
                 "workflow_admitted": admitted,
                 "workflow_executable": executable,
                 "missing_entities": missing_entities,
+            },
+            "workflow_admission_gate": {
+                "consulted": bool(admission_gate),
+                "decision": admission_gate.get("decision"),
+                "reason": admission_gate.get("reason"),
+                "authoritative": bool(admission_gate.get("decision") in {"ADMIT", "REJECT_TO_CONVERSATION", "DEFER_FOR_CLARIFICATION"}),
+                "workflow_candidate_rejected": admission_gate.get("decision") == "REJECT_TO_CONVERSATION",
+                "workflow_candidate_deferred": admission_gate.get("decision") == "DEFER_FOR_CLARIFICATION",
+                "admitted": admission_gate.get("admitted"),
+                "executable_request_detected": admission_gate.get("executable_request_detected"),
+                "analytical_question_detected": admission_gate.get("analytical_question_detected"),
+                "business_level_scope_detected": admission_gate.get("business_level_scope_detected"),
+                "keyword_only_match_detected": admission_gate.get("keyword_only_match_detected"),
+                "fallback_target": admission_gate.get("fallback_target"),
             },
             "cognitive_runtime": {
                 "consulted": cognitive["consulted"],
@@ -722,6 +778,10 @@ def cognitive_authority_trace(audit_or_route: dict | None) -> dict:
             "winning_authority": audit.get("winning_authority"),
         },
         "workflow_candidate": audit.get("workflow_candidate"),
+        "workflow_admission_gate": summary.get("workflow_admission_gate") or {},
+        "workflow_admission_gate_consulted": audit.get("workflow_admission_gate_consulted"),
+        "workflow_admission_gate_decision": audit.get("workflow_admission_gate_decision"),
+        "workflow_admission_gate_reason": audit.get("workflow_admission_gate_reason"),
         "workflow_admitted": audit.get("workflow_admitted"),
         "response_mode": audit.get("selected_response_mode"),
         "cognitive_runtime_consulted": audit.get("cognitive_runtime_consulted"),
