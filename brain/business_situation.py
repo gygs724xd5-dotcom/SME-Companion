@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from brain.evidence_runtime import build_evidence_runtime
 from brain.evidence_gap_runtime import build_evidence_gap_runtime
+from brain.knowledge_runtime import build_knowledge_runtime
 from brain.perspective_runtime import build_perspective_runtime
 from brain.truth_runtime import build_truth_runtime
 
@@ -542,5 +543,23 @@ def build_business_situation(
         evidence_runtime=evidence_runtime,
         truth_runtime=truth_runtime,
         evidence_gap_runtime=payload["diagnostics"]["evidence_gap"],
+    )
+    payload["diagnostics"]["knowledge"] = build_knowledge_runtime(
+        user_message=user_message,
+        business_situation=payload,
+        perspective_runtime=payload["diagnostics"]["perspective"],
+        evidence_runtime=evidence_runtime,
+        truth_runtime=truth_runtime,
+        conversation_context={
+            "conversation_understanding": understanding,
+            "business_context": context,
+            "intent_resolution": intent,
+            "conversation_memory": memory_context,
+            "application_state": state,
+        },
+        structured_business_data={
+            "canonical_entities": canonical_entities or {},
+            "extracted_entities": extracted_entities or {},
+        },
     )
     return payload

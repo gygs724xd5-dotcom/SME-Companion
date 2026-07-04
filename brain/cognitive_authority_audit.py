@@ -19,6 +19,9 @@ class AuthorityStage(str, Enum):
     ROUTER = "ROUTER"
     WORKFLOW_ADMISSION = "WORKFLOW_ADMISSION"
     CLARIFICATION_AUTHORITY = "CLARIFICATION_AUTHORITY"
+    KNOWLEDGE_RUNTIME = "KNOWLEDGE_RUNTIME"
+    KNOWLEDGE_GAP_PRIORITIZATION = "KNOWLEDGE_GAP_PRIORITIZATION"
+    CLARIFICATION_HANDOFF = "CLARIFICATION_HANDOFF"
     WORKFLOW_RUNTIME = "WORKFLOW_RUNTIME"
     COGNITIVE_RUNTIME = "COGNITIVE_RUNTIME"
     RESPONSE_GENERATION = "RESPONSE_GENERATION"
@@ -301,6 +304,33 @@ class CognitiveAuthorityAudit:
     perspective_authoritative_for_routing: bool = False
     perspective_authoritative_for_workflow: bool = False
     perspective_authoritative_for_response: bool = False
+    knowledge_runtime_consulted: bool = False
+    knowledge_available: bool = False
+    knowledge_primary_ids: list = field(default_factory=list)
+    knowledge_secondary_ids: list = field(default_factory=list)
+    knowledge_deferred_ids: list = field(default_factory=list)
+    knowledge_selection_support: float = 0.0
+    knowledge_selection_reason: str = ""
+    knowledge_required_metrics: list = field(default_factory=list)
+    knowledge_available_metrics: list = field(default_factory=list)
+    knowledge_incomplete_metrics: list = field(default_factory=list)
+    knowledge_missing_metrics: list = field(default_factory=list)
+    knowledge_gap_count: int = 0
+    knowledge_next_gap: dict = field(default_factory=dict)
+    knowledge_used_by_clarification: bool = False
+    knowledge_authoritative_for_relevance: bool = False
+    knowledge_authoritative_for_judgment: bool = False
+    knowledge_authoritative_for_decision: bool = False
+    knowledge_authoritative_for_recommendation: bool = False
+    knowledge_gap_prioritization_consulted: bool = False
+    knowledge_gap_selected: bool = False
+    knowledge_gap_priority_tier: str = ""
+    clarification_handoff_created: bool = False
+    clarification_handoff_type: str = ""
+    clarification_question_intent: str = ""
+    clarification_handoff_used: bool = False
+    duplicate_question_suppressed: bool = False
+    workflow_field_conflict_avoided: bool = False
     fallback_selected: bool = False
     fallback_source: str | None = None
     response_source: str | None = None
@@ -371,6 +401,10 @@ def _records_for_route(
     workflow = _as_dict(route.get("business_workflow"))
     admission_gate = _workflow_admission_gate(route, workflow)
     clarification = _as_dict(route.get("clarification_authority"))
+    business_situation = _as_dict(route.get("business_situation") or planner.get("business_situation"))
+    knowledge = _as_dict(_as_dict(business_situation.get("diagnostics")).get("knowledge"))
+    next_gap = _as_dict(knowledge.get("next_knowledge_gap"))
+    handoff = _as_dict(knowledge.get("clarification_handoff"))
     gate = {
         "final_response_gate": route.get("final_response_gate"),
         "workflow_response_allowed": route.get("workflow_response_allowed"),
@@ -456,6 +490,36 @@ def _records_for_route(
             confidence=_confidence_score(clarification.get("response_confidence")),
             reason=clarification.get("reason") or "Clarification Authority not used.",
             diagnostic_only=False if clarification.get("decision") == "USE_SPECIFIC_CLARIFICATION" else True,
+        ),
+        AuthorityDecisionRecord(
+            stage=AuthorityStage.KNOWLEDGE_RUNTIME.value,
+            component="knowledge_runtime",
+            input_summary={"selected_frame": knowledge.get("selected_frame")},
+            decision={
+                "primary_knowledge": [item.get("knowledge_id") for item in _as_list(knowledge.get("primary_knowledge")) if isinstance(item, dict)],
+                "secondary_knowledge": [item.get("knowledge_id") for item in _as_list(knowledge.get("secondary_knowledge")) if isinstance(item, dict)],
+            },
+            authority_role=AuthorityRole.AUTHORITATIVE.value if knowledge.get("knowledge_available") else AuthorityRole.NOT_CONSULTED.value,
+            confidence=_confidence_score(knowledge.get("selection_support_strength")),
+            reason="Knowledge is authoritative for relevance and evidence requirements only.",
+        ),
+        AuthorityDecisionRecord(
+            stage=AuthorityStage.KNOWLEDGE_GAP_PRIORITIZATION.value,
+            component="knowledge_runtime.gap_prioritization",
+            input_summary={"gap_count": len(_as_list(knowledge.get("knowledge_gaps")))},
+            decision=next_gap,
+            authority_role=AuthorityRole.AUTHORITATIVE.value if next_gap else AuthorityRole.NOT_APPLICABLE.value,
+            confidence=_confidence_score(next_gap.get("priority_strength")),
+            reason="Knowledge Gap Prioritization is authoritative for the next evidence need only.",
+        ),
+        AuthorityDecisionRecord(
+            stage=AuthorityStage.CLARIFICATION_HANDOFF.value,
+            component="knowledge_runtime.clarification_handoff",
+            input_summary={"source_gap_id": handoff.get("source_gap_id")},
+            decision={"handoff_type": handoff.get("handoff_type"), "question_intent": handoff.get("question_intent")},
+            authority_role=AuthorityRole.ADVISORY.value if handoff and handoff.get("handoff_type") != "NO_CLARIFICATION_NEEDED" else AuthorityRole.NOT_APPLICABLE.value,
+            confidence=_confidence_score(handoff.get("handoff_support_strength")),
+            reason="Clarification handoff supplies context; Clarification Authority owns wording.",
         ),
         AuthorityDecisionRecord(
             stage=AuthorityStage.WORKFLOW_RUNTIME.value,
@@ -669,6 +733,10 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
     language_normalization = _as_dict(route.get("language_normalization"))
     clarification_authority = _as_dict(route.get("clarification_authority"))
     business_situation = _as_dict(route.get("business_situation") or planner.get("business_situation"))
+    knowledge_runtime = _as_dict(_as_dict(business_situation.get("diagnostics")).get("knowledge"))
+    knowledge_diagnostics = _as_dict(knowledge_runtime.get("diagnostics"))
+    knowledge_next_gap = _as_dict(knowledge_runtime.get("next_knowledge_gap"))
+    clarification_handoff = _as_dict(knowledge_runtime.get("clarification_handoff"))
     user_message = str(_first_present(overrides.get("user_message"), route.get("user_message"), understanding.get("raw_text"), default="") or "")
     selected_intent = _first_present(overrides.get("selected_intent"), intent_resolution.get("resolved_intent"), default=None)
     selected_workflow = _first_present(
@@ -785,6 +853,36 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
             clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION"
             and clarification_authority.get("perspective_used_for_framing")
         ),
+        knowledge_runtime_consulted=bool(knowledge_runtime),
+        knowledge_available=bool(knowledge_runtime.get("knowledge_available")),
+        knowledge_primary_ids=[item.get("knowledge_id") for item in _as_list(knowledge_runtime.get("primary_knowledge")) if isinstance(item, dict)],
+        knowledge_secondary_ids=[item.get("knowledge_id") for item in _as_list(knowledge_runtime.get("secondary_knowledge")) if isinstance(item, dict)],
+        knowledge_deferred_ids=[item.get("knowledge_id") for item in _as_list(knowledge_runtime.get("deferred_knowledge")) if isinstance(item, dict)],
+        knowledge_selection_support=float(knowledge_runtime.get("selection_support_strength") or 0.0),
+        knowledge_selection_reason=knowledge_runtime.get("selection_reason") or "",
+        knowledge_required_metrics=knowledge_runtime.get("relevant_metrics") or [],
+        knowledge_available_metrics=sorted((_as_dict(knowledge_runtime.get("available_metrics"))).keys()),
+        knowledge_incomplete_metrics=sorted((_as_dict(knowledge_runtime.get("incomplete_metrics"))).keys()),
+        knowledge_missing_metrics=knowledge_runtime.get("missing_metrics") or [],
+        knowledge_gap_count=len(_as_list(knowledge_runtime.get("knowledge_gaps"))),
+        knowledge_next_gap=knowledge_next_gap,
+        knowledge_used_by_clarification=bool(clarification_authority.get("knowledge_used_for_gap")),
+        knowledge_authoritative_for_relevance=bool(knowledge_runtime),
+        knowledge_authoritative_for_judgment=False,
+        knowledge_authoritative_for_decision=False,
+        knowledge_authoritative_for_recommendation=False,
+        knowledge_gap_prioritization_consulted=bool(knowledge_runtime),
+        knowledge_gap_selected=bool(knowledge_next_gap),
+        knowledge_gap_priority_tier=knowledge_next_gap.get("priority_tier") or "",
+        clarification_handoff_created=bool(clarification_handoff and clarification_handoff.get("handoff_type") != "NO_CLARIFICATION_NEEDED"),
+        clarification_handoff_type=clarification_handoff.get("handoff_type") or "",
+        clarification_question_intent=clarification_handoff.get("question_intent") or "",
+        clarification_handoff_used=bool(clarification_authority.get("knowledge_used_for_gap")),
+        duplicate_question_suppressed=bool(clarification_authority.get("duplicate_guard_applied")),
+        workflow_field_conflict_avoided=bool(
+            clarification_authority.get("decision") == "NO_CLARIFICATION_NEEDED"
+            and admission_gate.get("decision") == "ADMIT"
+        ),
         fallback_selected=fallback_selected,
         fallback_source=fallback_source,
         response_source=response_source,
@@ -845,6 +943,19 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
                     clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION"
                     and not clarification_authority.get("fallback_used")
                 ),
+            },
+            "knowledge_runtime": {
+                "consulted": bool(knowledge_runtime),
+                "knowledge_available": bool(knowledge_runtime.get("knowledge_available")),
+                "primary_ids": [item.get("knowledge_id") for item in _as_list(knowledge_runtime.get("primary_knowledge")) if isinstance(item, dict)],
+                "secondary_ids": [item.get("knowledge_id") for item in _as_list(knowledge_runtime.get("secondary_knowledge")) if isinstance(item, dict)],
+                "next_gap": knowledge_next_gap,
+                "handoff_type": clarification_handoff.get("handoff_type"),
+                "authoritative_for_relevance": bool(knowledge_runtime),
+                "authoritative_for_judgment": False,
+                "authoritative_for_decision": False,
+                "authoritative_for_recommendation": False,
+                "diagnostics": knowledge_diagnostics,
             },
             "cognitive_runtime": {
                 "consulted": cognitive["consulted"],
@@ -908,6 +1019,13 @@ def cognitive_authority_trace(audit_or_route: dict | None) -> dict:
         "clarification_reason": audit.get("clarification_reason"),
         "clarification_requested_fields": audit.get("clarification_requested_fields") or [],
         "generic_fallback_avoided": audit.get("generic_fallback_avoided"),
+        "knowledge_runtime_consulted": audit.get("knowledge_runtime_consulted"),
+        "knowledge_available": audit.get("knowledge_available"),
+        "knowledge_primary_ids": audit.get("knowledge_primary_ids") or [],
+        "knowledge_secondary_ids": audit.get("knowledge_secondary_ids") or [],
+        "knowledge_next_gap": audit.get("knowledge_next_gap") or {},
+        "knowledge_used_by_clarification": audit.get("knowledge_used_by_clarification"),
+        "clarification_handoff_type": audit.get("clarification_handoff_type"),
         "response_mode": audit.get("selected_response_mode"),
         "cognitive_runtime_consulted": audit.get("cognitive_runtime_consulted"),
         "cognitive_runtime_authoritative": audit.get("cognitive_runtime_authoritative"),

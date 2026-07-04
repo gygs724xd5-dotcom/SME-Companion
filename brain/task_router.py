@@ -264,6 +264,14 @@ def _workflow_candidate_for_admission(plan: dict | None, intent_resolution: dict
     return planner_workflow or resolver_workflow
 
 
+def _startup_cost_knowledge_context(text: str) -> bool:
+    compact = "".join(str(text or "").lower().split())
+    return bool(
+        any(token in compact for token in ("อยากเปิดร้าน", "เปิดร้าน", "ใช้ทุน", "ทุนเท่าไร", "startupcost"))
+        and not any(token in compact for token in ("ช่วยวางแผนขาย", "salesplan", "แผนขาย7วัน"))
+    )
+
+
 def _knowledge_context_for_route(route: dict | None) -> dict:
     route = route or {}
     existing = route.get("knowledge_context")
@@ -685,6 +693,15 @@ def build_task_route(application_state, user_message) -> dict:
         workflow_candidate=workflow_candidate,
         extracted_entities=entity_result.get("extracted_entities") or {},
     )
+    if _startup_cost_knowledge_context(user_message) and workflow_admission_gate.get("decision") == WorkflowAdmissionDecision.ADMIT.value:
+        workflow_admission_gate = {
+            **workflow_admission_gate,
+            "decision": WorkflowAdmissionDecision.REJECT_TO_CONVERSATION.value,
+            "reason": "STARTUP_COST_KNOWLEDGE_GAP",
+            "admitted": False,
+            "fallback_target": "conversation",
+            "diagnostic_summary": "REJECT_TO_CONVERSATION: STARTUP_COST_KNOWLEDGE_GAP",
+        }
     active_workflow_present = bool(active_workflow_state(state))
     if active_workflow_present or (not workflow_candidate) or workflow_admission_gate.get("decision") == WorkflowAdmissionDecision.ADMIT.value:
         workflow_decision = decide_business_workflow(
@@ -876,6 +893,7 @@ def build_task_route(application_state, user_message) -> dict:
         "planner_locked": planner_lock_active,
     })
     evidence_gap = (business_situation.get("diagnostics") or {}).get("evidence_gap") or {}
+    knowledge_runtime = (business_situation.get("diagnostics") or {}).get("knowledge") or {}
     clarification_authority = build_clarification_response(
         user_message=observed_user_message,
         normalized_user_message=user_message,
@@ -884,6 +902,8 @@ def build_task_route(application_state, user_message) -> dict:
         evidence_gap=evidence_gap,
         conversation_memory=memory_context,
         application_state=state,
+        knowledge_runtime=knowledge_runtime,
+        clarification_handoff=knowledge_runtime.get("clarification_handoff") or {},
     )
     route["clarification_authority"] = clarification_authority
     situation_targets = [business_situation]
@@ -901,7 +921,7 @@ def build_task_route(application_state, user_message) -> dict:
                 "response_source": "clarification_authority",
                 "response_type": "situation_aware_clarification",
                 "response_reason": clarification_authority.get("reason"),
-                "selected_response_mode": "SITUATION_AWARE_CLARIFICATION",
+                "selected_response_mode": clarification_authority.get("selected_response_mode") or "SITUATION_AWARE_CLARIFICATION",
                 "clarification_authority_used": True,
                 "clarification_reason": clarification_authority.get("reason"),
                 "requested_fields": clarification_authority.get("requested_fields") or [],
@@ -1067,6 +1087,26 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "constitutional_invariants": diagnostics.get("perspective_constitutional_invariants"),
             "diagnostic_only": diagnostics.get("perspective_diagnostic_only"),
             "runtime_only": diagnostics.get("perspective_runtime_only"),
+        },
+        "Knowledge Runtime": {
+            "knowledge_runtime": diagnostics.get("canonical_knowledge_runtime"),
+            "knowledge_runtime_created": diagnostics.get("knowledge_runtime_created"),
+            "knowledge_available": diagnostics.get("knowledge_available"),
+            "primary_knowledge": diagnostics.get("knowledge_primary_ids"),
+            "secondary_knowledge": diagnostics.get("knowledge_secondary_ids"),
+            "deferred_knowledge": diagnostics.get("knowledge_deferred_ids"),
+            "selection_support": diagnostics.get("knowledge_selection_support"),
+            "selection_reason": diagnostics.get("knowledge_selection_reason"),
+            "relevant_concepts": diagnostics.get("knowledge_relevant_concepts"),
+            "relevant_metrics": diagnostics.get("knowledge_relevant_metrics"),
+            "available_metrics": diagnostics.get("knowledge_available_metrics"),
+            "incomplete_metrics": diagnostics.get("knowledge_incomplete_metrics"),
+            "missing_metrics": diagnostics.get("knowledge_missing_metrics"),
+            "knowledge_gaps": diagnostics.get("knowledge_gaps"),
+            "next_knowledge_gap": diagnostics.get("knowledge_next_gap"),
+            "clarification_handoff": diagnostics.get("knowledge_clarification_handoff"),
+            "registry_version": diagnostics.get("knowledge_registry_version"),
+            "constitutional_invariants": diagnostics.get("knowledge_constitutional_invariants"),
         },
         "Language Normalization": diagnostics.get("language_normalization") or {},
         "Clarification Authority": diagnostics.get("clarification_authority") or {},
@@ -1264,6 +1304,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     evidence_gap_diagnostics = evidence_gap_runtime.get("diagnostics") or {}
     perspective_runtime = business_situation_diagnostics.get("perspective") or {}
     perspective_diagnostics = perspective_runtime.get("diagnostics") or {}
+    canonical_knowledge_runtime = business_situation_diagnostics.get("knowledge") or {}
+    canonical_knowledge_diagnostics = canonical_knowledge_runtime.get("diagnostics") or {}
     language_normalization = route.get("language_normalization") or business_situation_diagnostics.get("language_normalization") or {}
     clarification_authority = route.get("clarification_authority") or business_situation_diagnostics.get("clarification_authority") or {}
     brain_observatory = build_brain_observatory(route)
@@ -1391,6 +1433,26 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "perspective_constitutional_invariants": perspective_runtime.get("constitutional_invariants") or perspective_diagnostics.get("constitutional_invariants") or {},
         "perspective_diagnostic_only": bool(perspective_runtime.get("diagnostic_only")),
         "perspective_runtime_only": bool(perspective_runtime.get("runtime_only")),
+        "canonical_knowledge_runtime": canonical_knowledge_runtime,
+        "knowledge_runtime_created": bool(canonical_knowledge_diagnostics.get("knowledge_runtime_created")),
+        "knowledge_runtime_version": canonical_knowledge_diagnostics.get("knowledge_runtime_version") or canonical_knowledge_runtime.get("version"),
+        "knowledge_available": bool(canonical_knowledge_runtime.get("knowledge_available")),
+        "knowledge_primary_ids": [item.get("knowledge_id") for item in (canonical_knowledge_runtime.get("primary_knowledge") or []) if isinstance(item, dict)],
+        "knowledge_secondary_ids": [item.get("knowledge_id") for item in (canonical_knowledge_runtime.get("secondary_knowledge") or []) if isinstance(item, dict)],
+        "knowledge_deferred_ids": [item.get("knowledge_id") for item in (canonical_knowledge_runtime.get("deferred_knowledge") or []) if isinstance(item, dict)],
+        "knowledge_selection_support": canonical_knowledge_runtime.get("selection_support_strength"),
+        "knowledge_selection_reason": canonical_knowledge_runtime.get("selection_reason"),
+        "knowledge_relevant_concepts": canonical_knowledge_runtime.get("relevant_concepts") or [],
+        "knowledge_relevant_metrics": canonical_knowledge_runtime.get("relevant_metrics") or [],
+        "knowledge_relationship_rules": canonical_knowledge_runtime.get("applicable_relationship_rules") or [],
+        "knowledge_available_metrics": canonical_knowledge_runtime.get("available_metrics") or {},
+        "knowledge_incomplete_metrics": canonical_knowledge_runtime.get("incomplete_metrics") or {},
+        "knowledge_missing_metrics": canonical_knowledge_runtime.get("missing_metrics") or [],
+        "knowledge_gaps": canonical_knowledge_runtime.get("knowledge_gaps") or [],
+        "knowledge_next_gap": canonical_knowledge_runtime.get("next_knowledge_gap") or {},
+        "knowledge_clarification_handoff": canonical_knowledge_runtime.get("clarification_handoff") or {},
+        "knowledge_registry_version": canonical_knowledge_runtime.get("registry_version"),
+        "knowledge_constitutional_invariants": canonical_knowledge_runtime.get("constitutional_invariants") or canonical_knowledge_diagnostics.get("constitutional_invariants") or {},
         "Conversation Understanding": route.get("conversation_understanding") or {},
         "Conversation Intelligence": route.get("conversation_intelligence") or {},
         "intent_priority_audit": route.get("intent_priority_audit") or _intent_priority_audit(route),

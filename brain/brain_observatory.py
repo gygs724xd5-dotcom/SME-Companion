@@ -275,6 +275,51 @@ def _perspective_layer(business_situation: dict) -> dict:
     )
 
 
+def _knowledge_layer(business_situation: dict) -> dict:
+    knowledge = _as_dict(_as_dict(business_situation.get("diagnostics")).get("knowledge"))
+    diagnostics = _as_dict(knowledge.get("diagnostics"))
+    registry_validation = _as_dict(diagnostics.get("registry_validation"))
+    workflow_like_operation = str(business_situation.get("current_operation") or "").upper()
+    workflow_owned_context = bool("PROFIT_CALCULATION" in workflow_like_operation or "COST_CALCULATION" in workflow_like_operation)
+    primary_available = bool(knowledge.get("primary_knowledge")) and not workflow_owned_context
+    return _layer(
+        name="Knowledge",
+        runtime_state={
+            "knowledge_available": knowledge.get("knowledge_available"),
+            "primary_knowledge": knowledge.get("primary_knowledge") or [],
+            "secondary_knowledge": knowledge.get("secondary_knowledge") or [],
+            "deferred_knowledge": knowledge.get("deferred_knowledge") or [],
+            "selection_support": knowledge.get("selection_support_strength"),
+            "selection_reason": knowledge.get("selection_reason"),
+            "relevant_concepts": knowledge.get("relevant_concepts") or [],
+            "relevant_metrics": knowledge.get("relevant_metrics") or [],
+            "applicable_relationship_rules": knowledge.get("applicable_relationship_rules") or [],
+            "available_metrics": knowledge.get("available_metrics") or {},
+            "incomplete_metrics": knowledge.get("incomplete_metrics") or {},
+            "missing_metrics": knowledge.get("missing_metrics") or [],
+            "all_knowledge_gaps": knowledge.get("knowledge_gaps") or [],
+            "merged_gaps": knowledge.get("merged_gaps") or [],
+            "suppressed_gaps": knowledge.get("suppressed_gaps") or [],
+            "next_knowledge_gap": knowledge.get("next_knowledge_gap") or {},
+            "blocking_relationship": (_as_dict(knowledge.get("next_knowledge_gap")).get("blocking_relationship_rules") or []),
+            "clarification_handoff": knowledge.get("clarification_handoff") or {},
+            "expected_answer_schema": _as_dict(knowledge.get("clarification_handoff")).get("expected_answer_schema") or {},
+            "safe_wording_constraints": _as_dict(knowledge.get("clarification_handoff")).get("safe_wording_constraints") or [],
+            "duplicate_guard": _as_dict(knowledge.get("clarification_handoff")).get("duplicate_guard") or {},
+            "workflow_coordination": _as_dict(knowledge.get("clarification_handoff")).get("workflow_coordination") or {},
+            "registry_version": knowledge.get("registry_version") or registry_validation.get("registry_version"),
+            "constitutional_invariants": knowledge.get("constitutional_invariants") or diagnostics.get("constitutional_invariants") or {},
+            "registered_knowledge_count": registry_validation.get("registered_knowledge_count"),
+            "registered_knowledge_ids": registry_validation.get("registered_knowledge_ids") or [],
+            "business_domains": registry_validation.get("business_domains") or [],
+        },
+        diagnostics=diagnostics,
+        confidence=knowledge.get("selection_support_strength"),
+        source=knowledge.get("source") or diagnostics.get("knowledge_runtime_source") or "knowledge_runtime",
+        status="observed" if primary_available else "placeholder",
+    )
+
+
 def _placeholder_layer(name: str) -> dict:
     return _layer(
         name=name,
@@ -370,6 +415,18 @@ def _cognitive_authority_group(route: dict, business_situation: dict) -> dict:
         "perspective_authoritative_for_routing": audit.get("perspective_authoritative_for_routing"),
         "perspective_authoritative_for_workflow": audit.get("perspective_authoritative_for_workflow"),
         "perspective_authoritative_for_response": audit.get("perspective_authoritative_for_response"),
+        "knowledge_runtime_consulted": audit.get("knowledge_runtime_consulted"),
+        "knowledge_available": audit.get("knowledge_available"),
+        "knowledge_primary_ids": audit.get("knowledge_primary_ids") or [],
+        "knowledge_secondary_ids": audit.get("knowledge_secondary_ids") or [],
+        "knowledge_next_gap": audit.get("knowledge_next_gap") or {},
+        "knowledge_used_by_clarification": audit.get("knowledge_used_by_clarification"),
+        "knowledge_authoritative_for_relevance": audit.get("knowledge_authoritative_for_relevance"),
+        "knowledge_authoritative_for_judgment": audit.get("knowledge_authoritative_for_judgment"),
+        "knowledge_authoritative_for_decision": audit.get("knowledge_authoritative_for_decision"),
+        "clarification_handoff_created": audit.get("clarification_handoff_created"),
+        "clarification_handoff_type": audit.get("clarification_handoff_type"),
+        "clarification_question_intent": audit.get("clarification_question_intent"),
         "generic_fallback_avoided": audit.get("generic_fallback_avoided"),
         "cognitive_runtime_consulted": audit.get("cognitive_runtime_consulted"),
         "cognitive_runtime_authoritative": audit.get("cognitive_runtime_authoritative"),
@@ -404,7 +461,7 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         _truth_status_layer(business_situation),
         _evidence_gap_layer(business_situation),
         _perspective_layer(business_situation),
-        _placeholder_layer("Knowledge"),
+        _knowledge_layer(business_situation),
         _placeholder_layer("Business Judgment"),
         _placeholder_layer("Decision"),
     ]

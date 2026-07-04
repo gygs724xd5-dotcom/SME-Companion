@@ -8,6 +8,7 @@ from typing import Any
 CLARIFICATION_AUTHORITY_VERSION = "5.8.4"
 CLARIFICATION_RESPONSE_SOURCE = "clarification_authority"
 SITUATION_AWARE_CLARIFICATION_MODE = "SITUATION_AWARE_CLARIFICATION"
+KNOWLEDGE_GAP_CLARIFICATION_MODE = "KNOWLEDGE_GAP_CLARIFICATION"
 
 
 class ClarificationDecision(str, Enum):
@@ -25,6 +26,7 @@ class ClarificationReason(str, Enum):
     AMBIGUOUS_BUSINESS_SCOPE = "AMBIGUOUS_BUSINESS_SCOPE"
     NO_ACTIONABLE_GAP = "NO_ACTIONABLE_GAP"
     GENERIC_FALLBACK_ONLY = "GENERIC_FALLBACK_ONLY"
+    KNOWLEDGE_GAP_CLARIFICATION = "KNOWLEDGE_GAP_CLARIFICATION"
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,13 @@ class ClarificationResult:
     perspective_frame_confidence: float = 0.0
     perspective_consulted: bool = False
     perspective_used_for_framing: bool = False
+    knowledge_runtime_consulted: bool = False
+    knowledge_used_for_gap: bool = False
+    knowledge_primary_ids: list[str] = field(default_factory=list)
+    knowledge_secondary_ids: list[str] = field(default_factory=list)
+    knowledge_next_gap: dict = field(default_factory=dict)
+    clarification_handoff_type: str = ""
+    upstream_source: str = ""
     version: str = CLARIFICATION_AUTHORITY_VERSION
     diagnostic_only: bool = False
 
@@ -66,6 +75,8 @@ def build_clarification_response(
     evidence_gap: dict | None = None,
     conversation_memory: dict | None = None,
     application_state: dict | None = None,
+    knowledge_runtime: dict | None = None,
+    clarification_handoff: dict | None = None,
 ) -> dict:
     """Select the smallest useful clarification for blocked/deferred workflow paths."""
 
@@ -86,6 +97,7 @@ def build_clarification_response(
         source_layers = source_layers + ["perspective"]
     previous_questions = _previous_assistant_questions(application_state, conversation_memory)
     supplied = _supplied_fields(text, application_state, conversation_memory)
+    knowledge = _knowledge_context(business_situation, knowledge_runtime, clarification_handoff)
 
     if _is_inventory_query(lowered):
         if _has_inventory_data(application_state):
@@ -103,6 +115,16 @@ def build_clarification_response(
             source_layers=source_layers,
             previous_questions=previous_questions,
         )
+
+    if knowledge.get("handoff") and gate.get("reason") != "AMBIGUOUS_BUSINESS_ASSESSMENT":
+        result = _knowledge_specific(
+            knowledge=knowledge,
+            source_layers=source_layers + ["knowledge_runtime"],
+            previous_questions=previous_questions,
+            perspective=perspective,
+        )
+        if result:
+            return result
 
     if _is_business_profit_assessment(lowered, gate):
         fields = _remaining(["timeframe", "revenue", "cost", "expenses"], supplied)
@@ -162,6 +184,91 @@ def build_clarification_response(
     )
 
 
+def _knowledge_context(
+    business_situation: dict | None,
+    knowledge_runtime: dict | None,
+    clarification_handoff: dict | None,
+) -> dict:
+    diagnostics = (business_situation or {}).get("diagnostics") or {}
+    runtime = knowledge_runtime if isinstance(knowledge_runtime, dict) else diagnostics.get("knowledge") or {}
+    handoff = clarification_handoff if isinstance(clarification_handoff, dict) else (runtime.get("clarification_handoff") if isinstance(runtime, dict) else {}) or {}
+    next_gap = runtime.get("next_knowledge_gap") if isinstance(runtime, dict) else {}
+    if not isinstance(handoff, dict) or handoff.get("handoff_type") == "NO_CLARIFICATION_NEEDED":
+        handoff = {}
+    return {
+        "runtime": runtime if isinstance(runtime, dict) else {},
+        "handoff": handoff,
+        "next_gap": next_gap if isinstance(next_gap, dict) else {},
+    }
+
+
+def _knowledge_specific(
+    *,
+    knowledge: dict,
+    source_layers: list[str],
+    previous_questions: list[str],
+    perspective: dict | None = None,
+) -> dict | None:
+    runtime = knowledge.get("runtime") or {}
+    handoff = knowledge.get("handoff") or {}
+    gap = knowledge.get("next_gap") or {}
+    intent = handoff.get("question_intent") or gap.get("question_intent")
+    metric_id = handoff.get("source_metric_id") or gap.get("metric_id")
+    partial = handoff.get("known_partial_value") or gap.get("current_partial_value") or {}
+    value = partial.get("value")
+    reason = ClarificationReason.KNOWLEDGE_GAP_CLARIFICATION
+    requested_fields = [metric_id] if metric_id else []
+    question = ""
+    replacement = ""
+
+    if intent == "COMPLETE_CAPACITY_DEFINITION":
+        value_text = f"{value} ชิ้น" if value not in (None, "", [], {}) else "จำนวนที่ทำได้"
+        question = f"{value_text}นี้ทำได้ต่อวันหรือต่อรอบครับ?"
+        replacement = "ถ้าไม่ใช่ต่อวันหรือต่อรอบ บอกช่วงเวลาของจำนวนนี้ได้เลยครับ"
+        requested_fields = ["output_time_period"]
+    elif intent == "ESTABLISH_BUSINESS_MODEL":
+        question = "ตั้งใจเริ่มทำจากบ้านรับตามออเดอร์ ทำสต๊อกพร้อมขาย หรือเปิดหน้าร้านครับ? เพราะแต่ละแบบใช้ทุนเริ่มต้นต่างกัน"
+        replacement = "โมเดลที่จะเริ่มขายเป็นทำจากบ้าน รับตามออเดอร์ ทำสต๊อก หรือเปิดหน้าร้านครับ?"
+        requested_fields = ["business_model", "location_model"]
+    elif intent == "ESTABLISH_COMPARISON_PERIOD":
+        reason = ClarificationReason.ANALYTICAL_RELATIONSHIP_NEEDS_EVIDENCE
+        question = "ลูกค้าเพิ่มแต่กำไรลดในช่วงไหนเทียบกับช่วงไหนครับ? ขอช่วงเวลาเดียวกันของยอดขายรวม ยอดขายเฉลี่ยต่อบิล ต้นทุน และกำไรเพื่อเทียบให้ชัดก่อนครับ"
+        replacement = "ขอช่วงก่อนกับช่วงปัจจุบันที่อยากเทียบ พร้อมยอดขายรวม ต้นทุน และกำไรของแต่ละช่วงครับ"
+        requested_fields = ["analysis_timeframe", "revenue", "cost", "profit"]
+    elif intent in {"ESTABLISH_SALES_VELOCITY", "ESTABLISH_CURRENT_DEMAND"}:
+        question = "ตอนนี้ขายหรือมีออเดอร์เฉลี่ยวันละกี่ชิ้นครับ?"
+        replacement = "ขอจำนวนขายเฉลี่ยต่อวันหรือออเดอร์ที่รออยู่ตอนนี้ครับ"
+        requested_fields = ["average_daily_sales", "current_order_volume"]
+    elif intent == "ESTABLISH_PAYMENT_TIMING":
+        question = "ยอดที่ขายได้ส่วนใหญ่รับเงินทันทีหรือให้เครดิต/รอเก็บเงินกี่วันครับ?"
+        replacement = "ขอจังหวะรับเงินจากยอดขาย เช่น รับทันที หรือรอเก็บเงินกี่วันครับ"
+        requested_fields = ["receivable_days", "payment_timing"]
+    elif intent == "COMPLETE_COST_BASIS":
+        question = "ต้นทุนนี้เป็นต้นทุนต่อชิ้น ต่อออเดอร์ หรือรวมทั้งรอบครับ?"
+        replacement = "ขอฐานของต้นทุนก่อนครับว่าเป็นต่อชิ้น ต่อออเดอร์ หรือรวมทั้งรอบ"
+        requested_fields = ["unit_cost_scope"]
+    else:
+        return None
+
+    duplicate = _similar_question_already_asked(question, previous_questions)
+    return _specific(
+        reason=reason,
+        text=replacement if duplicate else question,
+        question_intent=intent or "request_knowledge_gap",
+        requested_fields=requested_fields,
+        source_layers=source_layers,
+        previous_questions=previous_questions,
+        duplicate_guard_applied=duplicate,
+        duplicate_guard_reason="highest_priority_knowledge_gap_already_asked" if duplicate else "",
+        suppressed_question=question if duplicate else "",
+        replacement_question=replacement if duplicate else "",
+        perspective=perspective,
+        knowledge_runtime=runtime,
+        knowledge_next_gap=gap,
+        clarification_handoff=handoff,
+    )
+
+
 def _specific(
     *,
     reason: ClarificationReason,
@@ -175,8 +282,13 @@ def _specific(
     suppressed_question: str = "",
     replacement_question: str = "",
     perspective: dict | None = None,
+    knowledge_runtime: dict | None = None,
+    knowledge_next_gap: dict | None = None,
+    clarification_handoff: dict | None = None,
 ) -> dict:
     perspective = perspective or {}
+    knowledge_runtime = knowledge_runtime or {}
+    clarification_handoff = clarification_handoff or {}
     return _result(
         ClarificationDecision.USE_SPECIFIC_CLARIFICATION,
         reason,
@@ -191,12 +303,19 @@ def _specific(
         previous_questions_checked=previous_questions,
         response_confidence=0.88,
         response_source=CLARIFICATION_RESPONSE_SOURCE,
-        selected_response_mode=SITUATION_AWARE_CLARIFICATION_MODE,
+        selected_response_mode=KNOWLEDGE_GAP_CLARIFICATION_MODE if clarification_handoff else SITUATION_AWARE_CLARIFICATION_MODE,
         perspective_selected_frame=perspective.get("selected_frame"),
         perspective_candidate_frames=perspective.get("candidate_frames") or [],
         perspective_frame_confidence=float(perspective.get("frame_confidence") or 0.0),
         perspective_consulted=bool(perspective),
         perspective_used_for_framing=bool(_strong_frame(perspective, str(perspective.get("selected_frame") or ""))),
+        knowledge_runtime_consulted=bool(knowledge_runtime),
+        knowledge_used_for_gap=bool(clarification_handoff),
+        knowledge_primary_ids=[item.get("knowledge_id") for item in knowledge_runtime.get("primary_knowledge", []) if isinstance(item, dict)],
+        knowledge_secondary_ids=[item.get("knowledge_id") for item in knowledge_runtime.get("secondary_knowledge", []) if isinstance(item, dict)],
+        knowledge_next_gap=knowledge_next_gap or {},
+        clarification_handoff_type=clarification_handoff.get("handoff_type") or "",
+        upstream_source=clarification_handoff.get("source_authority") or "",
     )
 
 
