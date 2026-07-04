@@ -7,6 +7,7 @@ from uuid import uuid4
 from brain.evidence_runtime import build_evidence_runtime
 from brain.evidence_gap_runtime import build_evidence_gap_runtime
 from brain.knowledge_runtime import build_knowledge_runtime
+from brain.knowledge_skill_bridge import build_knowledge_skill_bridge
 from brain.perspective_runtime import build_perspective_runtime
 from brain.truth_runtime import build_truth_runtime
 
@@ -561,5 +562,43 @@ def build_business_situation(
             "canonical_entities": canonical_entities or {},
             "extracted_entities": extracted_entities or {},
         },
+    )
+    workflow_state = _as_dict(context.get("workflow_intelligence"))
+    workflow_owned_fields = []
+    if workflow_state.get("workflow_admission_gate", {}).get("admitted") or workflow_state.get("workflow_action") in {"start_new", "continue", "complete"}:
+        workflow_owned_fields = _as_list(workflow_state.get("required_entities")) or _as_list(workflow_state.get("missing_entities"))
+    payload["diagnostics"]["knowledge_skill_bridge"] = build_knowledge_skill_bridge(
+        {
+            "current_message": user_message,
+            "normalized_message": user_message,
+            "active_topic": payload.get("business_topic"),
+            "conversation_context": {
+                "conversation_understanding": understanding,
+                "business_context": context,
+                "intent_resolution": intent,
+                "conversation_memory": memory_context,
+            },
+            "selected_frame": payload["diagnostics"]["perspective"].get("selected_frame"),
+            "candidate_frames": payload["diagnostics"]["perspective"].get("candidate_frames") or [],
+            "knowledge_runtime_result": payload["diagnostics"]["knowledge"],
+            "evidence_runtime_result": evidence_runtime,
+            "truth_runtime_result": truth_runtime,
+            "clarification_state": {},
+            "workflow_state": {
+                "workflow_admitted": bool(workflow_state.get("workflow_admission_gate", {}).get("admitted")),
+                "workflow_id": workflow_state.get("workflow_id") or workflow_state.get("workflow"),
+                "workflow_owned_fields": workflow_owned_fields,
+            },
+            "business_context": {
+                "business_model": (
+                    payload["diagnostics"]["knowledge"].get("available_metrics", {}).get("business_model", {}).get("value")
+                    or payload["diagnostics"]["knowledge"].get("incomplete_metrics", {}).get("business_model", {}).get("value")
+                ),
+                "business_type": context.get("business_type"),
+            },
+            "product_context": {"product": context.get("current_product")},
+            "user_goal": resolved_intent,
+            "workflow_owned_fields": workflow_owned_fields,
+        }
     )
     return payload

@@ -325,6 +325,68 @@ class CognitiveAuthorityAudit:
     knowledge_gap_prioritization_consulted: bool = False
     knowledge_gap_selected: bool = False
     knowledge_gap_priority_tier: str = ""
+    knowledge_skill_bridge_consulted: bool = False
+    knowledge_skill_bridge_available: bool = False
+    bridge_status: str = ""
+    candidate_skill_count: int = 0
+    primary_skill_candidate: str | None = None
+    secondary_skill_candidates: list = field(default_factory=list)
+    deferred_skill_candidates: list = field(default_factory=list)
+    excluded_skill_count: int = 0
+    skill_selection_status: str = ""
+    skill_selection_reason: str = ""
+    skill_relevance_strength: str = ""
+    skill_readiness_strength: str = ""
+    skill_reference_validation_consulted: bool = False
+    skill_reference_validation_status: str = ""
+    skill_reference_error_count: int = 0
+    skill_reference_warning_count: int = 0
+    canonical_reference_valid: bool = False
+    authority_scope_valid: bool = False
+    skill_applicability_evaluated: bool = False
+    skill_applicability_status: str = ""
+    skill_readiness_evaluated: bool = False
+    skill_readiness_status: str = ""
+    skill_required_evidence_count: int = 0
+    skill_missing_required_evidence: list = field(default_factory=list)
+    skill_conflicting_evidence: list = field(default_factory=list)
+    skill_stale_evidence: list = field(default_factory=list)
+    skill_next_gap: dict = field(default_factory=dict)
+    shared_gap_created: bool = False
+    shared_gap_origin_layers: list = field(default_factory=list)
+    shared_gap_owner: str = ""
+    legacy_compatibility_consulted: bool = False
+    legacy_skill_detected: bool = False
+    legacy_skill_classification: str = ""
+    legacy_skill_selected: bool = False
+    legacy_fallback_used: bool = False
+    legacy_primary_prevented: bool = False
+    canonical_replacement_found: bool = False
+    legacy_inference_used: bool = False
+    legacy_inference_confidence: str = ""
+    legacy_authority_restricted: bool = False
+    silent_upgrade_prevented: bool = True
+    skill_redundancy_detected: bool = False
+    skill_redundancy_resolved: bool = False
+    skill_dependency_order_applied: bool = False
+    generalist_skill_suppressed: bool = False
+    workflow_coordination_consulted: bool = False
+    workflow_field_overlap_detected: bool = False
+    workflow_field_overlap_suppressed: bool = False
+    workflow_ownership_preserved: bool = False
+    skill_to_clarification_handoff_created: bool = False
+    skill_to_judgment_handoff_prepared: bool = False
+    judgment_handoff_ready: bool = False
+    planner_handoff_blocked: bool = True
+    response_owner_selected: str = ""
+    authority_trace_complete: bool = False
+    authority_conflict_detected: bool = False
+    authority_conflict_blocked: bool = False
+    cognitive_stop_condition: str = ""
+    skill_execution_triggered: bool = False
+    judgment_produced: bool = False
+    decision_made: bool = False
+    planner_invoked: bool = False
     clarification_handoff_created: bool = False
     clarification_handoff_type: str = ""
     clarification_question_intent: str = ""
@@ -734,9 +796,18 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
     clarification_authority = _as_dict(route.get("clarification_authority"))
     business_situation = _as_dict(route.get("business_situation") or planner.get("business_situation"))
     knowledge_runtime = _as_dict(_as_dict(business_situation.get("diagnostics")).get("knowledge"))
+    knowledge_skill_bridge = _as_dict(_as_dict(business_situation.get("diagnostics")).get("knowledge_skill_bridge"))
     knowledge_diagnostics = _as_dict(knowledge_runtime.get("diagnostics"))
     knowledge_next_gap = _as_dict(knowledge_runtime.get("next_knowledge_gap"))
     clarification_handoff = _as_dict(knowledge_runtime.get("clarification_handoff"))
+    primary_skill = _as_dict(knowledge_skill_bridge.get("primary_skill_candidate"))
+    primary_readiness = _as_dict(primary_skill.get("evidence_readiness_result"))
+    primary_applicability = _as_dict(primary_skill.get("applicability_result"))
+    next_shared_gap = _as_dict(knowledge_skill_bridge.get("next_shared_gap"))
+    bridge_workflow = _as_dict(knowledge_skill_bridge.get("workflow_coordination"))
+    bridge_judgment = _as_dict(knowledge_skill_bridge.get("judgment_handoff"))
+    bridge_planner = _as_dict(knowledge_skill_bridge.get("planner_handoff"))
+    bridge_issues = _as_list(primary_skill.get("validation_issues"))
     user_message = str(_first_present(overrides.get("user_message"), route.get("user_message"), understanding.get("raw_text"), default="") or "")
     selected_intent = _first_present(overrides.get("selected_intent"), intent_resolution.get("resolved_intent"), default=None)
     selected_workflow = _first_present(
@@ -874,6 +945,52 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
         knowledge_gap_prioritization_consulted=bool(knowledge_runtime),
         knowledge_gap_selected=bool(knowledge_next_gap),
         knowledge_gap_priority_tier=knowledge_next_gap.get("priority_tier") or "",
+        knowledge_skill_bridge_consulted=bool(knowledge_skill_bridge.get("bridge_consulted")),
+        knowledge_skill_bridge_available=bool(knowledge_skill_bridge),
+        bridge_status=knowledge_skill_bridge.get("bridge_status") or "",
+        candidate_skill_count=len(_as_list(knowledge_skill_bridge.get("candidate_skills"))),
+        primary_skill_candidate=primary_skill.get("skill_id"),
+        secondary_skill_candidates=[item.get("skill_id") for item in _as_list(knowledge_skill_bridge.get("secondary_skill_candidates")) if isinstance(item, dict)],
+        deferred_skill_candidates=[item.get("skill_id") for item in _as_list(knowledge_skill_bridge.get("deferred_skill_candidates")) if isinstance(item, dict)],
+        excluded_skill_count=len(_as_list(knowledge_skill_bridge.get("excluded_skill_candidates"))),
+        skill_selection_status="PRIMARY_SELECTED_BUT_BLOCKED" if knowledge_skill_bridge.get("bridge_status") == "PRIMARY_SKILL_SELECTED_BUT_BLOCKED" else "PRIMARY_SELECTED" if primary_skill else "NO_SAFE_PRIMARY_CANDIDATE",
+        skill_selection_reason=primary_skill.get("selection_reason") or knowledge_skill_bridge.get("bridge_status") or "",
+        skill_relevance_strength=primary_skill.get("relevance_strength") or "",
+        skill_readiness_strength=primary_skill.get("readiness_strength") or "",
+        skill_reference_validation_consulted=bool(knowledge_skill_bridge),
+        skill_reference_validation_status=primary_skill.get("reference_validation_status") or "",
+        skill_reference_error_count=len([item for item in bridge_issues if isinstance(item, dict) and item.get("severity") == "ERROR"]),
+        skill_reference_warning_count=len([item for item in bridge_issues if isinstance(item, dict) and item.get("severity") == "WARNING"]),
+        canonical_reference_valid=bool(primary_skill and primary_skill.get("reference_validation_status") == "VALID"),
+        authority_scope_valid=bool(primary_skill and primary_skill.get("authority_scope")),
+        skill_applicability_evaluated=bool(primary_applicability),
+        skill_applicability_status=primary_applicability.get("status") or "",
+        skill_readiness_evaluated=bool(primary_readiness),
+        skill_readiness_status=primary_readiness.get("status") or "",
+        skill_required_evidence_count=len(_as_list(primary_readiness.get("required_evidence"))),
+        skill_missing_required_evidence=_as_list(primary_readiness.get("missing_required_evidence")),
+        skill_conflicting_evidence=_as_list(primary_readiness.get("conflicting_required_evidence")),
+        skill_stale_evidence=_as_list(primary_readiness.get("stale_required_evidence")),
+        skill_next_gap=_as_dict(primary_readiness.get("next_evidence_gap")),
+        shared_gap_created=bool(next_shared_gap),
+        shared_gap_origin_layers=_as_list(next_shared_gap.get("origin_layers")),
+        shared_gap_owner=next_shared_gap.get("question_owner") or "",
+        legacy_compatibility_consulted=True,
+        workflow_coordination_consulted=bool(bridge_workflow),
+        workflow_field_overlap_detected=bool(bridge_workflow.get("overlapping_skill_fields")),
+        workflow_field_overlap_suppressed=bool(bridge_workflow.get("suppressed_skill_questions")),
+        workflow_ownership_preserved=bool(bridge_workflow.get("coordination_status") in {"WORKFLOW_OWNS_COLLECTION", "SKILL_SUPPORTS_WORKFLOW", "NO_ACTIVE_WORKFLOW"}),
+        skill_to_clarification_handoff_created=bool(knowledge_skill_bridge.get("clarification_handoff")),
+        skill_to_judgment_handoff_prepared=bool(bridge_judgment),
+        judgment_handoff_ready=bridge_judgment.get("ready_for_judgment") == "READY_FOR_JUDGMENT",
+        planner_handoff_blocked=not bool(bridge_planner.get("planning_allowed")),
+        response_owner_selected="CLARIFICATION_AUTHORITY" if clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION" else "WORKFLOW" if admitted else "SYSTEM",
+        authority_trace_complete=bool(knowledge_skill_bridge.get("authority_trace")),
+        cognitive_stop_condition=knowledge_skill_bridge.get("bridge_status") or "",
+        skill_execution_triggered=False,
+        judgment_produced=False,
+        decision_made=False,
+        planner_invoked=False,
         clarification_handoff_created=bool(clarification_handoff and clarification_handoff.get("handoff_type") != "NO_CLARIFICATION_NEEDED"),
         clarification_handoff_type=clarification_handoff.get("handoff_type") or "",
         clarification_question_intent=clarification_handoff.get("question_intent") or "",

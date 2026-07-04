@@ -19,6 +19,7 @@ COGNITIVE_LAYERS = (
     "Evidence Gap",
     "Perspective",
     "Knowledge",
+    "Knowledge-Skill Bridge",
     "Business Judgment",
     "Decision",
 )
@@ -320,6 +321,65 @@ def _knowledge_layer(business_situation: dict) -> dict:
     )
 
 
+def _knowledge_skill_bridge_layer(business_situation: dict) -> dict:
+    bridge = _as_dict(_as_dict(business_situation.get("diagnostics")).get("knowledge_skill_bridge"))
+    primary = _as_dict(bridge.get("primary_skill_candidate"))
+    readiness = _as_dict(primary.get("evidence_readiness_result"))
+    applicability = _as_dict(primary.get("applicability_result"))
+    workflow = _as_dict(bridge.get("workflow_coordination"))
+    planner = _as_dict(bridge.get("planner_handoff"))
+    judgment = _as_dict(bridge.get("judgment_handoff"))
+    next_gap = _as_dict(bridge.get("next_shared_gap"))
+    return _layer(
+        name="Knowledge-Skill Bridge",
+        runtime_state={
+            "selected_knowledge": bridge.get("selected_knowledge_ids") or [],
+            "candidate_skills": [item.get("skill_id") for item in _as_list(bridge.get("candidate_skills")) if isinstance(item, dict)],
+            "primary_skill": primary.get("skill_id"),
+            "secondary_skills": [item.get("skill_id") for item in _as_list(bridge.get("secondary_skill_candidates")) if isinstance(item, dict)],
+            "deferred_skills": [item.get("skill_id") for item in _as_list(bridge.get("deferred_skill_candidates")) if isinstance(item, dict)],
+            "excluded_skill_count": len(_as_list(bridge.get("excluded_skill_candidates"))),
+            "reference_validation": primary.get("reference_validation_status"),
+            "validation_issues": primary.get("validation_issues") or [],
+            "authority_scope": primary.get("authority_scope") or {},
+            "applicability": applicability,
+            "evidence_readiness": readiness.get("status"),
+            "required_evidence": readiness.get("required_evidence") or [],
+            "satisfied_evidence": readiness.get("available_required_evidence") or [],
+            "incomplete_evidence": readiness.get("incomplete_required_evidence") or [],
+            "missing_evidence": readiness.get("missing_required_evidence") or [],
+            "conflicting_evidence": readiness.get("conflicting_required_evidence") or [],
+            "stale_evidence": readiness.get("stale_required_evidence") or [],
+            "workflow_owned_evidence": readiness.get("workflow_owned_evidence") or [],
+            "shared_gaps": bridge.get("merged_evidence_gaps") or [],
+            "next_shared_gap": next_gap,
+            "question_owner": next_gap.get("question_owner"),
+            "legacy_classification": "",
+            "legacy_fallback": bridge.get("bridge_status") == "LEGACY_FALLBACK_SELECTED",
+            "replacement_mapping": {},
+            "redundancy_group": primary.get("redundancy_group"),
+            "dependency_stage": primary.get("stage"),
+            "selection_reason": primary.get("selection_reason"),
+            "chosen_over": [item.get("skill_id") for item in _as_list(bridge.get("secondary_skill_candidates")) if isinstance(item, dict)],
+            "workflow_coordination": workflow,
+            "response_owner": "CLARIFICATION_AUTHORITY" if bridge.get("clarification_handoff") else "SYSTEM",
+            "judgment_eligibility": judgment.get("ready_for_judgment"),
+            "planner_eligibility": planner,
+            "authority_trace": bridge.get("authority_trace") or {},
+            "stop_condition": bridge.get("bridge_status"),
+            "registry_versions": bridge.get("registry_versions") or {},
+        },
+        diagnostics={
+            "bridge_consulted": bridge.get("bridge_consulted"),
+            "bridge_status": bridge.get("bridge_status"),
+            "constitutional_invariants": bridge.get("constitutional_invariants") or {},
+        },
+        confidence=primary.get("support_strength"),
+        source="knowledge_skill_bridge",
+        status="observed" if bridge else "not_available",
+    )
+
+
 def _placeholder_layer(name: str) -> dict:
     return _layer(
         name=name,
@@ -462,6 +522,7 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         _evidence_gap_layer(business_situation),
         _perspective_layer(business_situation),
         _knowledge_layer(business_situation),
+        _knowledge_skill_bridge_layer(business_situation),
         _placeholder_layer("Business Judgment"),
         _placeholder_layer("Decision"),
     ]

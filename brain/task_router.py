@@ -25,6 +25,7 @@ from brain.business_intelligence_bridge import (
     inject_business_intelligence,
     run_business_intelligence_bridge,
 )
+from brain.knowledge_skill_bridge import build_knowledge_skill_bridge
 from brain.business_knowledge_runtime import (
     KNOWLEDGE_CONTEXT_VERSION,
     KNOWLEDGE_RUNTIME_SOURCE,
@@ -262,6 +263,22 @@ def _workflow_candidate_for_admission(plan: dict | None, intent_resolution: dict
     planner_workflow = (plan or {}).get("workflow")
     resolver_workflow = (intent_resolution or {}).get("resolved_workflow")
     return planner_workflow or resolver_workflow
+
+
+def _workflow_owned_metric_fields(workflow: dict | None) -> list[str]:
+    mapping = {
+        "price": "selling_price",
+        "selling_price": "selling_price",
+        "cost": "unit_cost",
+        "unit_cost": "unit_cost",
+        "unit_cost_per_unit": "unit_cost",
+    }
+    fields = []
+    for value in (workflow or {}).get("required_entities") or []:
+        fields.append(mapping.get(str(value), str(value)))
+    for value in (workflow or {}).get("missing_entities") or []:
+        fields.append(mapping.get(str(value), str(value)))
+    return sorted({field for field in fields if field})
 
 
 def _startup_cost_knowledge_context(text: str) -> bool:
@@ -894,6 +911,44 @@ def build_task_route(application_state, user_message) -> dict:
     })
     evidence_gap = (business_situation.get("diagnostics") or {}).get("evidence_gap") or {}
     knowledge_runtime = (business_situation.get("diagnostics") or {}).get("knowledge") or {}
+    workflow_owned_fields = _workflow_owned_metric_fields(workflow_decision)
+    refreshed_bridge = build_knowledge_skill_bridge(
+        {
+            "current_message": observed_user_message,
+            "normalized_message": user_message,
+            "active_topic": business_situation.get("business_topic"),
+            "conversation_context": {
+                "conversation_understanding": interpretation,
+                "business_context": business_context,
+                "intent_resolution": intent_resolution,
+                "conversation_memory": memory_context,
+            },
+            "selected_frame": ((business_situation.get("diagnostics") or {}).get("perspective") or {}).get("selected_frame"),
+            "candidate_frames": ((business_situation.get("diagnostics") or {}).get("perspective") or {}).get("candidate_frames") or [],
+            "knowledge_runtime_result": knowledge_runtime,
+            "evidence_runtime_result": (business_situation.get("diagnostics") or {}).get("evidence") or {},
+            "truth_runtime_result": (business_situation.get("diagnostics") or {}).get("truth") or {},
+            "workflow_state": {
+                "workflow_admitted": bool(workflow_admission_gate.get("admitted")),
+                "workflow_id": workflow_decision.get("workflow") or workflow_decision.get("workflow_id") or workflow_admission_gate.get("workflow_candidate"),
+                "workflow_owned_fields": workflow_owned_fields,
+            },
+            "business_context": {
+                "business_model": (
+                    knowledge_runtime.get("available_metrics", {}).get("business_model", {}).get("value")
+                    or knowledge_runtime.get("incomplete_metrics", {}).get("business_model", {}).get("value")
+                ),
+                "business_type": business_context.get("business_type"),
+            },
+            "product_context": {"product": business_context.get("current_product")},
+            "user_goal": intent_resolution.get("resolved_intent") or business_intent.get("detected_intent"),
+            "workflow_owned_fields": workflow_owned_fields,
+        }
+    )
+    business_situation.setdefault("diagnostics", {})["knowledge_skill_bridge"] = refreshed_bridge
+    planner_situation_for_bridge = (route.get("planner_output") or {}).get("business_situation")
+    if isinstance(planner_situation_for_bridge, dict):
+        planner_situation_for_bridge.setdefault("diagnostics", {})["knowledge_skill_bridge"] = refreshed_bridge
     clarification_authority = build_clarification_response(
         user_message=observed_user_message,
         normalized_user_message=user_message,

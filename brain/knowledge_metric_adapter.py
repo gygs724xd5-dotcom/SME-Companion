@@ -175,7 +175,11 @@ def _extract_text_values(text: str, metrics: dict[str, list[CanonicalMetricValue
     if any(token in compact for token in ("ทำจากบ้าน", "homebased", "จากบ้าน")):
         _add(metrics, _metric("location_model", "home_based", text, value_type="category", missing=[]))
     if period:
+        if "output_quantity" in metrics:
+            _add(metrics, _metric("output_time_period", period, text, value_type="period", missing=[]))
         _add(metrics, _metric("analysis_timeframe", period, text, value_type="period", missing=[]))
+    if any(token in compact for token in ("เทียบเดือนนี้กับเดือนที่แล้ว", "เดือนนี้กับเดือนที่แล้ว", "comparethismonthlastmonth")):
+        _add(metrics, _metric("analysis_timeframe", "this_month_vs_last_month", text, value_type="comparison_period", missing=[]))
 
 
 def _metric_from_structured(metric_id: str, value: Any, source: str) -> CanonicalMetricValue:
