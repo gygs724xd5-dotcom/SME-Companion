@@ -5,6 +5,10 @@ import json
 
 from brain.business_situation import build_business_situation
 from brain.brain_observatory import build_brain_observatory
+from brain.cognitive_authority_audit import (
+    attach_cognitive_authority_audit,
+    build_cognitive_authority_audit,
+)
 from brain.business_workflow_engine import decide_business_workflow
 from brain.conversation_manager import active_workflow_state, planner_locked, release_workflow_domain
 from brain.business_context_engine import build_business_context, sanitize_user_context_text
@@ -776,7 +780,7 @@ def build_task_route(application_state, user_message) -> dict:
     llm_decision = decide_llm_usage(llm_reasoning_context)
     llm_needed = bool(llm_decision.get("should_use_llm"))
 
-    return _with_response_gate({
+    route = _with_response_gate({
         "planner_output": plan,
         "business_situation": business_situation,
         "conversation_understanding": interpretation,
@@ -816,6 +820,7 @@ def build_task_route(application_state, user_message) -> dict:
         "placeholders": dict(PLACEHOLDER_ENGINES),
         "planner_locked": planner_lock_active,
     })
+    return attach_cognitive_authority_audit(route)
 
 
 def _with_diagnostic_groups(diagnostics: dict) -> dict:
@@ -955,6 +960,23 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "diagnostic_only": diagnostics.get("perspective_diagnostic_only"),
             "runtime_only": diagnostics.get("perspective_runtime_only"),
         },
+        "Cognitive Authority": {
+            "winning_authority": diagnostics.get("cognitive_authority_winning_authority"),
+            "winning_stage": diagnostics.get("cognitive_authority_winning_stage"),
+            "selected_intent": diagnostics.get("cognitive_authority_selected_intent"),
+            "selected_workflow": diagnostics.get("cognitive_authority_selected_workflow"),
+            "selected_response_mode": diagnostics.get("cognitive_authority_selected_response_mode"),
+            "workflow_admitted": diagnostics.get("cognitive_authority_workflow_admitted"),
+            "workflow_admission_reason": diagnostics.get("cognitive_authority_workflow_admission_reason"),
+            "cognitive_runtime_consulted": diagnostics.get("cognitive_authority_runtime_consulted"),
+            "cognitive_runtime_authoritative": diagnostics.get("cognitive_authority_runtime_authoritative"),
+            "fallback_selected": diagnostics.get("cognitive_authority_fallback_selected"),
+            "response_source": diagnostics.get("cognitive_authority_response_source"),
+            "commit_source": diagnostics.get("cognitive_authority_commit_source"),
+            "authority_conflicts": diagnostics.get("cognitive_authority_conflicts"),
+            "authority_chain": diagnostics.get("cognitive_authority_chain"),
+            "audit": diagnostics.get("cognitive_authority_audit"),
+        },
         "Business Knowledge": {
             "registry_version": diagnostics.get("registry_version"),
             "registered_domains": diagnostics.get("registered_domains"),
@@ -1093,6 +1115,11 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     response_envelope_audit = response_envelope_diagnostics(response_envelope)
     business_situation = route.get("business_situation") or (route.get("planner_output") or {}).get("business_situation") or {}
     business_situation_diagnostics = business_situation.get("diagnostics") or {}
+    cognitive_authority_audit = (
+        business_situation_diagnostics.get("cognitive_authority_audit")
+        or route.get("cognitive_authority_audit")
+        or build_cognitive_authority_audit(route)
+    )
     evidence_runtime = business_situation_diagnostics.get("evidence") or {}
     evidence_diagnostics = evidence_runtime.get("evidence_diagnostics") or {}
     truth_runtime = business_situation_diagnostics.get("truth") or {}
@@ -1118,6 +1145,24 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "material_uncertainty_count": len(business_situation.get("material_uncertainty") or []),
         "potential_business_risks": business_situation.get("potential_business_risks") or [],
         "potential_opportunities": business_situation.get("potential_opportunities") or [],
+        "cognitive_authority_audit": cognitive_authority_audit,
+        "cognitive_authority_audit_created": bool(cognitive_authority_audit.get("audit_version")),
+        "cognitive_authority_audit_version": cognitive_authority_audit.get("audit_version"),
+        "cognitive_authority_winning_authority": cognitive_authority_audit.get("winning_authority"),
+        "cognitive_authority_winning_stage": cognitive_authority_audit.get("winning_stage"),
+        "cognitive_authority_selected_intent": cognitive_authority_audit.get("selected_intent"),
+        "cognitive_authority_selected_workflow": cognitive_authority_audit.get("selected_workflow"),
+        "cognitive_authority_selected_response_mode": cognitive_authority_audit.get("selected_response_mode"),
+        "cognitive_authority_workflow_admitted": bool(cognitive_authority_audit.get("workflow_admitted")),
+        "cognitive_authority_workflow_admission_reason": cognitive_authority_audit.get("workflow_admission_reason"),
+        "cognitive_authority_runtime_consulted": bool(cognitive_authority_audit.get("cognitive_runtime_consulted")),
+        "cognitive_authority_runtime_authoritative": bool(cognitive_authority_audit.get("cognitive_runtime_authoritative")),
+        "cognitive_authority_fallback_selected": bool(cognitive_authority_audit.get("fallback_selected")),
+        "cognitive_authority_response_source": cognitive_authority_audit.get("response_source"),
+        "cognitive_authority_commit_source": cognitive_authority_audit.get("commit_source"),
+        "cognitive_authority_conflicts": cognitive_authority_audit.get("authority_conflicts") or [],
+        "cognitive_authority_chain": cognitive_authority_audit.get("authority_chain") or [],
+        "cognitive_authority_constitutional_invariants": cognitive_authority_audit.get("constitutional_invariants") or {},
         "evidence_runtime": evidence_runtime,
         "evidence_runtime_created": bool(evidence_diagnostics.get("evidence_runtime_created")),
         "evidence_runtime_version": evidence_diagnostics.get("evidence_runtime_version") or evidence_runtime.get("version"),

@@ -89,6 +89,7 @@ from brain.reasoning_engine import build_reasoning
 from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.response_intelligence_engine import guard_response, select_final_response, select_planner_first_response
 from brain.response_commit_boundary import commit_response_boundary
+from brain.cognitive_authority_audit import attach_cognitive_authority_audit, cognitive_authority_trace
 from brain.response_transformation_engine import (
     build_response_memory,
 )
@@ -812,6 +813,35 @@ def _source_when_workflow_response_blocked(route: dict | None) -> str:
     return "direct_conversation_response"
 
 
+def _refresh_cognitive_authority_audit(**overrides) -> dict:
+    route = st.session_state.get("last_task_route") or {}
+    if not isinstance(route, dict) or not route:
+        return {}
+    attach_cognitive_authority_audit(route, **overrides)
+    st.session_state["last_task_route"] = route
+    return (route.get("cognitive_authority_audit") or {})
+
+
+def _print_cognitive_authority_trace(route: dict | None) -> None:
+    trace = cognitive_authority_trace(route or {})
+    print("========== COGNITIVE AUTHORITY TRACE ==========")
+    print("user_message:", trace.get("user_message"))
+    print("conversation_understanding:", trace.get("conversation_understanding"))
+    print("intent_resolution:", trace.get("intent_resolution"))
+    print("planner_authority:", trace.get("planner_authority"))
+    print("router_authority:", trace.get("router_authority"))
+    print("workflow_candidate:", trace.get("workflow_candidate"))
+    print("workflow_admitted:", trace.get("workflow_admitted"))
+    print("response_mode:", trace.get("response_mode"))
+    print("cognitive_runtime_consulted:", trace.get("cognitive_runtime_consulted"))
+    print("cognitive_runtime_authoritative:", trace.get("cognitive_runtime_authoritative"))
+    print("winning_authority:", trace.get("winning_authority"))
+    print("authority_conflicts:", trace.get("authority_conflicts"))
+    print("response_source:", trace.get("response_source"))
+    print("commit_source:", trace.get("commit_source"))
+    print("==============================================")
+
+
 def _workflow_response_source_for_current_route() -> str:
     route = st.session_state.get("last_task_route") or {}
     if not route:
@@ -827,6 +857,7 @@ def _workflow_response_source_for_current_route() -> str:
     print("intent_resolution:", route.get("intent_resolution"))
     print("planner_output:", route.get("planner_output"))
     print("=================================================")
+    _print_cognitive_authority_trace(route)
 
     if gate.get("workflow_response_allowed"):
         return "workflow_response"
@@ -941,6 +972,14 @@ def commit_assistant_turn(
         business_topic=business_topic,
         response_metadata=response_metadata,
         assistant_message=assistant_message,
+    )
+    _refresh_cognitive_authority_audit(
+        response_source=(response_metadata or {}).get("response_source"),
+        fallback_selected="fallback" in str((response_metadata or {}).get("response_source") or ""),
+        fallback_source=(response_metadata or {}).get("response_source")
+        if "fallback" in str((response_metadata or {}).get("response_source") or "")
+        else None,
+        commit_source="response_commit_boundary",
     )
     safe_set_session_state("application_state", result["application_state"])
     _sync_global_application_state()
@@ -1239,6 +1278,18 @@ def _finalize_ai_pipeline_debug_trace(
         "rewrite_mode",
         "translation_mode",
     ) if key in workflow_extra}}
+    authority_audit = _refresh_cognitive_authority_audit(
+        response_source="generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source,
+        selected_response_mode=response_mode,
+        response_mode_selected_by=workflow_extra.get("response_builder")
+        or workflow_extra.get("reply_builder")
+        or workflow_extra.get("workflow_handler")
+        or "response_pipeline",
+        fallback_selected=_is_generic_fallback_reply(final_reply) or "fallback" in str(response_source or ""),
+        fallback_source=response_source if "fallback" in str(response_source or "") else None,
+        commit_source=(route.get("cognitive_authority_audit") or {}).get("commit_source"),
+    )
+    response_audit["cognitive_authority_audit"] = authority_audit
     add_pipeline_event(
         "response",
         "_finalize_ai_pipeline_debug_trace",
@@ -1280,6 +1331,7 @@ def _finalize_ai_pipeline_debug_trace(
         response_audit=response_audit,
     )
     if st.session_state.get("developer_mode"):
+        _print_cognitive_authority_trace(st.session_state.get("last_task_route") or {})
         print("AI Pipeline Debug Trace:")
         print(json.dumps(trace, ensure_ascii=False, indent=2, default=str))
     return trace

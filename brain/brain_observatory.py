@@ -317,6 +317,36 @@ def _diagnostics_timeline(layers: list[dict]) -> list[dict]:
     return timeline
 
 
+def _cognitive_authority_group(route: dict, business_situation: dict) -> dict:
+    diagnostics = _as_dict(business_situation.get("diagnostics"))
+    audit = _as_dict(diagnostics.get("cognitive_authority_audit")) or _as_dict(route.get("cognitive_authority_audit"))
+    if not audit:
+        return {
+            "status": "not_available",
+            "diagnostic_only": True,
+            "runtime_only": True,
+        }
+    return {
+        "status": "observed",
+        "winning_authority": audit.get("winning_authority"),
+        "winning_stage": audit.get("winning_stage"),
+        "selected_intent": audit.get("selected_intent"),
+        "selected_workflow": audit.get("selected_workflow"),
+        "selected_response_mode": audit.get("selected_response_mode"),
+        "workflow_admitted": audit.get("workflow_admitted"),
+        "workflow_admission_reason": audit.get("workflow_admission_reason"),
+        "cognitive_runtime_consulted": audit.get("cognitive_runtime_consulted"),
+        "cognitive_runtime_authoritative": audit.get("cognitive_runtime_authoritative"),
+        "fallback_selected": audit.get("fallback_selected"),
+        "response_source": audit.get("response_source"),
+        "commit_source": audit.get("commit_source"),
+        "authority_conflicts": audit.get("authority_conflicts") or [],
+        "authority_chain": audit.get("authority_chain") or [],
+        "diagnostic_only": True,
+        "runtime_only": True,
+    }
+
+
 def build_brain_observatory(task_route: dict | None) -> dict:
     """Build a developer-only observability projection of cognitive runtime state.
 
@@ -343,6 +373,7 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         _placeholder_layer("Decision"),
     ]
     constitution = _constitution_monitor({"route": route, "layers": layers})
+    cognitive_authority = _cognitive_authority_group(route, business_situation)
     return {
         "observatory_created": True,
         "observatory_version": BRAIN_OBSERVATORY_VERSION,
@@ -354,6 +385,7 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         "layers": layers,
         "layer_order": list(COGNITIVE_LAYERS),
         "constitution_monitor": constitution,
+        "cognitive_authority": cognitive_authority,
         "diagnostics_timeline": _diagnostics_timeline(layers),
         "invariants": {
             "routing_changed": False,
