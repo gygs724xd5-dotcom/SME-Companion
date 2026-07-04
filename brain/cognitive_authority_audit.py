@@ -211,6 +211,8 @@ def _cognitive_runtime_state(business_situation: dict) -> dict:
     gap_missing = _as_list(evidence_gap.get("missing_evidence"))
     next_question = _as_dict(evidence_gap.get("next_best_question"))
     perspective_present = bool(perspective)
+    perspective_frame_confidence = perspective.get("frame_confidence")
+    perspective_selected_frame = perspective.get("selected_frame")
     return {
         "consulted": consulted,
         "authoritative": authoritative,
@@ -223,6 +225,10 @@ def _cognitive_runtime_state(business_situation: dict) -> dict:
         "perspective_present": perspective_present,
         "perspective_diagnostic_only": bool(perspective.get("diagnostic_only") or (_as_dict(perspective.get("diagnostics")).get("diagnostic_only"))),
         "perspective_frame_status": perspective.get("frame_status"),
+        "perspective_selected_frame": perspective_selected_frame,
+        "perspective_candidate_frames": perspective.get("candidate_frames") or [],
+        "perspective_frame_confidence": perspective_frame_confidence,
+        "perspective_classification_performed": bool(perspective.get("classification_performed") or (_as_dict(perspective.get("diagnostics")).get("classification_performed"))),
     }
 
 
@@ -285,6 +291,16 @@ class CognitiveAuthorityAudit:
     cognitive_runtime_consulted: bool = False
     cognitive_runtime_authoritative: bool = False
     cognitive_runtime_override_reason: str = ""
+    perspective_classification_performed: bool = False
+    perspective_selected_frame: str | None = None
+    perspective_candidate_frames: list = field(default_factory=list)
+    perspective_frame_confidence: float = 0.0
+    perspective_frame_status: str | None = None
+    perspective_consulted_by_clarification: bool = False
+    perspective_authoritative_for_framing: bool = False
+    perspective_authoritative_for_routing: bool = False
+    perspective_authoritative_for_workflow: bool = False
+    perspective_authoritative_for_response: bool = False
     fallback_selected: bool = False
     fallback_source: str | None = None
     response_source: str | None = None
@@ -324,6 +340,9 @@ def _constitutional_invariants() -> dict:
         "business_situation_changed": False,
         "cognitive_authority_changed": False,
         "perspective_logic_changed": False,
+        "perspective_classification_changed": True,
+        "perspective_runtime_behavior_changed": True,
+        "clarification_context_changed": True,
         "knowledge_invoked": False,
         "judgment_invoked": False,
         "decision_invoked": False,
@@ -753,6 +772,19 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
         cognitive_runtime_consulted=bool(cognitive["consulted"]),
         cognitive_runtime_authoritative=bool(cognitive["authoritative"]),
         cognitive_runtime_override_reason=cognitive["override_reason"],
+        perspective_classification_performed=bool(cognitive.get("perspective_classification_performed")),
+        perspective_selected_frame=cognitive.get("perspective_selected_frame"),
+        perspective_candidate_frames=cognitive.get("perspective_candidate_frames") or [],
+        perspective_frame_confidence=float(cognitive.get("perspective_frame_confidence") or 0.0),
+        perspective_frame_status=cognitive.get("perspective_frame_status"),
+        perspective_consulted_by_clarification=bool(clarification_authority.get("perspective_consulted")),
+        perspective_authoritative_for_framing=bool(cognitive.get("perspective_selected_frame") and cognitive.get("perspective_selected_frame") != "UNKNOWN_SITUATION"),
+        perspective_authoritative_for_routing=False,
+        perspective_authoritative_for_workflow=False,
+        perspective_authoritative_for_response=bool(
+            clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION"
+            and clarification_authority.get("perspective_used_for_framing")
+        ),
         fallback_selected=fallback_selected,
         fallback_source=fallback_source,
         response_source=response_source,
@@ -819,6 +851,10 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
                 "authoritative": cognitive["authoritative"],
                 "material_uncertainty_present": cognitive["material_uncertainty_present"],
                 "perspective_present": cognitive["perspective_present"],
+                "perspective_classification_performed": cognitive.get("perspective_classification_performed"),
+                "perspective_selected_frame": cognitive.get("perspective_selected_frame"),
+                "perspective_frame_confidence": cognitive.get("perspective_frame_confidence"),
+                "perspective_frame_status": cognitive.get("perspective_frame_status"),
             },
         },
         constitutional_invariants=_constitutional_invariants(),

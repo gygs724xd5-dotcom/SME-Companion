@@ -45,6 +45,11 @@ class ClarificationResult:
     fallback_used: bool = False
     response_source: str | None = None
     selected_response_mode: str | None = None
+    perspective_selected_frame: str | None = None
+    perspective_candidate_frames: list = field(default_factory=list)
+    perspective_frame_confidence: float = 0.0
+    perspective_consulted: bool = False
+    perspective_used_for_framing: bool = False
     version: str = CLARIFICATION_AUTHORITY_VERSION
     diagnostic_only: bool = False
 
@@ -76,6 +81,9 @@ def build_clarification_response(
     text = str(normalized_user_message or user_message or "").strip()
     lowered = text.lower()
     source_layers = _source_layers(business_situation, evidence_gap, gate)
+    perspective = _perspective_context(business_situation)
+    if perspective.get("selected_frame"):
+        source_layers = source_layers + ["perspective"]
     previous_questions = _previous_assistant_questions(application_state, conversation_memory)
     supplied = _supplied_fields(text, application_state, conversation_memory)
 
@@ -119,7 +127,7 @@ def build_clarification_response(
     if _is_analytical_relationship(lowered, gate):
         fields = _remaining(["average_order_value", "revenue", "cost", "promotion", "waste", "timeframe"], supplied)
         question = (
-            "จำนวนลูกค้าที่เพิ่มขึ้นยังไม่ได้เปลี่ยนเป็นกำไรครับ เพื่อดูว่าเกิดจากส่วนไหน "
+            "จำนวนลูกค้าที่เพิ่มขึ้นยังไม่ได้เปลี่ยนเป็นกำไรครับ เพื่อเทียบภาพให้ชัด "
             "ขอข้อมูลยอดขายเฉลี่ยต่อบิล ต้นทุน โปรโมชั่น หรือของเสียของช่วงก่อนกับช่วงปัจจุบันได้ไหมครับ?"
         )
         replacement = "ขอเทียบช่วงก่อนกับช่วงปัจจุบันก่อนครับ ในแต่ละช่วงยอดขายรวม ต้นทุน และโปรโมชั่นประมาณเท่าไรครับ?"
@@ -131,6 +139,7 @@ def build_clarification_response(
             requested_fields=fields or ["revenue", "cost", "timeframe"],
             source_layers=source_layers,
             previous_questions=previous_questions,
+            perspective=perspective,
         )
 
     if gate.get("decision") in {"REJECT_TO_CONVERSATION", "DEFER_FOR_CLARIFICATION"} and _has_partial_business_topic(lowered, gate, business_situation):
@@ -165,7 +174,9 @@ def _specific(
     duplicate_guard_reason: str = "",
     suppressed_question: str = "",
     replacement_question: str = "",
+    perspective: dict | None = None,
 ) -> dict:
+    perspective = perspective or {}
     return _result(
         ClarificationDecision.USE_SPECIFIC_CLARIFICATION,
         reason,
@@ -181,6 +192,11 @@ def _specific(
         response_confidence=0.88,
         response_source=CLARIFICATION_RESPONSE_SOURCE,
         selected_response_mode=SITUATION_AWARE_CLARIFICATION_MODE,
+        perspective_selected_frame=perspective.get("selected_frame"),
+        perspective_candidate_frames=perspective.get("candidate_frames") or [],
+        perspective_frame_confidence=float(perspective.get("frame_confidence") or 0.0),
+        perspective_consulted=bool(perspective),
+        perspective_used_for_framing=bool(_strong_frame(perspective, str(perspective.get("selected_frame") or ""))),
     )
 
 
@@ -193,6 +209,7 @@ def _specific_with_duplicate_guard(
     requested_fields: list[str],
     source_layers: list[str],
     previous_questions: list[str],
+    perspective: dict | None = None,
 ) -> dict:
     duplicate = _similar_question_already_asked(question, previous_questions)
     if duplicate:
@@ -207,6 +224,7 @@ def _specific_with_duplicate_guard(
             duplicate_guard_reason="highest_priority_question_already_asked",
             suppressed_question=question,
             replacement_question=replacement,
+            perspective=perspective,
         )
     return _specific(
         reason=reason,
@@ -215,6 +233,7 @@ def _specific_with_duplicate_guard(
         requested_fields=requested_fields,
         source_layers=source_layers,
         previous_questions=previous_questions,
+        perspective=perspective,
     )
 
 
@@ -238,6 +257,26 @@ def _source_layers(business_situation: dict | None, evidence_gap: dict | None, g
     if evidence_gap:
         layers.append("evidence_gap")
     return layers
+
+
+def _perspective_context(business_situation: dict | None) -> dict:
+    diagnostics = (business_situation or {}).get("diagnostics") or {}
+    perspective = diagnostics.get("perspective") or {}
+    if not isinstance(perspective, dict):
+        return {}
+    return {
+        "selected_frame": perspective.get("selected_frame"),
+        "candidate_frames": perspective.get("candidate_frames") or [],
+        "frame_confidence": float(perspective.get("frame_confidence") or 0.0),
+    }
+
+
+def _strong_frame(perspective: dict | None, frame_id: str) -> bool:
+    perspective = perspective or {}
+    return bool(
+        perspective.get("selected_frame") == frame_id
+        and float(perspective.get("frame_confidence") or 0.0) >= 0.65
+    )
 
 
 def _is_business_profit_assessment(text: str, gate: dict) -> bool:
