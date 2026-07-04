@@ -21,6 +21,11 @@ KNOWN_INTENTS = {
     "analyze_cash_flow_stress",
     "plan_order_fulfillment",
     "calculate_product_margin",
+    "structure_unit_cost_inputs",
+    "analyze_sales_decline",
+    "evaluate_sales_funnel",
+    "identify_dashboard_metrics",
+    "define_dashboard_requirements",
 }
 DERIVED_METRICS_WITH_RULES = {"utilization_rate", "contribution_margin", "gross_margin", "net_margin", "days_of_stock", "contribution_margin_rate"}
 APPROVED_ALIASES = {"payment_timing": "receivable_days", "order_volume": "current_order_volume", "fulfillment_time": "average_fulfillment_time"}
