@@ -4494,6 +4494,61 @@ def _show_chat_companion(
         )
         return
 
+    clarification_authority = task_route.get("clarification_authority") or {}
+    if clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION":
+        reply = _clean_chat_reply(clarification_authority.get("clarification_text"))
+        topic = state.get("current_topic")
+        _update_conversation_state_after_assistant(reply, conversation_intent, topic)
+        assistant_message = {
+            "role": "assistant",
+            "content": reply,
+            "show_business_insights": False,
+        }
+        commit_assistant_turn(
+            reply,
+            intent=conversation_intent,
+            workflow=None,
+            business_topic=topic,
+            response_metadata={
+                "response_source": "clarification_authority",
+                "last_response_empty": not bool(reply),
+                "user_message": user_message,
+            },
+            assistant_message=assistant_message,
+        )
+        finalize_debug(
+            "clarification_authority",
+            reply,
+            {
+                "response_builder": "clarification_authority",
+                "reply_builder": "clarification_authority",
+                "response_generation_mode": "SITUATION_AWARE_CLARIFICATION",
+                "response_reason": clarification_authority.get("reason"),
+                "clarification_authority_used": True,
+                "clarification_reason": clarification_authority.get("reason"),
+                "requested_fields": clarification_authority.get("requested_fields") or [],
+                "generic_fallback_avoided": True,
+            },
+        )
+        add_pipeline_event(
+            "response",
+            "clarification_authority",
+            "assistant message appended",
+            {"response_source": "clarification_authority", "last_response_empty": not bool(reply)},
+        )
+        with st.chat_message("assistant"):
+            _render_assistant_message(reply)
+        add_pipeline_event(
+            "render",
+            "clarification_authority",
+            "assistant rendered",
+            {"response_source": "clarification_authority", "last_response_empty": not bool(reply)},
+        )
+        st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
+        finalize_pipeline_trace()
+        return
+
     active_workflow = state.get("current_workflow")
     detected_workflow = workflow_detection.get("workflow")
     active_workflow_v2_state = state.get("workflow_state_v2") or {}

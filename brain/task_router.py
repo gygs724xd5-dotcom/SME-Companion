@@ -9,6 +9,8 @@ from brain.cognitive_authority_audit import (
     attach_cognitive_authority_audit,
     build_cognitive_authority_audit,
 )
+from brain.clarification_authority import build_clarification_response
+from brain.language_normalization import normalize_user_language
 from brain.business_workflow_engine import decide_business_workflow
 from brain.workflow_admission_gate import (
     WorkflowAdmissionDecision,
@@ -545,6 +547,9 @@ def _with_response_gate(route: dict) -> dict:
 
 def build_task_route(application_state, user_message) -> dict:
     state = application_state if application_state is not None else {}
+    observed_user_message = str(user_message or "")
+    language_normalization = normalize_user_language(observed_user_message)
+    user_message = language_normalization.get("normalized_text") or observed_user_message
     perception_situation_diagnostics = _perception_diagnostics_for_business_situation(state, user_message)
     business_intent = detect_business_intent(user_message)
     entity_result = extract_business_entities(user_message, business_intent.get("detected_intent"))
@@ -827,6 +832,9 @@ def build_task_route(application_state, user_message) -> dict:
     llm_needed = bool(llm_decision.get("should_use_llm"))
 
     route = _with_response_gate({
+        "user_message": observed_user_message,
+        "normalized_user_message": user_message,
+        "language_normalization": language_normalization,
         "planner_output": plan,
         "business_situation": business_situation,
         "conversation_understanding": interpretation,
@@ -867,6 +875,39 @@ def build_task_route(application_state, user_message) -> dict:
         "placeholders": dict(PLACEHOLDER_ENGINES),
         "planner_locked": planner_lock_active,
     })
+    evidence_gap = (business_situation.get("diagnostics") or {}).get("evidence_gap") or {}
+    clarification_authority = build_clarification_response(
+        user_message=observed_user_message,
+        normalized_user_message=user_message,
+        workflow_admission_gate=workflow_admission_gate,
+        business_situation=business_situation,
+        evidence_gap=evidence_gap,
+        conversation_memory=memory_context,
+        application_state=state,
+    )
+    route["clarification_authority"] = clarification_authority
+    situation_targets = [business_situation]
+    planner_situation = (route.get("planner_output") or {}).get("business_situation")
+    if planner_situation is not business_situation:
+        situation_targets.append(planner_situation)
+    for situation_target in situation_targets:
+        if isinstance(situation_target, dict):
+            situation_target.setdefault("diagnostics", {})["language_normalization"] = language_normalization
+            situation_target.setdefault("diagnostics", {})["clarification_authority"] = clarification_authority
+    if clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION":
+        route.update(
+            {
+                "final_response_text": clarification_authority.get("clarification_text"),
+                "response_source": "clarification_authority",
+                "response_type": "situation_aware_clarification",
+                "response_reason": clarification_authority.get("reason"),
+                "selected_response_mode": "SITUATION_AWARE_CLARIFICATION",
+                "clarification_authority_used": True,
+                "clarification_reason": clarification_authority.get("reason"),
+                "requested_fields": clarification_authority.get("requested_fields") or [],
+                "generic_fallback_avoided": True,
+            }
+        )
     return attach_cognitive_authority_audit(route)
 
 
@@ -1017,6 +1058,8 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "diagnostic_only": diagnostics.get("perspective_diagnostic_only"),
             "runtime_only": diagnostics.get("perspective_runtime_only"),
         },
+        "Language Normalization": diagnostics.get("language_normalization") or {},
+        "Clarification Authority": diagnostics.get("clarification_authority") or {},
         "Cognitive Authority": {
             "winning_authority": diagnostics.get("cognitive_authority_winning_authority"),
             "winning_stage": diagnostics.get("cognitive_authority_winning_stage"),
@@ -1031,6 +1074,15 @@ def _with_diagnostic_groups(diagnostics: dict) -> dict:
             "workflow_candidate_deferred": diagnostics.get("cognitive_authority_workflow_candidate_deferred"),
             "workflow_admitted": diagnostics.get("cognitive_authority_workflow_admitted"),
             "workflow_admission_reason": diagnostics.get("cognitive_authority_workflow_admission_reason"),
+            "language_normalization_consulted": diagnostics.get("cognitive_authority_language_normalization_consulted"),
+            "language_normalization_applied": diagnostics.get("cognitive_authority_language_normalization_applied"),
+            "normalized_user_message": diagnostics.get("cognitive_authority_normalized_user_message"),
+            "clarification_authority_consulted": diagnostics.get("cognitive_authority_clarification_authority_consulted"),
+            "clarification_authority_used": diagnostics.get("cognitive_authority_clarification_authority_used"),
+            "clarification_decision": diagnostics.get("cognitive_authority_clarification_decision"),
+            "clarification_reason": diagnostics.get("cognitive_authority_clarification_reason"),
+            "clarification_requested_fields": diagnostics.get("cognitive_authority_clarification_requested_fields"),
+            "generic_fallback_avoided": diagnostics.get("cognitive_authority_generic_fallback_avoided"),
             "cognitive_runtime_consulted": diagnostics.get("cognitive_authority_runtime_consulted"),
             "cognitive_runtime_authoritative": diagnostics.get("cognitive_authority_runtime_authoritative"),
             "fallback_selected": diagnostics.get("cognitive_authority_fallback_selected"),
@@ -1192,6 +1244,8 @@ def developer_diagnostics(task_route: dict | None) -> dict:
     evidence_gap_diagnostics = evidence_gap_runtime.get("diagnostics") or {}
     perspective_runtime = business_situation_diagnostics.get("perspective") or {}
     perspective_diagnostics = perspective_runtime.get("diagnostics") or {}
+    language_normalization = route.get("language_normalization") or business_situation_diagnostics.get("language_normalization") or {}
+    clarification_authority = route.get("clarification_authority") or business_situation_diagnostics.get("clarification_authority") or {}
     brain_observatory = build_brain_observatory(route)
 
     diagnostics = {
@@ -1209,6 +1263,19 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "material_uncertainty_count": len(business_situation.get("material_uncertainty") or []),
         "potential_business_risks": business_situation.get("potential_business_risks") or [],
         "potential_opportunities": business_situation.get("potential_opportunities") or [],
+        "language_normalization": language_normalization,
+        "language_normalization_original_text": language_normalization.get("original_text"),
+        "language_normalization_normalized_text": language_normalization.get("normalized_text"),
+        "language_normalization_applied": bool(language_normalization.get("normalization_count")),
+        "language_normalization_rules": language_normalization.get("normalizations_applied") or [],
+        "clarification_authority": clarification_authority,
+        "clarification_authority_decision": clarification_authority.get("decision"),
+        "clarification_authority_reason": clarification_authority.get("reason"),
+        "clarification_authority_text": clarification_authority.get("clarification_text"),
+        "clarification_authority_requested_fields": clarification_authority.get("requested_fields") or [],
+        "clarification_authority_duplicate_guard_applied": bool(clarification_authority.get("duplicate_guard_applied")),
+        "clarification_authority_response_confidence": clarification_authority.get("response_confidence"),
+        "clarification_authority_fallback_used": bool(clarification_authority.get("fallback_used")),
         "cognitive_authority_audit": cognitive_authority_audit,
         "cognitive_authority_audit_created": bool(cognitive_authority_audit.get("audit_version")),
         "cognitive_authority_audit_version": cognitive_authority_audit.get("audit_version"),
@@ -1225,6 +1292,15 @@ def developer_diagnostics(task_route: dict | None) -> dict:
         "cognitive_authority_workflow_candidate_deferred": bool(cognitive_authority_audit.get("workflow_candidate_deferred")),
         "cognitive_authority_workflow_admitted": bool(cognitive_authority_audit.get("workflow_admitted")),
         "cognitive_authority_workflow_admission_reason": cognitive_authority_audit.get("workflow_admission_reason"),
+        "cognitive_authority_language_normalization_consulted": bool(cognitive_authority_audit.get("language_normalization_consulted")),
+        "cognitive_authority_language_normalization_applied": bool(cognitive_authority_audit.get("language_normalization_applied")),
+        "cognitive_authority_normalized_user_message": cognitive_authority_audit.get("normalized_user_message"),
+        "cognitive_authority_clarification_authority_consulted": bool(cognitive_authority_audit.get("clarification_authority_consulted")),
+        "cognitive_authority_clarification_authority_used": bool(cognitive_authority_audit.get("clarification_authority_used")),
+        "cognitive_authority_clarification_decision": cognitive_authority_audit.get("clarification_decision"),
+        "cognitive_authority_clarification_reason": cognitive_authority_audit.get("clarification_reason"),
+        "cognitive_authority_clarification_requested_fields": cognitive_authority_audit.get("clarification_requested_fields") or [],
+        "cognitive_authority_generic_fallback_avoided": bool(cognitive_authority_audit.get("generic_fallback_avoided")),
         "cognitive_authority_runtime_consulted": bool(cognitive_authority_audit.get("cognitive_runtime_consulted")),
         "cognitive_authority_runtime_authoritative": bool(cognitive_authority_audit.get("cognitive_runtime_authoritative")),
         "cognitive_authority_fallback_selected": bool(cognitive_authority_audit.get("fallback_selected")),

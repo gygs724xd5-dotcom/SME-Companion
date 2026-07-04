@@ -343,6 +343,15 @@ def _cognitive_authority_group(route: dict, business_situation: dict) -> dict:
         "workflow_admitted": audit.get("workflow_admitted"),
         "workflow_admission_reason": audit.get("workflow_admission_reason"),
         "workflow_admission_gate": (_as_dict(audit.get("diagnostic_summary")).get("workflow_admission_gate") or {}),
+        "language_normalization_consulted": audit.get("language_normalization_consulted"),
+        "language_normalization_applied": audit.get("language_normalization_applied"),
+        "normalized_user_message": audit.get("normalized_user_message"),
+        "clarification_authority_consulted": audit.get("clarification_authority_consulted"),
+        "clarification_authority_used": audit.get("clarification_authority_used"),
+        "clarification_decision": audit.get("clarification_decision"),
+        "clarification_reason": audit.get("clarification_reason"),
+        "clarification_requested_fields": audit.get("clarification_requested_fields") or [],
+        "generic_fallback_avoided": audit.get("generic_fallback_avoided"),
         "cognitive_runtime_consulted": audit.get("cognitive_runtime_consulted"),
         "cognitive_runtime_authoritative": audit.get("cognitive_runtime_authoritative"),
         "fallback_selected": audit.get("fallback_selected"),
@@ -382,6 +391,9 @@ def build_brain_observatory(task_route: dict | None) -> dict:
     ]
     constitution = _constitution_monitor({"route": route, "layers": layers})
     cognitive_authority = _cognitive_authority_group(route, business_situation)
+    diagnostics = _as_dict(business_situation.get("diagnostics"))
+    language_normalization = _as_dict(route.get("language_normalization")) or _as_dict(diagnostics.get("language_normalization"))
+    clarification_authority = _as_dict(route.get("clarification_authority")) or _as_dict(diagnostics.get("clarification_authority"))
     return {
         "observatory_created": True,
         "observatory_version": BRAIN_OBSERVATORY_VERSION,
@@ -393,6 +405,22 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         "layers": layers,
         "layer_order": list(COGNITIVE_LAYERS),
         "constitution_monitor": constitution,
+        "language_normalization": {
+            "original_text": language_normalization.get("original_text"),
+            "normalized_text": language_normalization.get("normalized_text"),
+            "normalizations_applied": language_normalization.get("normalizations_applied") or [],
+            "confidence": language_normalization.get("confidence"),
+        },
+        "clarification_authority": {
+            "decision": clarification_authority.get("decision"),
+            "reason": clarification_authority.get("reason"),
+            "clarification_text": clarification_authority.get("clarification_text"),
+            "requested_fields": clarification_authority.get("requested_fields") or [],
+            "source_layers": clarification_authority.get("source_layers") or [],
+            "duplicate_guard_applied": clarification_authority.get("duplicate_guard_applied"),
+            "response_confidence": clarification_authority.get("response_confidence"),
+            "fallback_used": clarification_authority.get("fallback_used"),
+        },
         "cognitive_authority": cognitive_authority,
         "diagnostics_timeline": _diagnostics_timeline(layers),
         "invariants": {

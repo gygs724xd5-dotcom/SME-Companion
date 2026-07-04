@@ -18,6 +18,7 @@ class AuthorityStage(str, Enum):
     PLANNER = "PLANNER"
     ROUTER = "ROUTER"
     WORKFLOW_ADMISSION = "WORKFLOW_ADMISSION"
+    CLARIFICATION_AUTHORITY = "CLARIFICATION_AUTHORITY"
     WORKFLOW_RUNTIME = "WORKFLOW_RUNTIME"
     COGNITIVE_RUNTIME = "COGNITIVE_RUNTIME"
     RESPONSE_GENERATION = "RESPONSE_GENERATION"
@@ -58,6 +59,7 @@ STAGE_ORDER = (
     AuthorityStage.PLANNER,
     AuthorityStage.ROUTER,
     AuthorityStage.WORKFLOW_ADMISSION,
+    AuthorityStage.CLARIFICATION_AUTHORITY,
     AuthorityStage.WORKFLOW_RUNTIME,
     AuthorityStage.COGNITIVE_RUNTIME,
     AuthorityStage.RESPONSE_GENERATION,
@@ -180,7 +182,9 @@ def _workflow_admission_gate(route: dict, workflow: dict) -> dict:
 
 def _response_mode(route: dict, workflow_admitted: bool, fallback_selected: bool) -> tuple[str, str, str, float | None]:
     source = _first_present(route.get("response_source"), route.get("response_source_after_gate"), route.get("response_source_before_gate"), default="")
-    raw_mode = _first_present(route.get("response_mode"), route.get("response_generation_mode"), route.get("reasoning_mode"), default="")
+    raw_mode = _first_present(route.get("selected_response_mode"), route.get("response_mode"), route.get("response_generation_mode"), route.get("reasoning_mode"), default="")
+    if source == "clarification_authority":
+        return "SITUATION_AWARE_CLARIFICATION", "clarification_authority", "Clarification Authority selected a situation-aware clarification.", 0.88
     if fallback_selected or "fallback" in str(source):
         return ResponseMode.FALLBACK.value, "response_pipeline", "fallback response source selected", 0.8
     if workflow_admitted or source == "workflow_response":
@@ -267,6 +271,15 @@ class CognitiveAuthorityAudit:
     workflow_required_entities: list = field(default_factory=list)
     workflow_missing_entities: list = field(default_factory=list)
     workflow_executable: bool = False
+    language_normalization_consulted: bool = False
+    language_normalization_applied: bool = False
+    normalized_user_message: str = ""
+    clarification_authority_consulted: bool = False
+    clarification_authority_used: bool = False
+    clarification_decision: str | None = None
+    clarification_reason: str | None = None
+    clarification_requested_fields: list = field(default_factory=list)
+    generic_fallback_avoided: bool = False
     workflow_started_before_intent_disambiguation: bool = False
     workflow_started_despite_low_understanding_confidence: bool = False
     cognitive_runtime_consulted: bool = False
@@ -291,6 +304,10 @@ def _constitutional_invariants() -> dict:
     return {
         "routing_changed": False,
         "workflow_admission_changed": True,
+        "language_understanding_input_changed": True,
+        "clarification_response_changed": True,
+        "response_source_for_blocked_workflow_changed": True,
+        "generic_fallback_avoidance_changed": True,
         "routing_outcome_for_blocked_workflow_candidates_changed": True,
         "planner_changed": False,
         "planner_logic_changed": False,
@@ -334,6 +351,7 @@ def _records_for_route(
     planner = _as_dict(route.get("planner_output"))
     workflow = _as_dict(route.get("business_workflow"))
     admission_gate = _workflow_admission_gate(route, workflow)
+    clarification = _as_dict(route.get("clarification_authority"))
     gate = {
         "final_response_gate": route.get("final_response_gate"),
         "workflow_response_allowed": route.get("workflow_response_allowed"),
@@ -403,6 +421,22 @@ def _records_for_route(
             confidence=_confidence_score(admission_gate.get("admission_confidence"), workflow.get("workflow_confidence")),
             reason=admission_gate.get("reason") or workflow.get("workflow_reason") or "No workflow admission reason recorded.",
             diagnostic_only=False if admission_gate else True,
+        ),
+        AuthorityDecisionRecord(
+            stage=AuthorityStage.CLARIFICATION_AUTHORITY.value,
+            component="clarification_authority",
+            input_summary={
+                "gate_decision": admission_gate.get("decision"),
+                "gate_reason": admission_gate.get("reason"),
+                "requested_fields": clarification.get("requested_fields") or [],
+            },
+            decision=clarification.get("decision") or "not_consulted",
+            authority_role=AuthorityRole.AUTHORITATIVE.value
+            if clarification.get("decision") == "USE_SPECIFIC_CLARIFICATION"
+            else AuthorityRole.NOT_APPLICABLE.value,
+            confidence=_confidence_score(clarification.get("response_confidence")),
+            reason=clarification.get("reason") or "Clarification Authority not used.",
+            diagnostic_only=False if clarification.get("decision") == "USE_SPECIFIC_CLARIFICATION" else True,
         ),
         AuthorityDecisionRecord(
             stage=AuthorityStage.WORKFLOW_RUNTIME.value,
@@ -568,12 +602,25 @@ def _winning_authority(
     planner_workflow: str | None,
     selected_intent: str | None,
     workflow_admission_gate: dict | None = None,
+    clarification_authority: dict | None = None,
 ) -> tuple[str, str]:
     if commit_source:
         return commit_source, AuthorityStage.COMMIT.value
+    clarification = clarification_authority or {}
+    if (
+        clarification.get("decision") == "USE_SPECIFIC_CLARIFICATION"
+        and clarification.get("reason") == "ANALYTICAL_RELATIONSHIP_NEEDS_EVIDENCE"
+    ):
+        return "clarification_authority", AuthorityStage.CLARIFICATION_AUTHORITY.value
+    gate = workflow_admission_gate or {}
+    if (
+        response_source == "clarification_authority"
+        and gate.get("decision") in {"REJECT_TO_CONVERSATION", "DEFER_FOR_CLARIFICATION"}
+        and gate.get("workflow_candidate")
+    ):
+        return "workflow_admission_gate", AuthorityStage.WORKFLOW_ADMISSION.value
     if response_source:
         return response_source, AuthorityStage.RESPONSE_GENERATION.value
-    gate = workflow_admission_gate or {}
     if gate.get("decision") in {"REJECT_TO_CONVERSATION", "DEFER_FOR_CLARIFICATION"} and gate.get("workflow_candidate"):
         return "workflow_admission_gate", AuthorityStage.WORKFLOW_ADMISSION.value
     if workflow_admitted:
@@ -600,6 +647,8 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
     planner = _as_dict(route.get("planner_output"))
     workflow = _as_dict(route.get("business_workflow"))
     admission_gate = _workflow_admission_gate(route, workflow)
+    language_normalization = _as_dict(route.get("language_normalization"))
+    clarification_authority = _as_dict(route.get("clarification_authority"))
     business_situation = _as_dict(route.get("business_situation") or planner.get("business_situation"))
     user_message = str(_first_present(overrides.get("user_message"), route.get("user_message"), understanding.get("raw_text"), default="") or "")
     selected_intent = _first_present(overrides.get("selected_intent"), intent_resolution.get("resolved_intent"), default=None)
@@ -639,6 +688,7 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
         planner_workflow=planner.get("workflow"),
         selected_intent=selected_intent,
         workflow_admission_gate=admission_gate,
+        clarification_authority=clarification_authority,
     )
     chain = _records_for_route(
         route,
@@ -686,6 +736,18 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
         workflow_required_entities=required_entities,
         workflow_missing_entities=missing_entities,
         workflow_executable=executable,
+        language_normalization_consulted=bool(language_normalization),
+        language_normalization_applied=bool(language_normalization.get("normalization_count")),
+        normalized_user_message=language_normalization.get("normalized_text") or "",
+        clarification_authority_consulted=bool(clarification_authority),
+        clarification_authority_used=clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION",
+        clarification_decision=clarification_authority.get("decision"),
+        clarification_reason=clarification_authority.get("reason"),
+        clarification_requested_fields=clarification_authority.get("requested_fields") or [],
+        generic_fallback_avoided=bool(
+            clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION"
+            and not clarification_authority.get("fallback_used")
+        ),
         workflow_started_before_intent_disambiguation=bool(admitted and understanding.get("clarification_required")),
         workflow_started_despite_low_understanding_confidence=bool(admitted and low_understanding),
         cognitive_runtime_consulted=bool(cognitive["consulted"]),
@@ -733,6 +795,24 @@ def build_cognitive_authority_audit(task_route: dict | None = None, **overrides:
                 "business_level_scope_detected": admission_gate.get("business_level_scope_detected"),
                 "keyword_only_match_detected": admission_gate.get("keyword_only_match_detected"),
                 "fallback_target": admission_gate.get("fallback_target"),
+            },
+            "language_normalization": {
+                "consulted": bool(language_normalization),
+                "applied": bool(language_normalization.get("normalization_count")),
+                "original_text": language_normalization.get("original_text"),
+                "normalized_text": language_normalization.get("normalized_text"),
+                "normalizations_applied": language_normalization.get("normalizations_applied") or [],
+            },
+            "clarification_authority": {
+                "consulted": bool(clarification_authority),
+                "used": clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION",
+                "decision": clarification_authority.get("decision"),
+                "reason": clarification_authority.get("reason"),
+                "requested_fields": clarification_authority.get("requested_fields") or [],
+                "generic_fallback_avoided": bool(
+                    clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION"
+                    and not clarification_authority.get("fallback_used")
+                ),
             },
             "cognitive_runtime": {
                 "consulted": cognitive["consulted"],
@@ -783,6 +863,15 @@ def cognitive_authority_trace(audit_or_route: dict | None) -> dict:
         "workflow_admission_gate_decision": audit.get("workflow_admission_gate_decision"),
         "workflow_admission_gate_reason": audit.get("workflow_admission_gate_reason"),
         "workflow_admitted": audit.get("workflow_admitted"),
+        "language_normalization_consulted": audit.get("language_normalization_consulted"),
+        "language_normalization_applied": audit.get("language_normalization_applied"),
+        "normalized_user_message": audit.get("normalized_user_message"),
+        "clarification_authority_consulted": audit.get("clarification_authority_consulted"),
+        "clarification_authority_used": audit.get("clarification_authority_used"),
+        "clarification_decision": audit.get("clarification_decision"),
+        "clarification_reason": audit.get("clarification_reason"),
+        "clarification_requested_fields": audit.get("clarification_requested_fields") or [],
+        "generic_fallback_avoided": audit.get("generic_fallback_avoided"),
         "response_mode": audit.get("selected_response_mode"),
         "cognitive_runtime_consulted": audit.get("cognitive_runtime_consulted"),
         "cognitive_runtime_authoritative": audit.get("cognitive_runtime_authoritative"),
