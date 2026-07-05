@@ -140,12 +140,37 @@ def _should_suppress_price_skill_for_cost_message(
 
 
 def _should_bypass_skill_matching(user_message: str, conversation_context: dict | None) -> tuple[bool, str | None]:
+    if _workflow_owned_executable_turn(conversation_context):
+        return True, "Bypassed business skill matching because an admitted executable workflow owns the current turn."
     detected_intent = _detected_intent(conversation_context)
     if detected_intent not in NON_BUSINESS_EXPLANATORY_INTENTS:
         return False, None
     if _has_strong_current_message_business_evidence(user_message, conversation_context):
         return False, None
     return True, f"Bypassed business skill matching for non-business explanatory/general intent: {detected_intent}."
+
+
+def _workflow_owned_executable_turn(conversation_context: dict | None) -> bool:
+    context = conversation_context or {}
+    workflow = context.get("business_workflow") or (context.get("business_context") or {}).get("workflow_intelligence") or {}
+    admission = context.get("workflow_admission_gate") or workflow.get("workflow_admission_gate") or {}
+    workflow_state = workflow.get("workflow_state") or {}
+    workflow_id = (
+        workflow_state.get("workflow_id")
+        or workflow.get("workflow_id")
+        or workflow.get("workflow")
+        or admission.get("workflow_candidate")
+    )
+    executable = bool(
+        (workflow.get("readiness_decision") or {}).get("workflow_executable")
+        or admission.get("workflow_executable")
+        or workflow.get("workflow_action") == "complete"
+    )
+    return bool(
+        admission.get("admitted")
+        and executable
+        and workflow_id == "PROFIT_CALCULATION"
+    )
 
 
 def _skill_matches_domain(skill: dict[str, Any], domain: str | None) -> bool:

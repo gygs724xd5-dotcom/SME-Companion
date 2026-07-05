@@ -147,7 +147,7 @@ def extract_perspective_signals(source_text: str) -> list[dict]:
         "sales_increase": ["ยอดขายเพิ่ม", "ยอดขายดีขึ้น", "ขายดี", "sales increase", "sales up"],
         "revenue_stable_or_increase": ["รายได้เพิ่ม", "ยอดขายดี", "ยอดขายมี", "revenue stable", "revenue increase"],
         "selling_activity_high": ["ขายดี", "ขายได้", "ยอดขายมี", "selling well"],
-        "sales_decrease": ["ยอดขายลด", "ขายได้น้อยกว่า", "ขายน้อยลง", "sales decline", "sales down"],
+        "sales_decrease": ["ยอดขายลด", "ยอดตก", "ขายได้น้อยกว่า", "ขายน้อยลง", "sales decline", "sales down"],
         "revenue_decrease": ["รายได้ลด", "revenue decline", "revenue down"],
         "continuous_decline": ["ต่อเนื่อง", "หลายเดือน", "continuous", "month over month"],
         "prior_period_lower": ["น้อยกว่าเดือนก่อน", "ต่ำกว่าเดือนก่อน", "compared with last month"],

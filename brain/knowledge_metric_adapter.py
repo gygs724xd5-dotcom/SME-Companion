@@ -75,6 +75,21 @@ def _to_number(value: str) -> int | float:
     return int(number) if number.is_integer() else number
 
 
+def _is_inventory_quantity_context(text: str) -> bool:
+    compact = _compact(text)
+    inventory_markers = (
+        "\u0e02\u0e2d\u0e07\u0e40\u0e2b\u0e25\u0e37\u0e2d",
+        "\u0e40\u0e2b\u0e25\u0e37\u0e2d",
+        "\u0e2a\u0e15\u0e47\u0e2d\u0e01",
+        "\u0e2a\u0e15\u0e4a\u0e2d\u0e01",
+        "stock",
+        "inventory",
+        "remaining",
+        "left",
+    )
+    return any(marker in compact for marker in inventory_markers)
+
+
 def _period(text: str) -> str:
     compact = _compact(text)
     period_patterns = [
@@ -135,9 +150,11 @@ def _add(metrics: dict[str, list[CanonicalMetricValue]], metric: CanonicalMetric
 
 def _extract_text_values(text: str, metrics: dict[str, list[CanonicalMetricValue]]) -> None:
     period = _period(text)
-    for match in re.finditer(r"(\d[\d,]*(?:\.\d+)?)\s*(?:ชิ้น|pcs?|pieces?)", text, flags=re.IGNORECASE):
-        missing = [] if period else ["timeframe"]
-        _add(metrics, _metric("output_quantity", _to_number(match.group(1)), text, unit="pieces", timeframe=period, missing=missing))
+    inventory_quantity_context = _is_inventory_quantity_context(text)
+    if not inventory_quantity_context:
+        for match in re.finditer(r"(\d[\d,]*(?:\.\d+)?)\s*(?:ชิ้น|pcs?|pieces?)", text, flags=re.IGNORECASE):
+            missing = [] if period else ["timeframe"]
+            _add(metrics, _metric("output_quantity", _to_number(match.group(1)), text, unit="pieces", timeframe=period, missing=missing))
     if re.search(r"(?:ทำได้|ผลิตได้|กำลังผลิต)\s*\d", text):
         number_match = re.search(r"(?:ทำได้|ผลิตได้|กำลังผลิต)\s*(\d[\d,]*(?:\.\d+)?)", text)
         if number_match and "output_quantity" not in metrics:

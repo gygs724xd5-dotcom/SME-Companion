@@ -84,11 +84,16 @@ WORKFLOW_KEYWORDS = (
     "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19",
     "\u0e23\u0e32\u0e04\u0e32",
     "\u0e2a\u0e15\u0e4a\u0e2d\u0e01",
+    "\u0e22\u0e2d\u0e14\u0e02\u0e32\u0e22",
+    "\u0e02\u0e32\u0e22",
     "profit",
     "cost",
     "price",
     "stock",
+    "sales",
 )
+
+LEGACY_AUTO_ADMIT_WORKFLOWS = {"DASHBOARD_REQUEST", "RECEIPT_CAPTURE", "GENERAL_BUSINESS_HELP"}
 
 
 @dataclass(frozen=True)
@@ -177,7 +182,7 @@ def build_workflow_admission_decision(
             "conversation",
         )
 
-    if candidate not in {"PROFIT_CALCULATION", "COST_CALCULATION"}:
+    if candidate in LEGACY_AUTO_ADMIT_WORKFLOWS:
         return _result(
             candidate,
             WorkflowAdmissionDecision.ADMIT,

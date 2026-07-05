@@ -51,7 +51,7 @@ from brain.perception_signals import build_signal_set_from_percept_fields
 from brain.perception_situation_diagnostics import build_perception_situation_diagnostics
 from brain.business_intent_engine import detect_business_intent
 from brain.capability_registry import get_capability, is_capability_available
-from brain.conversation_memory_engine import get_last_context, remember_turn
+from brain.conversation_memory_engine import _snippet, get_last_context, remember_turn
 from brain.conversation_understanding_engine import understand_conversation
 from brain.intent_resolver import resolve_intent
 from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
@@ -611,13 +611,27 @@ def build_task_route(application_state, user_message) -> dict:
         "workflow_domain_boundary": workflow_domain_boundary,
     }
     intent_resolution = resolve_intent(interpretation, memory_context, business_context)
-    memory_context = remember_turn(
-        memory_context,
-        user_message,
-        intent=intent_resolution.get("resolved_intent") or interpretation.get("detected_intent"),
-        workflow=intent_resolution.get("resolved_workflow"),
-        business_topic=business_context.get("current_discussion_topic"),
-    )
+    resolved_intent = intent_resolution.get("resolved_intent") or interpretation.get("detected_intent")
+    resolved_workflow = intent_resolution.get("resolved_workflow")
+    current_topic = business_context.get("current_discussion_topic")
+    if user_message and memory_context.get("last_user_message") == _snippet(user_message):
+        memory_context = dict(memory_context)
+        if resolved_intent:
+            memory_context["previous_intent"] = memory_context.get("last_intent")
+            memory_context["last_intent"] = resolved_intent
+        if resolved_workflow:
+            memory_context["previous_workflow"] = memory_context.get("last_workflow")
+            memory_context["last_workflow"] = resolved_workflow
+        if current_topic:
+            memory_context["focused_business_topic"] = current_topic
+    else:
+        memory_context = remember_turn(
+            memory_context,
+            user_message,
+            intent=resolved_intent,
+            workflow=resolved_workflow,
+            business_topic=current_topic,
+        )
     conversation_intelligence = {
         "conversation_memory": memory_context,
         "business_context": business_context,
@@ -922,6 +936,7 @@ def build_task_route(application_state, user_message) -> dict:
                 "business_context": business_context,
                 "intent_resolution": intent_resolution,
                 "conversation_memory": memory_context,
+                "conversation_cognitive_context": ((enriched_state.get("conversation") or {}).get("conversation_cognitive_context") or {}),
             },
             "selected_frame": ((business_situation.get("diagnostics") or {}).get("perspective") or {}).get("selected_frame"),
             "candidate_frames": ((business_situation.get("diagnostics") or {}).get("perspective") or {}).get("candidate_frames") or [],
@@ -946,6 +961,15 @@ def build_task_route(application_state, user_message) -> dict:
         }
     )
     business_situation.setdefault("diagnostics", {})["knowledge_skill_bridge"] = refreshed_bridge
+    route["knowledge_skill_bridge"] = refreshed_bridge
+    route["business_intelligence"] = {
+        **(route.get("business_intelligence") or {}),
+        "knowledge_skill_bridge": refreshed_bridge,
+        "conversation_outcome_hardening": refreshed_bridge.get("conversation_outcome_hardening") or {},
+        "canonical_skill_candidates": refreshed_bridge.get("candidate_skills") or [],
+        "canonical_primary_skill_candidate": refreshed_bridge.get("primary_skill_candidate"),
+        "canonical_bridge_status": refreshed_bridge.get("bridge_status"),
+    }
     planner_situation_for_bridge = (route.get("planner_output") or {}).get("business_situation")
     if isinstance(planner_situation_for_bridge, dict):
         planner_situation_for_bridge.setdefault("diagnostics", {})["knowledge_skill_bridge"] = refreshed_bridge

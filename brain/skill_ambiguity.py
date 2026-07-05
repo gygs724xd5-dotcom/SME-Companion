@@ -26,7 +26,7 @@ def assess_skill_ambiguity(candidates: list[dict], *, user_message: str = "") ->
     active = [item for item in candidates if item.get("selection_tier") in {"PRIMARY_CANDIDATE", "SECONDARY_CANDIDATE"} and not item.get("excluded_reason")]
     active = sorted(active, key=lambda item: -float(item.get("support_strength") or 0.0))
     compact = "".join(str(user_message or "").lower().split())
-    broad_sales = any(token in compact for token in ["ยอดขายไม่ดี", "salesbad", "salesnotgood"])
+    broad_sales = any(token in compact for token in ["ยอดขายไม่ดี", "ยอดตก", "salesbad", "salesnotgood"])
     if len(active) < 2 and not broad_sales:
         return SkillAmbiguityResult(status="PRIMARY_SELECTED" if active else "NO_CONFIDENT_PRIMARY").to_dict()
     top = float(active[0].get("support_strength") or 0.0) if active else 0.0

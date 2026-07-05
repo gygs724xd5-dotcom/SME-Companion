@@ -90,6 +90,7 @@ from brain.response_cleaner import clean_response, localize_internal_labels
 from brain.response_intelligence_engine import guard_response, select_final_response, select_planner_first_response
 from brain.response_commit_boundary import commit_response_boundary
 from brain.cognitive_authority_audit import attach_cognitive_authority_audit, cognitive_authority_trace
+from brain.knowledge_skill_outcome_hardening import resolve_v5941_runtime_response
 from brain.response_transformation_engine import (
     build_response_memory,
 )
@@ -4461,6 +4462,72 @@ def _show_chat_companion(
             workflow_extra,
             response_candidates=response_candidates,
         )
+
+    cognitive_context = (conversation_state.get("conversation_cognitive_context") or {})
+    structured_runtime = resolve_v5941_runtime_response(
+        task_route,
+        user_message,
+        cognitive_context,
+    )
+    if structured_runtime.get("handled"):
+        reply = _clean_chat_reply(structured_runtime.get("reply"))
+        patch = structured_runtime.get("conversation_state_patch") or {}
+        nested_context = patch.get("conversation_cognitive_context") or {}
+        conversation_state.update({key: value for key, value in patch.items() if key != "conversation_cognitive_context"})
+        conversation_state["conversation_cognitive_context"] = {
+            **(conversation_state.get("conversation_cognitive_context") or {}),
+            **nested_context,
+        }
+        _update_application_section(
+            "conversation",
+            {
+                **conversation_state,
+                "conversation_cognitive_context": conversation_state["conversation_cognitive_context"],
+            },
+        )
+        topic = conversation_state.get("active_topic_id") or state.get("current_topic")
+        _update_conversation_state_after_assistant(reply, conversation_intent, topic)
+        assistant_message = {
+            "role": "assistant",
+            "content": reply,
+            "show_business_insights": False,
+        }
+        commit_assistant_turn(
+            reply,
+            intent=conversation_intent,
+            workflow=None,
+            business_topic=topic,
+            response_metadata={
+                "response_source": structured_runtime.get("response_source") or "v5941_structured_runtime",
+                "last_response_empty": not bool(reply),
+                "user_message": user_message,
+                "selected_response_owner": structured_runtime.get("selected_response_owner"),
+            },
+            assistant_message=assistant_message,
+        )
+        finalize_debug(
+            structured_runtime.get("response_source") or "v5941_structured_runtime",
+            reply,
+            {
+                "response_builder": "v5941_structured_runtime",
+                "reply_builder": "knowledge_skill_outcome_hardening",
+                "response_generation_mode": structured_runtime.get("response_type") or "STRUCTURED_RUNTIME_OUTCOME",
+                "response_reason": structured_runtime.get("selected_response_owner"),
+                **(structured_runtime.get("diagnostics") or {}),
+            },
+        )
+        add_pipeline_event(
+            "response",
+            "v5941_structured_runtime",
+            "assistant message appended",
+            {"response_source": structured_runtime.get("response_source"), "selected_response_owner": structured_runtime.get("selected_response_owner")},
+        )
+        with st.chat_message("assistant"):
+            _render_assistant_message(reply)
+        st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "v5941_structured_runtime", "pipeline finalized")
+        finalize_pipeline_trace()
+        return
 
     if reasoning.get("action") in {"receipt_uploaded_ack", "receipt_ocr_pending"}:
         reply = _receipt_uploaded_reply(reasoning.get("action"))

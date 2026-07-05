@@ -231,7 +231,7 @@ def _context_matches(definition: BusinessKnowledgeDefinition, text: str, current
     if definition.knowledge_id == "CASH_CONVERSION" and has_any(["ไม่มีเงินสด", "เงินสดไม่พอ", "ขายได้แต่ไม่มีเงินสด", "cash"]):
         matches.append("cash_conversion_context")
         selected_by.append("EXPLICIT_USER_TOPIC")
-    if definition.knowledge_id == "SALES_FUNNEL" and has_any(["ลูกค้าเพิ่ม", "ยอดขายลด", "ยอดขายไม่ดี", "ขายไม่ดี", "ขายดี", "ขายได้", "orders", "customers", "sales decline", "sales bad", "dashboard", "metrics"]):
+    if definition.knowledge_id == "SALES_FUNNEL" and has_any(["ลูกค้าเพิ่ม", "ยอดขายลด", "ยอดขายไม่ดี", "ยอดตก", "ขายไม่ดี", "ขายดี", "ขายได้", "orders", "customers", "sales decline", "sales bad", "dashboard", "metrics"]):
         matches.append("sales_or_customer_context")
         selected_by.append("EXPLICIT_USER_TOPIC")
     if definition.knowledge_id == "PROFITABILITY_STRUCTURE" and has_any(["dashboard", "metrics", "ตัวเลขอะไร", "ควรดูตัวเลข"]):
