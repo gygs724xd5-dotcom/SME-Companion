@@ -26,6 +26,11 @@ from brain.business_intelligence_bridge import (
     run_business_intelligence_bridge,
 )
 from brain.knowledge_skill_bridge import build_knowledge_skill_bridge
+from brain.business_judgment_runtime import (
+    build_business_judgment_input_from_bridge,
+    build_business_judgment_runtime,
+)
+from brain.judgment_response_handoff import build_judgment_response_handoff
 from brain.business_knowledge_runtime import (
     KNOWLEDGE_CONTEXT_VERSION,
     KNOWLEDGE_RUNTIME_SOURCE,
@@ -961,7 +966,24 @@ def build_task_route(application_state, user_message) -> dict:
         }
     )
     business_situation.setdefault("diagnostics", {})["knowledge_skill_bridge"] = refreshed_bridge
+    judgment_input = build_business_judgment_input_from_bridge(
+        business_situation=business_situation,
+        knowledge_skill_bridge=refreshed_bridge,
+        conversation_context={
+            "conversation_understanding": interpretation,
+            "business_context": business_context,
+            "intent_resolution": intent_resolution,
+            "conversation_memory": memory_context,
+        },
+        workflow_outputs=(workflow_decision.get("calculation_trace") or workflow_decision.get("computed_outputs") or {}),
+    )
+    business_judgment = build_business_judgment_runtime(judgment_input)
+    judgment_response_handoff = build_judgment_response_handoff(business_judgment)
+    business_situation.setdefault("diagnostics", {})["business_judgment"] = business_judgment
+    business_situation.setdefault("diagnostics", {})["judgment_response_handoff"] = judgment_response_handoff
     route["knowledge_skill_bridge"] = refreshed_bridge
+    route["business_judgment"] = business_judgment
+    route["judgment_response_handoff"] = judgment_response_handoff
     route["business_intelligence"] = {
         **(route.get("business_intelligence") or {}),
         "knowledge_skill_bridge": refreshed_bridge,
@@ -969,10 +991,14 @@ def build_task_route(application_state, user_message) -> dict:
         "canonical_skill_candidates": refreshed_bridge.get("candidate_skills") or [],
         "canonical_primary_skill_candidate": refreshed_bridge.get("primary_skill_candidate"),
         "canonical_bridge_status": refreshed_bridge.get("bridge_status"),
+        "business_judgment": business_judgment,
+        "judgment_response_handoff": judgment_response_handoff,
     }
     planner_situation_for_bridge = (route.get("planner_output") or {}).get("business_situation")
     if isinstance(planner_situation_for_bridge, dict):
         planner_situation_for_bridge.setdefault("diagnostics", {})["knowledge_skill_bridge"] = refreshed_bridge
+        planner_situation_for_bridge.setdefault("diagnostics", {})["business_judgment"] = business_judgment
+        planner_situation_for_bridge.setdefault("diagnostics", {})["judgment_response_handoff"] = judgment_response_handoff
     clarification_authority = build_clarification_response(
         user_message=observed_user_message,
         normalized_user_message=user_message,

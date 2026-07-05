@@ -458,6 +458,68 @@ def _placeholder_layer(name: str) -> dict:
     )
 
 
+def _business_judgment_layer(business_situation: dict) -> dict:
+    diagnostics = _as_dict(business_situation.get("diagnostics"))
+    judgment = _as_dict(diagnostics.get("business_judgment"))
+    response_handoff = _as_dict(diagnostics.get("judgment_response_handoff"))
+    outcome = _as_dict(response_handoff.get("outcome"))
+    evidence_summary = _as_dict(judgment.get("evidence_summary"))
+    weighted = _as_dict(evidence_summary.get("weighted_evidence"))
+    comparison = _as_dict(evidence_summary.get("alternative_comparison"))
+    selected = _as_dict(judgment.get("selected_judgment"))
+    selected_explanation = _as_dict(selected.get("selected_explanation"))
+    return _layer(
+        name="Business Judgment",
+        runtime_state={
+            "eligibility": judgment.get("eligibility") or {},
+            "registry_version": _as_dict(judgment.get("candidate_retrieval")).get("registry_version"),
+            "available_candidates": _as_dict(judgment.get("candidate_retrieval")).get("available_candidate_ids") or [],
+            "excluded_candidates": _as_dict(judgment.get("candidate_retrieval")).get("excluded_candidate_ids") or [],
+            "candidate_evidence_requirements": {
+                item.get("candidate_id"): item.get("required_evidence")
+                for item in _as_list(judgment.get("candidate_judgments"))
+                if isinstance(item, dict)
+            },
+            "weighted_evidence": weighted.get("weights") or [],
+            "excluded_evidence": weighted.get("excluded_evidence") or [],
+            "dependency_groups": weighted.get("dependency_groups") or [],
+            "candidate_profiles": evidence_summary.get("candidate_profiles") or [],
+            "pairwise_comparisons": comparison.get("pairwise_comparisons") or [],
+            "coexisting_candidates": comparison.get("coexisting_candidates") or [],
+            "dominant_candidate": comparison.get("dominant_candidate"),
+            "selection_margin": comparison.get("selection_margin"),
+            "missing_separator_evidence": comparison.get("missing_separator_evidence") or [],
+            "active_judgment": selected,
+            "selected_explanation": selected_explanation,
+            "alternatives": judgment.get("alternative_explanations") or [],
+            "contradictions": judgment.get("contradictions") or [],
+            "outcome_status": outcome.get("judgment_status"),
+            "response_mode": _as_dict(outcome.get("response_handoff")).get("response_mode"),
+            "safe_claims": outcome.get("safe_claims") or [],
+            "suppressed_claims": outcome.get("suppressed_claims") or [],
+            "claim_trace": _as_dict(outcome.get("provenance")).get("validation") or {},
+            "alternative_coverage": judgment.get("alternative_explanations") or [],
+            "scope_timeframe_validation": {
+                "scope_guard_applied": bool(_as_dict(outcome.get("diagnostics")).get("judgment_scope_guard_applied")),
+                "timeframe_guard_applied": bool(_as_dict(outcome.get("diagnostics")).get("judgment_timeframe_guard_applied")),
+            },
+            "benchmark_source": "",
+            "uncertainty_language": _as_dict(outcome.get("response_handoff")).get("uncertainty_language"),
+            "revision_notice": _as_dict(outcome.get("response_handoff")).get("revision_notice"),
+            "decision_boundary": outcome.get("decision_boundary") or {},
+            "outcome_violations": _as_dict(outcome.get("validation")).get("violations") or [],
+            "constitutional_pass": _as_dict(outcome.get("validation")).get("constitutional_pass"),
+        },
+        diagnostics={
+            **_as_dict(judgment.get("diagnostics")),
+            **_as_dict(outcome.get("diagnostics")),
+        },
+        confidence=judgment.get("confidence_class"),
+        source=judgment.get("source") or "business_judgment_runtime",
+        status="observed" if judgment else "placeholder",
+    )
+
+
 def _constitution_monitor(payload: dict) -> dict:
     flags = {}
     violations = []
@@ -585,7 +647,7 @@ def build_brain_observatory(task_route: dict | None) -> dict:
         _perspective_layer(business_situation),
         _knowledge_layer(business_situation),
         _knowledge_skill_bridge_layer(business_situation),
-        _placeholder_layer("Business Judgment"),
+        _business_judgment_layer(business_situation),
         _placeholder_layer("Decision"),
     ]
     constitution = _constitution_monitor({"route": route, "layers": layers})

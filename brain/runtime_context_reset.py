@@ -9,6 +9,10 @@ RUNTIME_CONTEXT_VERSION = "v5.2.0.2"
 
 RUNTIME_CONTEXT_KEYS = [
     "knowledge_context",
+    "business_judgment",
+    "judgment_response_handoff",
+    "judgment_outcome",
+    "judgment_revision",
     "reasoning_context",
     "planner_context",
     "planner_decision",
