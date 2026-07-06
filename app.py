@@ -107,8 +107,10 @@ from brain.pipeline_debugger import (
 )
 from brain.workflow_reply_builder import (
     build_workflow_reply,
+    completed_workflow_output_stop_condition,
     prepare_content_collection_state,
 )
+from brain.workflow_output_renderer import generate_cost_calculation_reply, generate_deterministic_workflow_reply
 from content_engine import generate_content_plan, generate_sales_brief
 from demo.demo_loader import inject_demo_store_to_session, list_demo_stores
 from feedback.chatgpt_export_builder import (
@@ -3278,8 +3280,14 @@ def _generate_sales_plan_7_day(workflow_state: dict) -> str:
 
 
 def _generate_cost_calculation(workflow_state: dict) -> str:
+    deterministic_reply = generate_deterministic_workflow_reply(workflow_state)
+    if deterministic_reply:
+        return deterministic_reply
     fields = workflow_state.get("collected_fields") or {}
     trace = cost_calculation_trace(fields)
+    component_total_reply = generate_cost_calculation_reply(workflow_state)
+    if component_total_reply:
+        return component_total_reply
     total_units = float(fields.get("total_units") or fields.get("quantity") or 0)
     selling_price = fields.get("selling_price")
     total_cost = trace.get("computed_total_cost") or 0
@@ -3335,6 +3343,9 @@ def _numeric_workflow_value(value):
 
 
 def _generate_profit_calculation(workflow_state: dict) -> str:
+    deterministic_reply = generate_deterministic_workflow_reply(workflow_state)
+    if deterministic_reply:
+        return deterministic_reply
     fields = workflow_state.get("collected_fields") or {}
     price = _numeric_workflow_value(fields.get("price") or fields.get("selling_price") or fields.get("prices"))
     cost = _numeric_workflow_value(fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit") or fields.get("costs"))
@@ -3462,8 +3473,10 @@ def _handle_state_machine_workflow(
     detected_workflow: str,
     profile: dict | None,
 ) -> dict:
+
     state = _ensure_conversation_state()
     workflow_before = state.get("workflow_state_v2") or {}
+
     add_pipeline_event(
         "workflow",
         "_handle_state_machine_workflow",
@@ -3525,12 +3538,33 @@ def _handle_state_machine_workflow(
         workflow_state = mark_executing(workflow_state, "completion gate found workflow executable before asking another field")
         _sync_workflow_state_v2(workflow_state)
         reply = _generate_workflow_reply(workflow_state)
-        reply, llm_attempted = _maybe_improve_workflow_reply_with_llm(reply, workflow_state, profile, user_message)
+
         reply_result = build_workflow_reply(workflow_state, generated_reply=reply)
+
         reply = reply_result["reply"]
+
         workflow_state["next_action"] = "completed"
         workflow_state["step"] = "completed"
+        workflow_state["workflow_action"] = "complete"
         workflow_state = mark_completed(workflow_state, "workflow output generated")
+        stop_condition = completed_workflow_output_stop_condition(
+            workflow_state=workflow_state,
+            workflow_decision={"workflow_action": "complete", "workflow_complete": True},
+            response_mode=reply_result.get("response_mode"),
+        )
+
+        if stop_condition.get("render_result_only") and not stop_condition.get("llm_rewrite_allowed"):
+            llm_attempted = False
+
+        else:
+
+            reply, llm_attempted = _maybe_improve_workflow_reply_with_llm(reply, workflow_state, profile, user_message)
+
+            reply_result = build_workflow_reply(workflow_state, generated_reply=reply)
+
+
+            reply = reply_result["reply"]
+
         _sync_workflow_state_v2(workflow_state)
         result = {
             "reply": reply,
@@ -3541,6 +3575,7 @@ def _handle_state_machine_workflow(
             "response_mode": reply_result.get("response_mode"),
             "reply_builder": reply_result.get("reply_builder"),
             "natural_response": reply_result.get("natural_response"),
+            "completed_workflow_output_stop_condition": stop_condition,
         }
         add_pipeline_event(
             "workflow",
@@ -3557,6 +3592,8 @@ def _handle_state_machine_workflow(
                 "natural_response": result.get("natural_response"),
             },
         )
+
+
         return result
 
     reply_result = build_workflow_reply(workflow_state)
@@ -4636,6 +4673,27 @@ def _show_chat_companion(
     _update_application_section("conversation", {"conversation_priority": priority_decision})
     planner_workflow_v2 = (task_route.get("planner_output") or {}).get("workflow")
     detected_workflow_v2 = planner_workflow_v2
+    planner_output = task_route.get("planner_output") or {}
+    intent_entities = task_route.get("business_intent_entities") or {}
+    extracted_entities = intent_entities.get("extracted_entities") or {}
+    planner_goal = str(planner_output.get("goal") or "")
+
+    cost_workflow_signal = (
+        intent_entities.get("detected_intent") == "cost_calculation"
+        or "COST_CALCULATION" in planner_goal
+        or "cost calculation" in planner_goal.lower()
+    )
+
+    safe_executable_cost_request = (
+        cost_workflow_signal
+        and extracted_entities.get("explicit_calculation_request_detected") is True
+        and extracted_entities.get("analytical_statement_detected") is not True
+        and extracted_entities.get("comparison_change_detected") is not True
+        and extracted_entities.get("correction_detected") is not True
+    )
+
+    if not detected_workflow_v2 and safe_executable_cost_request:
+        detected_workflow_v2 = V2_WORKFLOW_COST_CALCULATION
     if (
         not detected_workflow_v2
         and planner_workflow_v2
@@ -4681,7 +4739,16 @@ def _show_chat_companion(
             "workflow_authorization": workflow_authorization,
         }
     )
-    if select_general_response_route(task_route, conversation_intent).get("handled"):
+    general_route = select_general_response_route(task_route, conversation_intent)
+
+    v2_workflow_pending = detected_workflow_v2 in {
+        V2_WORKFLOW_SALES_PLAN_7_DAY,
+        V2_WORKFLOW_PROFIT_CALCULATION,
+        V2_WORKFLOW_COST_CALCULATION,
+        V2_WORKFLOW_CONTENT_PLAN,
+    }
+
+    if general_route.get("handled") and not v2_workflow_pending:
         detected_workflow = None
         detected_workflow_v2 = None
         active_workflow = None
@@ -4812,7 +4879,8 @@ def _show_chat_companion(
         return
 
     demo_mode = bool(st.session_state.get("demo_mode"))
-    general_route = select_general_response_route(task_route, conversation_intent)
+
+
     if general_route.get("handled"):
         general_reply = build_general_direct_response(user_message)
         general_source = "general_direct_response" if general_reply else "general_response"
@@ -4841,6 +4909,46 @@ def _show_chat_companion(
                 },
                 developer_mode=bool(st.session_state.get("developer_mode")),
             )
+            workflow_context = general_llm_context.get("workflow_context") or {}
+            workflow_progress = workflow_context.get("workflow_progress") or {}
+            business_intent_entities = general_llm_context.get("business_intent_entities") or {}
+            extracted_entities = business_intent_entities.get("extracted_entities") or {}
+
+            deterministic_completed_cost_workflow = (
+                workflow_context.get("workflow_action") == "complete"
+                and workflow_progress.get("percent") == 1.0
+                and business_intent_entities.get("detected_intent") == "cost_calculation"
+                and extracted_entities.get("explicit_calculation_request_detected") is True
+                and extracted_entities.get("analytical_statement_detected") is not True
+                and extracted_entities.get("comparison_change_detected") is not True
+                and extracted_entities.get("correction_detected") is not True
+            )
+
+            if deterministic_completed_cost_workflow:
+
+                response = _handle_state_machine_workflow(
+                    user_message=user_message,
+                    detected_workflow=V2_WORKFLOW_COST_CALCULATION,
+                    profile=chat_profile,
+                )
+                source = "llm_response" if response.get("llm_attempted") else "workflow_response"
+                finalize_debug(
+                    source,
+                    response["reply"],
+                    {
+                        "workflow_handler": "cost_state_machine_from_general_guard",
+                        "extracted_fields": response.get("extracted_fields") or {},
+                        "response_mode": response.get("response_mode"),
+                        "reply_builder": response.get("reply_builder"),
+                        "natural_response": response.get("natural_response"),
+                    },
+                )
+                _append_workflow_reply(
+                    response["reply"],
+                    response["intent"],
+                    "คำนวณต้นทุน",
+                )
+                return
             st.session_state["last_prompt_context"] = general_llm_context
             _update_application_section("developer", {"prompt_context": general_llm_context})
             if can_call_llm(st) and (not demo_mode or _allow_demo_llm_call(user_message, general_llm_context)):

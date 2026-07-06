@@ -9,6 +9,7 @@ from brain.business_entity_extractor import REQUIRED_BY_INTENT
 from brain.canonical_entity_adapter import canonical_workflow_fields
 from brain.conversation_manager import active_workflow_state, ensure_conversation_os_state
 from brain.workflow_registry import get_workflow_definition, get_workflow_registry
+from brain.workflow_field_extractor import extract_workflow_fields
 from brain.workflow_state_machine import cost_calculation_trace
 from brain.planner_intent_priority import (
     has_profit_calculation_intent,
@@ -70,7 +71,7 @@ QUESTION_BY_ENTITY = {
     "product": "สินค้าหรือเมนูอะไรครับ",
     "product_or_business_type": "อยากโฟกัสสินค้าหรือประเภทร้านอะไรครับ",
     "price": "ขายราคากี่บาทครับ",
-    "cost": "ต้นทุนต่อชิ้นกี่บาทครับ",
+    "cost": "ต้นทุนรวมกี่บาทครับ",
     "quantity": "ขายทั้งหมดกี่ชิ้นครับ",
     "date": "ต้องการดูช่วงวันไหนครับ",
     "daily_capacity_or_available_quantity": "สินค้านี้ทำได้วันละกี่ชิ้น หรือมีพร้อมขายกี่ชิ้นครับ",
@@ -472,6 +473,8 @@ def _build_payload(
         canonical_entities=canonical_entities,
     )
     required_entities = list(_required_entities(workflow, detected_intent, workflow_state))
+    if workflow == "COST_CALCULATION" and _has_component_total_contract(current_entities):
+        required_entities = ["component_costs"]
     completed_entities = _completed_entities(workflow_state, current_entities, required_entities, user_message)
     missing_entities = [entity for entity in required_entities if entity not in completed_entities]
     progress = _progress(completed_entities, required_entities)
@@ -545,7 +548,10 @@ def _build_payload(
         "input_cost_per_unit": calculation.get("input_cost_per_unit"),
         "input_quantity": calculation.get("input_quantity"),
         "input_total_units": calculation.get("input_total_units"),
+        "input_total_cost": calculation.get("input_total_cost"),
+        "requested_output": calculation.get("requested_output") or workflow_entities.get("requested_output"),
         "selected_formula": calculation.get("selected_formula"),
+        "calculation_variant": calculation.get("calculation_variant"),
         "computed_total_cost": calculation.get("computed_total_cost"),
         "computed_cost_per_unit": calculation.get("computed_cost_per_unit"),
         "readiness_required_fields": required_entities,
@@ -615,6 +621,12 @@ def _required_entities(workflow: str | None, intent: str, workflow_state: dict |
     return tuple(_canonical_entity(field) for field in required)
 
 
+def _has_component_total_contract(entities: dict | None) -> bool:
+    data = entities or {}
+    components = data.get("component_costs") or data.get("ingredients_costs") or []
+    return data.get("requested_output") == "total_cost" and isinstance(components, list) and len(components) >= 2
+
+
 def _completed_entities(workflow_state: dict | None, current_entities: dict, required_entities: list[str], user_message: str = "") -> list[str]:
     completed = set()
     collected = _collected_fields(workflow_state)
@@ -670,6 +682,35 @@ def _normalize_workflow_entities(
     if workflow != "COST_CALCULATION":
         data["entity_mapping_trace"] = trace
         return data, trace
+
+    extracted_fields = extract_workflow_fields(user_message, workflow=workflow, canonical_entities=canonical_entities)
+    for field, value in (extracted_fields or {}).items():
+        if field == "entity_mapping_trace":
+            trace.extend(value or [])
+            continue
+        if value not in (None, "", [], {}) and data.get(field) in (None, "", [], {}):
+            data[field] = value
+            trace.append(
+                {
+                    "field": field,
+                    "source": "workflow_field_extractor: cost calculation live path",
+                    "value": value,
+                }
+            )
+
+    if not data.get("requested_output") and re.search(
+        r"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19|cost\s*per\s*unit|unit\s*cost",
+        str(user_message or ""),
+        flags=re.IGNORECASE,
+    ):
+        data["requested_output"] = "cost_per_unit"
+        trace.append(
+            {
+                "field": "requested_output",
+                "source": "workflow_normalization: cost-per-unit request phrase",
+                "value": "cost_per_unit",
+            }
+        )
 
     unit_cost = None if data.get("cost") not in (None, "", [], {}) else _unit_cost_from_message(user_message)
     if unit_cost not in (None, "", [], {}):
@@ -737,7 +778,7 @@ def _has_entity(entity: str, values: dict | None) -> bool:
         "product": ("product", "product_or_service", "product_or_service_names", "business_type", "product_name"),
         "product_or_business_type": ("product_or_business_type", "product", "business_type", "product_or_service_names"),
         "price": ("price", "prices", "selling_price"),
-        "cost": ("cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
+        "cost": ("cost", "total_cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
         "quantity": ("quantity", "quantities", "total_units", "units"),
         "date": ("date", "dates"),
         "daily_capacity_or_available_quantity": ("daily_capacity_or_available_quantity", "daily_capacity", "available_quantity", "quantities"),
@@ -765,7 +806,7 @@ def _entity_aliases(entity: str) -> tuple[str, ...]:
         "product": ("product", "product_or_service", "product_or_service_names", "business_type", "product_name"),
         "product_or_business_type": ("product_or_business_type", "product", "business_type", "product_or_service_names"),
         "price": ("price", "prices", "selling_price"),
-        "cost": ("cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
+        "cost": ("cost", "total_cost", "costs", "ingredients_costs", "unit_cost", "cost_per_unit"),
         "quantity": ("quantity", "quantities", "total_units", "units"),
         "date": ("date", "dates"),
         "daily_capacity_or_available_quantity": ("daily_capacity_or_available_quantity", "daily_capacity", "available_quantity", "quantities"),
@@ -848,6 +889,7 @@ def _canonical_entity(field: str) -> str:
         "product_or_service_names": "product",
         "prices": "price",
         "costs": "cost",
+        "total_cost": "cost",
         "quantities": "quantity",
         "dates": "date",
         "ingredients_costs": "cost",
@@ -910,6 +952,8 @@ def _entities_to_fields(entities: dict | None) -> dict:
         fields["cost"] = data["costs"][0]
     if data.get("cost"):
         fields["cost"] = data["cost"]
+    if data.get("total_cost"):
+        fields["total_cost"] = data["total_cost"]
     if data.get("unit_cost"):
         fields["unit_cost"] = data["unit_cost"]
     if data.get("cost_per_unit"):
@@ -920,6 +964,8 @@ def _entities_to_fields(entities: dict | None) -> dict:
         fields["quantity"] = data["quantity"]
     if data.get("total_units"):
         fields["total_units"] = data["total_units"]
+    if data.get("requested_output"):
+        fields["requested_output"] = data["requested_output"]
     if data.get("dates"):
         fields["date"] = data["dates"][0]
     return fields

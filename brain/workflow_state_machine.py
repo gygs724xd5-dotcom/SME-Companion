@@ -70,6 +70,23 @@ def _sum_ingredient_costs(items) -> float | int | None:
     return int(total) if total.is_integer() else total
 
 
+def _cost_source_available(fields: dict) -> bool:
+    return bool(
+        fields.get("ingredients_costs")
+        or fields.get("total_cost")
+        or fields.get("cost")
+        or fields.get("unit_cost")
+        or fields.get("cost_per_unit")
+    )
+
+
+def _quantity_available(fields: dict) -> bool:
+    quantity = _numeric_value(fields.get("total_units"))
+    if quantity is None:
+        quantity = _numeric_value(fields.get("quantity"))
+    return quantity is not None and float(quantity) > 0
+
+
 def cost_calculation_trace(fields: dict | None) -> dict:
     data = fields or {}
     input_cost = _numeric_value(data.get("cost"))
@@ -84,20 +101,35 @@ def cost_calculation_trace(fields: dict | None) -> dict:
     total_cost = input_total_cost if input_total_cost is not None else ingredient_total
 
     selected_formula = None
+    calculation_variant = None
     computed_total_cost = None
     computed_cost_per_unit = None
+    validation_error = None
     if unit_cost is not None and quantity is not None:
         selected_formula = "unit_cost_times_quantity"
+        calculation_variant = "TOTAL_COST_FROM_UNIT_COST"
         computed_total_cost = float(unit_cost) * float(quantity)
         computed_cost_per_unit = unit_cost
     elif total_cost is not None and quantity is not None:
         selected_formula = "total_cost_div_quantity"
+        calculation_variant = "COST_PER_UNIT_FROM_TOTAL_COST"
         computed_total_cost = total_cost
-        computed_cost_per_unit = float(total_cost) / float(quantity) if float(quantity) else None
+        if float(quantity):
+            computed_cost_per_unit = float(total_cost) / float(quantity)
+        else:
+            validation_error = "quantity_must_be_greater_than_zero"
     elif input_cost is not None and quantity is not None:
         selected_formula = "input_cost_div_quantity"
+        calculation_variant = "COST_PER_UNIT_FROM_INPUT_COST"
         computed_total_cost = input_cost
-        computed_cost_per_unit = float(input_cost) / float(quantity) if float(quantity) else None
+        if float(quantity):
+            computed_cost_per_unit = float(input_cost) / float(quantity)
+        else:
+            validation_error = "quantity_must_be_greater_than_zero"
+    elif total_cost is not None and data.get("requested_output") == "total_cost":
+        selected_formula = "sum_component_costs" if ingredient_total is not None else "provided_total_cost"
+        calculation_variant = "TOTAL_COST_FROM_COMPONENTS" if ingredient_total is not None else "TOTAL_COST_PROVIDED"
+        computed_total_cost = total_cost
 
     if isinstance(computed_total_cost, float) and computed_total_cost.is_integer():
         computed_total_cost = int(computed_total_cost)
@@ -110,9 +142,13 @@ def cost_calculation_trace(fields: dict | None) -> dict:
         "input_cost_per_unit": input_cost_per_unit,
         "input_quantity": input_quantity,
         "input_total_units": input_total_units,
+        "input_total_cost": input_total_cost,
+        "requested_output": data.get("requested_output"),
         "selected_formula": selected_formula,
+        "calculation_variant": calculation_variant,
         "computed_total_cost": computed_total_cost,
         "computed_cost_per_unit": computed_cost_per_unit,
+        "validation_error": validation_error,
     }
 
 WORKFLOW_START_STEPS = {
@@ -212,9 +248,9 @@ def _field_has_value(field: str, fields: dict) -> bool:
     if field == "selling_window_or_sales_channel":
         return bool(fields.get("selling_window") or fields.get("sales_channel"))
     if field == "ingredients_costs":
-        return bool(fields.get("ingredients_costs") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit"))
+        return _cost_source_available(fields)
     if field == "total_units":
-        return bool(fields.get("total_units") or fields.get("quantity"))
+        return _quantity_available(fields)
     if field == "price":
         return bool(fields.get("price") or fields.get("selling_price") or fields.get("prices"))
     if field == "cost":
@@ -224,6 +260,8 @@ def _field_has_value(field: str, fields: dict) -> bool:
 
 def _missing_fields(workflow: str, fields: dict, required_fields: list[str] | None = None) -> list[str]:
     if required_fields:
+        if workflow == WORKFLOW_COST_CALCULATION and fields.get("requested_output") == "total_cost":
+            required_fields = [field for field in required_fields if field != "total_units"]
         return [field for field in required_fields if not _field_has_value(field, fields)]
     if workflow == WORKFLOW_SALES_PLAN_7_DAY:
         missing = []
@@ -236,9 +274,9 @@ def _missing_fields(workflow: str, fields: dict, required_fields: list[str] | No
         return missing
     if workflow == WORKFLOW_COST_CALCULATION:
         missing = []
-        if not (fields.get("ingredients_costs") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit")):
+        if not _cost_source_available(fields):
             missing.append("ingredients_costs")
-        if not (fields.get("total_units") or fields.get("quantity")):
+        if fields.get("requested_output") != "total_cost" and not _quantity_available(fields):
             missing.append("total_units")
         return missing
     if workflow == WORKFLOW_PROFIT_CALCULATION:
@@ -258,7 +296,7 @@ def _missing_reason_by_field(required_fields: list[str], fields: dict, missing_f
     for field in required_fields or []:
         checked = []
         if field == "ingredients_costs":
-            checked = ["ingredients_costs", "cost", "unit_cost", "cost_per_unit"]
+            checked = ["ingredients_costs", "total_cost", "cost", "unit_cost", "cost_per_unit"]
         elif field == "total_units":
             checked = ["total_units", "quantity"]
         elif field == "price":

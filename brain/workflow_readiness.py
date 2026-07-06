@@ -23,8 +23,10 @@ def is_workflow_ready(workflow_state: dict | None) -> bool:
         )
 
     if workflow == WORKFLOW_COST_CALCULATION:
+        if fields.get("requested_output") == "total_cost":
+            return bool(fields.get("ingredients_costs") or fields.get("total_cost") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit"))
         return bool(
-            (fields.get("ingredients_costs") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit"))
+            (fields.get("ingredients_costs") or fields.get("total_cost") or fields.get("cost") or fields.get("unit_cost") or fields.get("cost_per_unit"))
             and (fields.get("total_units") or fields.get("quantity"))
         )
 

@@ -140,6 +140,49 @@ def completed_workflow_followup_reply(
     return None
 
 
+def completed_workflow_output_stop_condition(
+    *,
+    workflow_state: dict | None = None,
+    workflow_decision: dict | None = None,
+    response_mode: str | None = None,
+) -> dict:
+    state = workflow_state or {}
+    decision = workflow_decision or {}
+    missing_fields = list(
+        state.get("missing_fields")
+        or decision.get("missing_fields")
+        or decision.get("missing_entities")
+        or decision.get("readiness_missing_fields")
+        or []
+    )
+    workflow_complete = bool(
+        state.get("workflow_complete")
+        or state.get("step") == "completed"
+        or decision.get("workflow_complete")
+    )
+    workflow_action = decision.get("workflow_action") or state.get("workflow_action")
+    render_result_only = bool(
+        workflow_complete
+        and workflow_action == "complete"
+        and not missing_fields
+        and (response_mode in (None, GENERATE_OUTPUT, "WORKFLOW_COMPLETE"))
+    )
+    return {
+        "render_result_only": render_result_only,
+        "clarification_allowed": not render_result_only,
+        "ask_next_field_allowed": not render_result_only,
+        "proactive_followup_allowed": not render_result_only,
+        "generic_followup_allowed": not render_result_only,
+        "proactive_recommendation_allowed": not render_result_only,
+        "llm_rewrite_allowed": not render_result_only,
+        "append_question_allowed": not render_result_only,
+        "missing_fields": missing_fields,
+        "workflow_complete": workflow_complete,
+        "workflow_action": workflow_action,
+        "response_mode": response_mode,
+    }
+
+
 def build_workflow_reply(
     workflow_state: dict | None,
     *,

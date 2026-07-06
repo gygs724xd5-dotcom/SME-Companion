@@ -41,4 +41,17 @@ def is_strong_cost_calculation_message(message: str | None) -> bool:
             flags=re.IGNORECASE,
         )
     )
+    has_labeled_component_total = bool(
+        re.search(r"\u0e23\u0e27\u0e21\s*(?:\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23|\u0e01\u0e35\u0e48|\?)", normalized)
+        and len(
+            re.findall(
+                r"(?:^|\s)[A-Za-z\u0e00-\u0e7f]{1,40}?\s*" + _NUMBER_PATTERN + r"\s*(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)?",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+        )
+        >= 2
+    )
+    if has_labeled_component_total:
+        return True
     return has_cost_word and has_unit_cost and has_quantity

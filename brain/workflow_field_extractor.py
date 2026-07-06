@@ -91,9 +91,33 @@ def _extract_channel(message: str) -> str | None:
 def _extract_cost_fields(message: str) -> dict:
     ingredients = []
     total_units = None
+    total_cost = None
     selling_price = None
     unit_cost = None
+    requested_output = None
+    component_costs = []
     text = str(message or "")
+
+    if re.search(
+        r"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19|cost\s*per\s*unit|unit\s*cost",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        requested_output = "cost_per_unit"
+    elif re.search(
+        r"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e23\u0e27\u0e21|\u0e23\u0e27\u0e21\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19|\u0e23\u0e27\u0e21\s*(?:\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23|\u0e01\u0e35\u0e48)|total\s*cost",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        requested_output = "total_cost"
+
+    total_cost_match = re.search(
+        r"(?:\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e23\u0e27\u0e21|total\s*cost)\D*(" + _NUMBER_PATTERN + r")",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if total_cost_match:
+        total_cost = _to_number(total_cost_match.group(1))
 
     unit_cost_match = re.search(
         r"(" + _NUMBER_PATTERN + r")\s*(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)\s*(?:\u0e15\u0e48\u0e2d|/)\s*(?:\u0e0a\u0e34\u0e49\u0e19|\u0e25\u0e39\u0e01|\u0e2d\u0e31\u0e19|pcs?|units?)",
@@ -102,6 +126,53 @@ def _extract_cost_fields(message: str) -> dict:
     )
     if unit_cost_match:
         unit_cost = _to_number(unit_cost_match.group(1))
+    unit_cost_prefix_match = re.search(
+        r"(?:\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\s*(?:\u0e0a\u0e34\u0e49\u0e19\u0e25\u0e30|\u0e15\u0e48\u0e2d\u0e0a\u0e34\u0e49\u0e19)|unit\s*cost)\D*("
+        + _NUMBER_PATTERN
+        + r")",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if unit_cost_prefix_match:
+        unit_cost = _to_number(unit_cost_prefix_match.group(1))
+
+    if requested_output == "total_cost" and total_cost is None and unit_cost is None:
+        for match in re.finditer(
+            r"(?P<name>[A-Za-z\u0e00-\u0e7f]{1,40}?)\s*(?P<amount>" + _NUMBER_PATTERN + r")\s*(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)?",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            name = re.sub(r"[\s,:-]+", " ", match.group("name")).strip()
+            lowered_name = name.lower()
+            if not name or any(
+                token in lowered_name
+                for token in (
+                    "total cost",
+                    "cost",
+                    "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19",
+                    "\u0e23\u0e27\u0e21",
+                    "\u0e17\u0e33",
+                    "\u0e44\u0e14\u0e49",
+                    "\u0e02\u0e32\u0e22",
+                    "\u0e23\u0e32\u0e04\u0e32",
+                )
+            ):
+                continue
+            currency_match = re.search(r"(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)", match.group(0), flags=re.IGNORECASE)
+            amount = _to_number(match.group("amount"))
+            component_costs.append(
+                {
+                    "label": name,
+                    "name": name,
+                    "amount": amount,
+                    "cost": amount,
+                    "currency": "THB" if currency_match else None,
+                    "raw_text": match.group(0).strip(),
+                    "source": "workflow_field_extractor",
+                    "provenance": "deterministic_labeled_component_cost",
+                    "order": len(component_costs),
+                }
+            )
 
     unit_match = re.search(
         r"(?:\u0e02\u0e32\u0e22\u0e27\u0e31\u0e19\u0e25\u0e30|\u0e27\u0e31\u0e19\u0e25\u0e30)\s*("
@@ -127,7 +198,7 @@ def _extract_cost_fields(message: str) -> dict:
     if cost_match:
         ingredients.append({"name": "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "cost": _to_number(cost_match.group(1))})
 
-    for raw_line in re.split(r"[\n,]+", text):
+    for raw_line in ([] if component_costs else re.split(r"[\n,]+", text)):
         line = raw_line.strip()
         if not line:
             continue
@@ -135,6 +206,8 @@ def _extract_cost_fields(message: str) -> dict:
         if not numbers:
             continue
         lowered = line.lower()
+        if re.match(r"^\s*" + _NUMBER_PATTERN, line):
+            continue
         if any(daily_term in lowered for daily_term in ["ขายวันละ", "วันละ"]):
             line_without_daily = re.sub(
                 r"(?:\u0e02\u0e32\u0e22\u0e27\u0e31\u0e19\u0e25\u0e30|\u0e27\u0e31\u0e19\u0e25\u0e30)\s*"
@@ -165,16 +238,23 @@ def _extract_cost_fields(message: str) -> dict:
             ingredients.append({"name": name, "cost": amount})
 
     fields = {}
+    if component_costs:
+        ingredients.extend(component_costs)
+        fields["component_costs"] = component_costs
     if ingredients:
         fields["ingredients_costs"] = ingredients
+    if total_cost is not None:
+        fields["total_cost"] = total_cost
     if unit_cost:
         fields["cost"] = unit_cost
         fields["unit_cost"] = unit_cost
         fields["cost_per_unit"] = unit_cost
-    if total_units:
+    if total_units is not None:
         fields["total_units"] = total_units
-    if selling_price:
+    if selling_price and selling_price != total_units:
         fields["selling_price"] = selling_price
+    if requested_output:
+        fields["requested_output"] = requested_output
     return fields
 
 

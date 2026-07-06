@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
+from brain.analytical_turn_classifier import classify_analytical_turn
 from brain.business_context_engine import BUSINESS_TYPE_ALIASES, PRODUCT_ALIASES
 
 
@@ -233,6 +234,11 @@ def _extract_simulation_values(message: str) -> list[dict]:
     return _unique(values)
 
 
+def _explicit_price_item(item: dict) -> bool:
+    raw = str((item or {}).get("raw") or "").lower()
+    return any(token in raw for token in ("\u0e02\u0e32\u0e22", "\u0e23\u0e32\u0e04\u0e32\u0e02\u0e32\u0e22", "sell", "selling price"))
+
+
 def _missing_entities(intent: str | None, entities: dict) -> list[str]:
     missing = []
     required = REQUIRED_BY_INTENT.get(str(intent or "unknown"), ())
@@ -284,6 +290,7 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
             "entity_confidence": 0.0,
         }
 
+    semantic = classify_analytical_turn(message)
     prices, costs = _extract_money(message)
     if detected_intent == "profit_calculation":
         prices, costs = _normalize_profit_money(message, prices, costs)
@@ -291,6 +298,10 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
         labeled_cost = _extract_labeled_money(message, ("\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19\u0e23\u0e27\u0e21", "\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "\u0e17\u0e38\u0e19", "total cost", "cost"))
         if labeled_cost:
             costs = _unique([labeled_cost, *[item for item in costs if item.get("amount") != labeled_cost.get("amount")]])
+            prices = [item for item in prices if item.get("amount") != labeled_cost.get("amount") or _explicit_price_item(item)]
+        prices = [item for item in prices if _explicit_price_item(item)]
+    if semantic.get("analytical_statement_detected") or semantic.get("correction_detected"):
+        prices = [item for item in prices if _explicit_price_item(item)]
     unit_cost = _extract_unit_cost(message) if detected_intent == "cost_calculation" else None
     normalization_trace = []
     if unit_cost:
@@ -308,6 +319,19 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
     customer_phrases = _extract_customer_phrases(message)
     customer_phrase = next((phrase for phrase in EXPENSIVE_PHRASES if phrase in customer_phrases), None)
     customer_phrase = customer_phrase or (customer_phrases[-1] if customer_phrases else None)
+    comparison_values = _extract_simulation_values(message)
+    if semantic.get("comparison"):
+        comparison_values = _unique(
+            [
+                {
+                    **semantic["comparison"],
+                    "from": semantic["comparison"].get("from_value"),
+                    "to": semantic["comparison"].get("to_value"),
+                },
+                *comparison_values,
+            ]
+        )
+    correction = semantic.get("correction") or {}
     entities = _clean_dict(
         {
             "product_or_service_names": product_or_service_names,
@@ -322,7 +346,16 @@ def extract_business_entities(user_message: str | None, detected_intent: str | N
             "customer_phrases": customer_phrases,
             "customer_phrase": customer_phrase,
             "business_type_hints": _extract_business_type_hints(message),
-            "comparison_or_simulation_values": _extract_simulation_values(message),
+            "comparison_or_simulation_values": comparison_values,
+            "analytical_statement_detected": semantic.get("analytical_statement_detected"),
+            "comparison_change_detected": semantic.get("comparison_change_detected"),
+            "correction_detected": semantic.get("correction_detected"),
+            "explicit_calculation_request_detected": semantic.get("explicit_calculation_request_detected"),
+            "comparison_change": semantic.get("comparison"),
+            "correction": semantic.get("correction"),
+            "correction_current_value": correction.get("current_value"),
+            "superseded_values": correction.get("superseded_values"),
+            "superseded_claims": correction.get("superseded_claims"),
             "entity_mapping_trace": normalization_trace,
         }
     )

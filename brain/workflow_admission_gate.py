@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+from brain.analytical_turn_classifier import classify_analytical_turn
+
 
 WORKFLOW_ADMISSION_GATE_VERSION = "5.8.3"
 
@@ -26,6 +28,8 @@ class WorkflowAdmissionReason(str, Enum):
     WORKFLOW_KEYWORD_ONLY_MATCH = "WORKFLOW_KEYWORD_ONLY_MATCH"
     NO_WORKFLOW_CANDIDATE = "NO_WORKFLOW_CANDIDATE"
     LEGACY_COMPATIBILITY_ALLOW = "LEGACY_COMPATIBILITY_ALLOW"
+    ANALYTICAL_STATEMENT_NOT_EXECUTABLE = "ANALYTICAL_STATEMENT_NOT_EXECUTABLE"
+    CORRECTION_NOT_EXECUTABLE = "CORRECTION_NOT_EXECUTABLE"
 
 
 REQUIRED_ENTITIES_BY_WORKFLOW = {
@@ -107,6 +111,14 @@ class WorkflowAdmissionResult:
     analytical_question_detected: bool
     business_level_scope_detected: bool
     keyword_only_match_detected: bool
+    analytical_statement_detected: bool = False
+    comparison_change_detected: bool = False
+    correction_detected: bool = False
+    explicit_calculation_request_detected: bool = False
+    executable_request_confidence: float = 0.0
+    workflow_admission_suppressed_reason: str | None = None
+    comparison_values: dict | None = None
+    correction: dict | None = None
     understanding_confidence: Any = None
     resolver_confidence: Any = None
     required_entities: list[str] = field(default_factory=list)
@@ -162,6 +174,17 @@ def build_workflow_admission_decision(
     keyword_only = bool(keyword_match and not executable_signal and not executable and (analytical_signal or _looks_like_question(normalized)))
     low_understanding = _is_low_confidence(understanding.get("confidence_score"), understanding.get("confidence"))
     high_resolver = _is_high_confidence(resolver.get("confidence_score"), resolver.get("confidence"))
+    semantic = classify_analytical_turn(message)
+    explicit_calc = bool(semantic.get("explicit_calculation_request_detected"))
+    if explicit_calc:
+        executable_signal = True
+    analytical_statement = bool(semantic.get("analytical_statement_detected"))
+    correction_detected = bool(semantic.get("correction_detected"))
+    semantic_suppressed_reason = None
+    if correction_detected and not explicit_calc:
+        semantic_suppressed_reason = WorkflowAdmissionReason.CORRECTION_NOT_EXECUTABLE.value
+    elif analytical_statement and not explicit_calc:
+        semantic_suppressed_reason = WorkflowAdmissionReason.ANALYTICAL_STATEMENT_NOT_EXECUTABLE.value
 
     if not candidate:
         return _result(
@@ -180,6 +203,7 @@ def build_workflow_admission_decision(
             missing,
             False,
             "conversation",
+            semantic=semantic,
         )
 
     if candidate in LEGACY_AUTO_ADMIT_WORKFLOWS:
@@ -199,6 +223,28 @@ def build_workflow_admission_decision(
             missing,
             executable,
             None,
+            semantic=semantic,
+        )
+
+    if semantic_suppressed_reason:
+        return _result(
+            candidate,
+            WorkflowAdmissionDecision.REJECT_TO_CONVERSATION,
+            WorkflowAdmissionReason(semantic_suppressed_reason),
+            0.94,
+            False,
+            True,
+            business_scope,
+            keyword_match,
+            understanding,
+            resolver,
+            required,
+            completed,
+            missing,
+            False,
+            "conversation",
+            semantic=semantic,
+            suppressed_reason=semantic_suppressed_reason,
         )
 
     if business_scope and analytical_signal:
@@ -218,6 +264,7 @@ def build_workflow_admission_decision(
             missing,
             executable,
             "conversation",
+            semantic=semantic,
         )
 
     if analytical_signal and not executable_signal:
@@ -237,6 +284,7 @@ def build_workflow_admission_decision(
             missing,
             executable,
             "conversation",
+            semantic=semantic,
         )
 
     if executable_signal:
@@ -256,6 +304,7 @@ def build_workflow_admission_decision(
             missing,
             executable,
             None,
+            semantic=semantic,
         )
 
     if executable:
@@ -275,6 +324,7 @@ def build_workflow_admission_decision(
             missing,
             executable,
             None,
+            semantic=semantic,
         )
 
     if completed and keyword_match and not analytical_signal and not business_scope:
@@ -294,6 +344,7 @@ def build_workflow_admission_decision(
             missing,
             executable,
             None,
+            semantic=semantic,
         )
 
     if keyword_only:
@@ -314,6 +365,7 @@ def build_workflow_admission_decision(
             missing,
             executable,
             "clarification",
+            semantic=semantic,
         )
 
     if low_understanding and high_resolver and keyword_match:
@@ -333,6 +385,7 @@ def build_workflow_admission_decision(
             missing,
             executable,
             "clarification",
+            semantic=semantic,
         )
 
     return _result(
@@ -351,6 +404,7 @@ def build_workflow_admission_decision(
         missing,
         executable,
         "clarification",
+        semantic=semantic,
     )
 
 
@@ -409,9 +463,12 @@ def _result(
     missing: list[str],
     executable: bool,
     fallback: str | None,
+    semantic: dict | None = None,
+    suppressed_reason: str | None = None,
 ) -> dict:
     admitted = decision == WorkflowAdmissionDecision.ADMIT
     summary = f"{decision.value}: {reason.value}"
+    semantic = semantic or {}
     return WorkflowAdmissionResult(
         workflow_candidate=candidate,
         decision=decision.value,
@@ -422,6 +479,14 @@ def _result(
         analytical_question_detected=analytical_signal,
         business_level_scope_detected=business_scope,
         keyword_only_match_detected=keyword_only,
+        analytical_statement_detected=bool(semantic.get("analytical_statement_detected")),
+        comparison_change_detected=bool(semantic.get("comparison_change_detected")),
+        correction_detected=bool(semantic.get("correction_detected")),
+        explicit_calculation_request_detected=bool(semantic.get("explicit_calculation_request_detected")),
+        executable_request_confidence=0.92 if executable_signal else 0.0,
+        workflow_admission_suppressed_reason=suppressed_reason,
+        comparison_values=semantic.get("comparison"),
+        correction=semantic.get("correction"),
         understanding_confidence=understanding.get("confidence_score", understanding.get("confidence")),
         resolver_confidence=resolver.get("confidence_score", resolver.get("confidence")),
         required_entities=required,

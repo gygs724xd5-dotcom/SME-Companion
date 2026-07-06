@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import json
+import re
 
 from brain.business_situation import build_business_situation
 from brain.brain_observatory import build_brain_observatory
@@ -270,6 +271,11 @@ def _workflow_candidate_for_admission(plan: dict | None, intent_resolution: dict
     return planner_workflow or resolver_workflow
 
 
+def _workflow_admission_semantic_suppressed(admission: dict | None) -> bool:
+    reason = str((admission or {}).get("workflow_admission_suppressed_reason") or (admission or {}).get("reason") or "")
+    return reason in {"ANALYTICAL_STATEMENT_NOT_EXECUTABLE", "CORRECTION_NOT_EXECUTABLE"}
+
+
 def _workflow_owned_metric_fields(workflow: dict | None) -> list[str]:
     mapping = {
         "price": "selling_price",
@@ -288,6 +294,17 @@ def _workflow_owned_metric_fields(workflow: dict | None) -> list[str]:
 
 def _startup_cost_knowledge_context(text: str) -> bool:
     compact = "".join(str(text or "").lower().split())
+    normalized = str(text or "").lower()
+    labeled_amounts = re.findall(
+        r"(?:^|\s)[A-Za-z\u0e00-\u0e7f]{1,40}?\s*\d+(?:,\d{3})*(?:\.\d+)?\s*(?:\u0e1a\u0e32\u0e17|\u0e3f|thb|baht)?",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if len(labeled_amounts) >= 2 and re.search(
+        r"\u0e23\u0e27\u0e21\s*(?:\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19)?\s*(?:\u0e40\u0e17\u0e48\u0e32\u0e44\u0e23|\u0e01\u0e35\u0e48|\?)",
+        normalized,
+    ):
+        return False
     return bool(
         any(token in compact for token in ("อยากเปิดร้าน", "เปิดร้าน", "ใช้ทุน", "ทุนเท่าไร", "startupcost"))
         and not any(token in compact for token in ("ช่วยวางแผนขาย", "salesplan", "แผนขาย7วัน"))
@@ -739,7 +756,12 @@ def build_task_route(application_state, user_message) -> dict:
             "diagnostic_summary": "REJECT_TO_CONVERSATION: STARTUP_COST_KNOWLEDGE_GAP",
         }
     active_workflow_present = bool(active_workflow_state(state))
-    if active_workflow_present or (not workflow_candidate) or workflow_admission_gate.get("decision") == WorkflowAdmissionDecision.ADMIT.value:
+    semantic_suppressed = _workflow_admission_semantic_suppressed(workflow_admission_gate)
+    if (
+        (active_workflow_present and not semantic_suppressed)
+        or (not workflow_candidate)
+        or workflow_admission_gate.get("decision") == WorkflowAdmissionDecision.ADMIT.value
+    ):
         workflow_decision = decide_business_workflow(
             user_message,
             business_intent={
@@ -755,6 +777,7 @@ def build_task_route(application_state, user_message) -> dict:
         workflow_decision["workflow_admission_gate"] = workflow_admission_gate
         if (
             active_workflow_present
+            and not semantic_suppressed
             and workflow_admission_gate.get("decision") != WorkflowAdmissionDecision.ADMIT.value
             and workflow_decision.get("workflow_action") in {"start_new", "continue", "complete", "resume"}
         ):
@@ -772,6 +795,13 @@ def build_task_route(application_state, user_message) -> dict:
             workflow_admission_gate,
             detected_intent=intent_resolution.get("resolved_intent") or business_intent.get("detected_intent"),
         )
+    if workflow_decision.get("workflow_complete") or workflow_decision.get("workflow_action") == "complete":
+        plan = {
+            **plan,
+            "missing_information": [],
+            "next_step": "route_to_capability",
+            "can_execute": True,
+        }
     workflow_domain_boundary = _workflow_domain_boundary_for_decision(state, workflow_decision)
     if workflow_domain_boundary.get("workflow_domain_boundary_applied"):
         workflow_decision = {

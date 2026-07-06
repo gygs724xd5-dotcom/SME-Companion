@@ -110,7 +110,7 @@ def _missing_information(application_state: dict, capability_key: str, workflow:
             if not (collected.get("selling_window") or collected.get("sales_channel")):
                 missing.append("selling_window_or_sales_channel")
         elif workflow == WORKFLOW_COST_CALCULATION:
-            if not (collected.get("ingredients_costs") or collected.get("cost") or collected.get("unit_cost") or collected.get("cost_per_unit")):
+            if not (collected.get("ingredients_costs") or collected.get("total_cost") or collected.get("cost") or collected.get("unit_cost") or collected.get("cost_per_unit")):
                 missing.append("ingredients_costs")
             if not (collected.get("total_units") or collected.get("quantity")):
                 missing.append("total_units")

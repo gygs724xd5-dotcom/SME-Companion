@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.workflow_readiness import (
     WORKFLOW_CONTENT_PLAN,
     WORKFLOW_COST_CALCULATION,
@@ -78,6 +79,8 @@ def _strong_cost_calculation_evidence(message: str, business_context: dict | Non
     detected = context.get("detected_intent") or context.get("current_message_intent")
     matched_keywords = [str(keyword) for keyword in context.get("matched_intent_keywords") or []]
     text = str(message or "")
+    if is_strong_cost_calculation_message(text):
+        return True
     has_cost_intent = detected == "cost_calculation" or any(
         keyword in {"\u0e15\u0e49\u0e19\u0e17\u0e38\u0e19", "\u0e17\u0e38\u0e19", "cost", "margin"}
         for keyword in matched_keywords
@@ -278,10 +281,11 @@ def resolve_intent(
         score_by_intent = {item["intent"]: item["score"] for item in candidates}
         cost_score = int(score_by_intent.get("cost_calculation") or 0)
         pricing_score = int(score_by_intent.get("pricing_question") or 0)
-        if winner.get("intent") == "pricing_question" and cost_score >= pricing_score - 10:
-            winner = {"intent": "cost_calculation", "score": cost_score}
+        if winner.get("intent") != "cost_calculation":
+            previous_intent = winner.get("intent") or "pricing_question"
+            winner = {"intent": "cost_calculation", "score": max(cost_score, pricing_score, 86)}
             resolver_override = {
-                "from_intent": "pricing_question",
+                "from_intent": previous_intent,
                 "to_intent": "cost_calculation",
                 "reason": "current message has cost_calculation intent with numeric cost/quantity evidence",
             }
