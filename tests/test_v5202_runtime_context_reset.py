@@ -9,7 +9,10 @@ from brain.runtime_context_reset import (
 from brain.conversation_runtime_reset import reset_transient_conversation_state
 from brain.response_transformation_engine import transform_response
 from brain.task_router import build_task_route
-from brain.workflow_lifecycle import classify_completed_workflow_followup
+from brain.workflow_lifecycle import (
+    classify_completed_workflow_followup,
+    completed_workflow_context,
+)
 from brain.workflow_readiness import WORKFLOW_CONTENT_PLAN, WORKFLOW_COST_CALCULATION
 
 
@@ -171,3 +174,32 @@ class V5202RuntimeContextResetTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_completed_workflow_context_ignores_store_completed_after_reset(self):
+        state = {
+            "developer": {"conversation_reset_applied": True},
+            "store": {
+                "last_completed_workflow": _completed_cost_workflow(),
+            },
+        }
+
+        self.assertIsNone(completed_workflow_context(state))
+
+    def test_completed_workflow_context_ignores_all_completed_sources_after_reset(self):
+        completed_workflow = _completed_cost_workflow()
+        state = {
+            "developer": {"conversation_reset_applied": True},
+            "store": {
+                "last_completed_workflow": completed_workflow,
+            },
+            "business_memory": {
+                "completed_workflows": [completed_workflow],
+            },
+            "conversation": {
+                "conversation_memory": {
+                    "completed_workflows": [completed_workflow],
+                },
+            },
+        }
+
+        self.assertIsNone(completed_workflow_context(state))

@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -110,19 +110,24 @@ def mark_completed(workflow_state: dict | None, reason: str) -> dict:
 
 def completed_workflow_context(application_state: dict | None) -> dict | None:
     state = application_state or {}
+
+    if (state.get("developer") or {}).get("conversation_reset_applied"):
+        return None
+
     store_completed = (state.get("store") or {}).get("last_completed_workflow")
     if isinstance(store_completed, dict) and store_completed.get("workflow_id"):
         return deepcopy(store_completed)
-    if (state.get("developer") or {}).get("conversation_reset_applied"):
-        return None
+
     completed = (state.get("business_memory") or {}).get("completed_workflows") or []
     for item in reversed(completed):
         if isinstance(item, dict) and item.get("workflow_id"):
             return deepcopy(item)
+
     completed = (((state.get("conversation") or {}).get("conversation_memory") or {}).get("completed_workflows") or [])
     for item in reversed(completed):
         if isinstance(item, dict) and item.get("workflow_id"):
             return deepcopy(item)
+
     return None
 
 
