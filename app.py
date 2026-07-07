@@ -4500,6 +4500,54 @@ def _show_chat_companion(
             response_candidates=response_candidates,
         )
 
+    semantic_direct_reply = build_general_direct_response(user_message)
+    if semantic_direct_reply:
+        semantic_direct_reply = _clean_chat_reply(semantic_direct_reply, preserve_greeting=False)
+        topic = state.get("current_topic")
+        _update_conversation_state_after_assistant(semantic_direct_reply, conversation_intent, topic)
+
+        assistant_message = {
+            "role": "assistant",
+            "content": semantic_direct_reply,
+            "show_business_insights": False,
+        }
+
+        commit_assistant_turn(
+            semantic_direct_reply,
+            intent=conversation_intent,
+            workflow=(task_route.get("intent_resolution") or {}).get("resolved_workflow"),
+            business_topic=topic,
+            response_metadata={
+                "response_source": "semantic_direct_response",
+                "last_response_empty": not bool(semantic_direct_reply),
+                "user_message": user_message,
+            },
+            assistant_message=assistant_message,
+        )
+
+        finalize_debug("semantic_direct_response", semantic_direct_reply)
+        add_pipeline_event(
+            "response",
+            "_show_chat_companion",
+            "assistant message appended",
+            {"response_source": "semantic_direct_response", "last_response_empty": not bool(semantic_direct_reply)},
+        )
+
+        with st.chat_message("assistant"):
+            _render_assistant_message(semantic_direct_reply)
+
+        add_pipeline_event(
+            "render",
+            "_show_chat_companion",
+            "assistant rendered",
+            {"response_source": "semantic_direct_response", "last_response_empty": not bool(semantic_direct_reply)},
+        )
+
+        st.session_state["chat_pipeline_in_progress"] = False
+        add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
+        finalize_pipeline_trace()
+        return
+
     cognitive_context = (conversation_state.get("conversation_cognitive_context") or {})
     structured_runtime = resolve_v5941_runtime_response(
         task_route,
@@ -4762,6 +4810,8 @@ def _show_chat_companion(
             goal_status=goal_status or {},
             business_os_state=business_os_state or {},
         )
+
+
     if direct_reply:
         direct_reply = _clean_chat_reply(direct_reply, preserve_greeting=False)
         topic = state.get("current_topic")
@@ -4802,6 +4852,8 @@ def _show_chat_companion(
         add_pipeline_event("finalize", "_show_chat_companion", "pipeline finalized")
         finalize_pipeline_trace()
         return
+
+
 
     if detected_workflow_v2 == V2_WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
@@ -4882,7 +4934,9 @@ def _show_chat_companion(
 
 
     if general_route.get("handled"):
+
         general_reply = build_general_direct_response(user_message)
+
         general_source = "general_direct_response" if general_reply else "general_response"
         general_candidates = []
         if general_reply:

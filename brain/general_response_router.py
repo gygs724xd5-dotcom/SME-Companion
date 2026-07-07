@@ -73,6 +73,69 @@ def select_general_response_route(route: dict | None, conversation_intent: str |
 
     return {"handled": False, "reason": "not_general_response"}
 
+def _build_cost_change_direct_response(user_message: str | None) -> str | None:
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+
+    normalized = text.lower()
+
+    if "ต้นทุน" not in normalized:
+        return None
+
+    correction_detected = any(
+        marker in normalized
+        for marker in ("แก้ใหม่", "จริง ๆ", "จริงๆ", "เท่าเดิม", "ยัง")
+    )
+
+    if correction_detected:
+        numbers = [float(match.replace(",", "")) for match in re.findall(r"\d+(?:,\d{3})*(?:\.\d+)?", text)]
+        if numbers:
+            value = numbers[-1]
+            if value.is_integer():
+                value_text = str(int(value))
+            else:
+                value_text = f"{value:g}"
+            if "เท่าเดิม" in normalized or "ยัง" in normalized:
+                return f"รับทราบครับ ผมจะถือว่าต้นทุนที่ถูกต้องคือ {value_text} บาทเท่าเดิม"
+            return f"รับทราบครับ ผมจะอัปเดตว่าต้นทุนที่ถูกต้องคือ {value_text} บาท"
+        return "รับทราบครับ ผมจะยึดข้อมูลต้นทุนที่แก้ไขล่าสุดนี้เป็นข้อมูลที่ถูกต้อง"
+
+    change_match = re.search(
+        r"ต้นทุน\s*(เพิ่ม|ลด|เปลี่ยน)?\s*(?:จาก)?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:บาท)?\s*(?:เป็น|เหลือ|ไปเป็น|มาเป็น)\s*(\d+(?:,\d{3})*(?:\.\d+)?)",
+        normalized,
+    )
+    if not change_match:
+        return None
+
+    direction_word = change_match.group(1)
+    old_value = float(change_match.group(2).replace(",", ""))
+    new_value = float(change_match.group(3).replace(",", ""))
+
+    diff = new_value - old_value
+    abs_diff = abs(diff)
+    percent = (abs_diff / old_value * 100) if old_value else 0
+
+    def fmt(value: float) -> str:
+        return str(int(value)) if float(value).is_integer() else f"{value:g}"
+
+    if diff > 0:
+        direction = "เพิ่มขึ้น"
+    elif diff < 0:
+        direction = "ลดลง"
+    elif direction_word:
+        direction = "ไม่เปลี่ยนแปลง"
+    else:
+        direction = "เปลี่ยนแปลง"
+
+    if diff == 0:
+        return f"รับทราบครับ ต้นทุนยังอยู่ที่ {fmt(new_value)} บาท เท่าเดิม"
+
+    return (
+        f"รับทราบครับ ต้นทุนเปลี่ยนจาก {fmt(old_value)} บาทเป็น {fmt(new_value)} บาท "
+        f"{direction} {fmt(abs_diff)} บาท หรือประมาณ {percent:.1f}%"
+    )
+
 
 def build_general_direct_response(user_message: str | None) -> str | None:
     """Small deterministic answers for stable general questions when LLM is unavailable."""
@@ -80,6 +143,11 @@ def build_general_direct_response(user_message: str | None) -> str | None:
     normalized = text.lower()
     if not normalized:
         return None
+
+    cost_change_reply = _build_cost_change_direct_response(user_message)
+
+    if cost_change_reply:
+        return cost_change_reply
 
     if "ประเทศไทย" in normalized and "กี่จังหวัด" in normalized:
         return "ประเทศไทยมี 77 จังหวัดครับ"
