@@ -62,6 +62,7 @@ from brain.workflow_authorization_gate import (
     authorize_workflow_mutation,
 )
 from brain.workflow_lifecycle import (
+    completed_workflow_context,
     mark_completed,
     mark_executing,
 )
@@ -91,6 +92,18 @@ from brain.response_intelligence_engine import guard_response, select_final_resp
 from brain.response_commit_boundary import commit_response_boundary
 from brain.cognitive_authority_audit import attach_cognitive_authority_audit, cognitive_authority_trace
 from brain.knowledge_skill_outcome_hardening import resolve_v5941_runtime_response
+from brain.response_authority import (
+    CLARIFICATION_QUESTION,
+    COMPLETE_WORKFLOW,
+    CONTINUE_WORKFLOW,
+    DIRECT_BUSINESS_ANALYSIS,
+    DIRECT_SEMANTIC_ANSWER,
+    LLM_ASSISTED_RESPONSE,
+    REFUSE_WORKFLOW_MUTATION,
+    RESET_ACKNOWLEDGEMENT,
+    START_WORKFLOW,
+    decide_response_authority,
+)
 from brain.response_transformation_engine import (
     build_response_memory,
 )
@@ -798,6 +811,156 @@ def _update_chat_developer_diagnostics(
     _update_application_section("developer", developer_state)
 
 
+_CANONICAL_RESPONSE_AUTHORITY_MODES = {
+    DIRECT_SEMANTIC_ANSWER,
+    DIRECT_BUSINESS_ANALYSIS,
+    CLARIFICATION_QUESTION,
+    START_WORKFLOW,
+    CONTINUE_WORKFLOW,
+    COMPLETE_WORKFLOW,
+    REFUSE_WORKFLOW_MUTATION,
+    LLM_ASSISTED_RESPONSE,
+    RESET_ACKNOWLEDGEMENT,
+}
+
+
+def _route_extracted_entities(route: dict | None) -> dict:
+    route = route or {}
+    for container in (
+        route.get("business_intent_entities") or {},
+        route.get("extracted_entities") or {},
+        route.get("business_workflow") or {},
+    ):
+        if not isinstance(container, dict):
+            continue
+        nested = container.get("extracted_entities")
+        if isinstance(nested, dict):
+            return nested
+    workflow = route.get("business_workflow") or {}
+    return workflow.get("extracted_entities") if isinstance(workflow.get("extracted_entities"), dict) else {}
+
+
+def _route_has_explicit_workflow_intent(route: dict | None) -> bool:
+    route = route or {}
+    planner = route.get("planner_output") or {}
+    intent_resolution = route.get("intent_resolution") or {}
+    workflow = route.get("business_workflow") or {}
+    workflow_action = workflow.get("workflow_action")
+    return bool(
+        planner.get("workflow")
+        or intent_resolution.get("resolved_workflow")
+        or workflow_action in {"start_new", "continue", "complete"}
+        or workflow.get("workflow_complete")
+    )
+
+
+def _build_response_authority_active_workflow(
+    active_workflow: dict | None = None,
+    workflow_state: dict | None = None,
+) -> dict | None:
+    if isinstance(active_workflow, dict) and active_workflow:
+        workflow = dict(active_workflow)
+        if workflow.get("current_step") and not workflow.get("workflow_status") and not workflow.get("step"):
+            workflow["workflow_status"] = workflow.get("current_step")
+        return workflow
+    if isinstance(workflow_state, dict) and workflow_state:
+        return dict(workflow_state)
+    conversation_state = st.session_state.get("conversation_state") or {}
+    workflow_state_v2 = conversation_state.get("workflow_state_v2") or {}
+    if isinstance(workflow_state_v2, dict) and workflow_state_v2:
+        return dict(workflow_state_v2)
+    current_workflow = conversation_state.get("current_workflow")
+    workflow_step = conversation_state.get("workflow_step")
+    if current_workflow:
+        return {
+            "workflow_id": current_workflow,
+            "workflow_status": workflow_step,
+            "collected_fields": dict(conversation_state.get("workflow_data") or {}),
+        }
+    return None
+
+
+def _record_response_authority_shadow_decision(
+    user_message: str,
+    *,
+    task_route: dict | None = None,
+    active_workflow: dict | None = None,
+    workflow_state: dict | None = None,
+    reset_boundary_active: bool = False,
+    explicit_workflow_intent: bool | None = None,
+    evidence_sufficient: bool = True,
+    semantic_correction_detected: bool | None = None,
+    analytical_statement_detected: bool | None = None,
+) -> dict:
+    try:
+        route = task_route or st.session_state.get("last_task_route") or {}
+        app_state = _sync_session_to_application_state()
+        entities = _route_extracted_entities(route)
+        completed_context = completed_workflow_context(app_state)
+        reset_diagnostics = st.session_state.get("conversation_reset_diagnostics") or {}
+        reset_active = bool(
+            reset_boundary_active
+            or reset_diagnostics.get("conversation_reset_applied")
+            or reset_diagnostics.get("runtime_context_reset_applied")
+            or (app_state.get("developer") or {}).get("conversation_reset_applied")
+        )
+        decision = decide_response_authority(
+            user_message,
+            explicit_workflow_intent=(
+                _route_has_explicit_workflow_intent(route)
+                if explicit_workflow_intent is None
+                else bool(explicit_workflow_intent)
+            ),
+            active_workflow=_build_response_authority_active_workflow(active_workflow, workflow_state),
+            completed_workflow_context=dict(completed_context or {}) if completed_context else None,
+            reset_boundary_active=reset_active,
+            evidence_sufficient=bool(evidence_sufficient),
+            semantic_correction_detected=(
+                bool(entities.get("correction_detected"))
+                if semantic_correction_detected is None
+                else bool(semantic_correction_detected)
+            ),
+            analytical_statement_detected=(
+                bool(entities.get("analytical_statement_detected"))
+                if analytical_statement_detected is None
+                else bool(analytical_statement_detected)
+            ),
+        )
+        if decision.get("response_mode") not in _CANONICAL_RESPONSE_AUTHORITY_MODES:
+            decision = {
+                **decision,
+                "response_mode": LLM_ASSISTED_RESPONSE,
+                "reason": "authority_shadow_unknown_mode",
+                "workflow_allowed": False,
+            }
+    except Exception as authority_error:
+        decision = {
+            "response_mode": LLM_ASSISTED_RESPONSE,
+            "workflow_allowed": False,
+            "commit_required": False,
+            "reason": "authority_shadow_error",
+            "diagnostics": {
+                "response_authority_version": "5.11.2",
+                "response_authority_error": f"{type(authority_error).__name__}: {authority_error}",
+            },
+        }
+
+    shadow_diagnostics = {
+        "response_authority_decision": decision,
+        "response_authority_mode": decision.get("response_mode"),
+        "response_authority_reason": decision.get("reason"),
+        "response_authority_workflow_allowed": bool(decision.get("workflow_allowed")),
+        "response_authority_shadow_mode": True,
+    }
+    try:
+        st.session_state["last_response_authority_decision"] = decision
+        st.session_state["last_response_authority_diagnostics"] = shadow_diagnostics
+        _update_application_section("developer", shadow_diagnostics)
+    except Exception:
+        pass
+    return shadow_diagnostics
+
+
 def _resolve_assistant_reply(reply: str | None, response_source: str) -> tuple[str, str, bool]:
     final_reply = clean_response(reply)
     if final_reply:
@@ -1281,6 +1444,9 @@ def _finalize_ai_pipeline_debug_trace(
         "rewrite_mode",
         "translation_mode",
     ) if key in workflow_extra}}
+    response_authority_shadow = st.session_state.get("last_response_authority_diagnostics") or {}
+    if response_authority_shadow:
+        response_audit.update(response_authority_shadow)
     authority_audit = _refresh_cognitive_authority_audit(
         response_source="generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source,
         selected_response_mode=response_mode,
@@ -1383,6 +1549,8 @@ def _reset_chat_session() -> None:
     st.session_state["last_response_source"] = None
     st.session_state["last_response_empty"] = False
     st.session_state["last_response_audit"] = {}
+    st.session_state["last_response_authority_decision"] = {}
+    st.session_state["last_response_authority_diagnostics"] = {}
     st.session_state["last_pipeline_error"] = None
     st.session_state["chat_history_count"] = 0
     st.session_state["chat_pipeline_in_progress"] = False
@@ -1445,6 +1613,8 @@ def _init_session_state() -> None:
     st.session_state.setdefault("last_response_source", None)
     st.session_state.setdefault("last_response_empty", False)
     st.session_state.setdefault("last_response_audit", {})
+    st.session_state.setdefault("last_response_authority_decision", {})
+    st.session_state.setdefault("last_response_authority_diagnostics", {})
     st.session_state.setdefault("last_pipeline_error", None)
     st.session_state.setdefault("last_llm_decision", None)
     st.session_state.setdefault("chat_history_count", 0)
@@ -4215,6 +4385,11 @@ def _show_chat_companion(
     add_pipeline_event("control", "_show_chat_companion", "reset command check")
     if _is_reset_command(user_message):
         _reset_chat_session()
+        _record_response_authority_shadow_decision(
+            user_message,
+            reset_boundary_active=True,
+            explicit_workflow_intent=False,
+        )
         reset_reply = "เริ่มบทสนทนาใหม่แล้วครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
         reset_reply, reset_source, reset_empty = _resolve_assistant_reply(reset_reply, "reset_response")
         add_pipeline_event(
@@ -4274,6 +4449,12 @@ def _show_chat_companion(
 
     locked_state = _sync_session_to_application_state()
     locked_workflow = conversation_os_active_workflow_state(locked_state)
+    if locked_workflow:
+        _record_response_authority_shadow_decision(
+            user_message,
+            active_workflow=locked_workflow,
+            explicit_workflow_intent=True,
+        )
     add_pipeline_event(
         "conversation_os",
         "conversation_os_active_workflow_state",
@@ -4478,6 +4659,14 @@ def _show_chat_companion(
     )
     _sync_route_intelligence_to_session(task_route)
     _update_ai_pipeline_debug_trace_from_route(debug_trace, task_route)
+    route_entities_for_authority = _route_extracted_entities(task_route)
+    _record_response_authority_shadow_decision(
+        user_message,
+        task_route=task_route,
+        semantic_correction_detected=bool(route_entities_for_authority.get("correction_detected"))
+        or _is_correction_message(user_message),
+        analytical_statement_detected=bool(route_entities_for_authority.get("analytical_statement_detected")),
+    )
     planner_workflow_for_execution = (task_route.get("planner_output") or {}).get("workflow")
     workflow_detection = {
         "workflow": planner_workflow_for_execution,
