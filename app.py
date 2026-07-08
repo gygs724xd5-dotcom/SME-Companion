@@ -45,6 +45,48 @@ from brain.conversation_understanding_engine import (
     understand_conversation,
 )
 from brain.cost_intent_isolation import is_strong_cost_calculation_message
+from brain.business_situation import (
+    ACCOUNTING as BS_ACCOUNTING,
+    ANALYTICAL as BS_ANALYTICAL,
+    CASHFLOW as BS_CASHFLOW,
+    CASHFLOW_CONCERN as BS_CASHFLOW_CONCERN,
+    CAUTIOUS as BS_CAUTIOUS,
+    CORRECTIVE as BS_CORRECTIVE,
+    COST as BS_COST,
+    COST_CHANGE as BS_COST_CHANGE,
+    COST_CORRECTION as BS_COST_CORRECTION,
+    CUSTOMER as BS_CUSTOMER,
+    CUSTOMER_ISSUE as BS_CUSTOMER_ISSUE,
+    DATA_QUALITY_ISSUE as BS_DATA_QUALITY_ISSUE,
+    EXPLANATORY as BS_EXPLANATORY,
+    GENERAL as BS_GENERAL,
+    GENERAL_BUSINESS_QUESTION as BS_GENERAL_BUSINESS_QUESTION,
+    HIGH as BS_HIGH,
+    INVENTORY as BS_INVENTORY,
+    INVENTORY_RISK as BS_INVENTORY_RISK,
+    LOW as BS_LOW,
+    MARKETING as BS_MARKETING,
+    MEDIUM as BS_MEDIUM,
+    NEUTRAL as BS_NEUTRAL,
+    NONE as BS_NONE,
+    NO_BUSINESS_SITUATION as BS_NO_BUSINESS_SITUATION,
+    OPERATIONAL as BS_OPERATIONAL,
+    OPERATIONAL_BOTTLENECK as BS_OPERATIONAL_BOTTLENECK,
+    OPERATIONS as BS_OPERATIONS,
+    OWNER_ADVISORY as BS_OWNER_ADVISORY,
+    PLANNING_DECISION as BS_PLANNING_DECISION,
+    PRICING as BS_PRICING,
+    PRICING_DECISION as BS_PRICING_DECISION,
+    PROACTIVE as BS_PROACTIVE,
+    PRODUCT as BS_PRODUCT,
+    PROFIT_MARGIN_RISK as BS_PROFIT_MARGIN_RISK,
+    SALES as BS_SALES,
+    SALES_OPPORTUNITY as BS_SALES_OPPORTUNITY,
+    STRATEGIC as BS_STRATEGIC,
+    SUPPLIER as BS_SUPPLIER,
+    WORKFLOW_STATUS as BS_WORKFLOW_STATUS,
+    evaluate_business_situation,
+)
 from brain.conversation_workflow_engine import (
     WORKFLOW_COST_CALCULATION,
     WORKFLOW_DASHBOARD_REQUEST,
@@ -851,6 +893,61 @@ _CANONICAL_EVIDENCE_GAP_TYPES = {
 }
 
 
+_CANONICAL_BUSINESS_SITUATION_TYPES = {
+    BS_NO_BUSINESS_SITUATION,
+    BS_COST_CHANGE,
+    BS_COST_CORRECTION,
+    BS_PRICING_DECISION,
+    BS_PROFIT_MARGIN_RISK,
+    BS_SALES_OPPORTUNITY,
+    BS_INVENTORY_RISK,
+    BS_CUSTOMER_ISSUE,
+    BS_CASHFLOW_CONCERN,
+    BS_OPERATIONAL_BOTTLENECK,
+    BS_PLANNING_DECISION,
+    BS_WORKFLOW_STATUS,
+    BS_DATA_QUALITY_ISSUE,
+    BS_GENERAL_BUSINESS_QUESTION,
+}
+
+
+_CANONICAL_BUSINESS_DOMAINS = {
+    BS_COST,
+    BS_PRICING,
+    BS_SALES,
+    BS_INVENTORY,
+    BS_CUSTOMER,
+    BS_CASHFLOW,
+    BS_OPERATIONS,
+    BS_MARKETING,
+    BS_PRODUCT,
+    BS_SUPPLIER,
+    BS_ACCOUNTING,
+    BS_GENERAL,
+}
+
+
+_CANONICAL_BUSINESS_STANCES = {
+    BS_ANALYTICAL,
+    BS_CAUTIOUS,
+    BS_PROACTIVE,
+    BS_CORRECTIVE,
+    BS_EXPLANATORY,
+    BS_STRATEGIC,
+    BS_OPERATIONAL,
+    BS_OWNER_ADVISORY,
+    BS_NEUTRAL,
+}
+
+
+_CANONICAL_BUSINESS_LEVELS = {
+    BS_NONE,
+    BS_LOW,
+    BS_MEDIUM,
+    BS_HIGH,
+}
+
+
 def _route_extracted_entities(route: dict | None) -> dict:
     route = route or {}
     for container in (
@@ -1139,6 +1236,196 @@ def _record_evidence_gap_shadow_diagnostics(
     try:
         st.session_state["last_evidence_gap_profile"] = gap_profile
         st.session_state["last_evidence_gap_diagnostics"] = shadow_diagnostics
+        _update_application_section("developer", shadow_diagnostics)
+    except Exception:
+        pass
+    return shadow_diagnostics
+
+
+def _business_situation_owner_goal(app_state: dict) -> str | None:
+    business_goals = (
+        st.session_state.get("business_goals")
+        or app_state.get("business_goals")
+        or {}
+    )
+    active_goal = business_goals.get("active_goal") if isinstance(business_goals, dict) else {}
+    goal_status = business_goals.get("goal_status") if isinstance(business_goals, dict) else {}
+    business_context = (app_state.get("conversation") or {}).get("business_context") or {}
+    for value in (
+        (goal_status or {}).get("goal_label") if isinstance(goal_status, dict) else None,
+        (active_goal or {}).get("goal_label") if isinstance(active_goal, dict) else None,
+        (active_goal or {}).get("goal_type") if isinstance(active_goal, dict) else None,
+        business_context.get("current_goal") if isinstance(business_context, dict) else None,
+    ):
+        if value not in (None, "", [], {}):
+            return str(value)
+    return None
+
+
+def _business_situation_calculation_result(route: dict, active_workflow: dict) -> dict:
+    for container in (
+        route.get("calculation_result"),
+        route.get("calculation_trace"),
+        route.get("computed_outputs"),
+        route.get("business_workflow") or {},
+        active_workflow,
+    ):
+        if not isinstance(container, dict):
+            continue
+        for key in ("calculation_result", "calculation_trace", "computed_outputs"):
+            value = container.get(key)
+            if isinstance(value, dict) and value:
+                return dict(value)
+    return {}
+
+
+def _business_situation_recent_context() -> list:
+    recent = []
+    for item in list(st.session_state.get("chat_history") or [])[-6:]:
+        if not isinstance(item, dict):
+            continue
+        recent.append(
+            {
+                "role": item.get("role"),
+                "content": item.get("content"),
+            }
+        )
+    return recent
+
+
+def _record_business_situation_shadow_diagnostics(
+    user_message: str,
+    *,
+    task_route: dict | None = None,
+    active_workflow: dict | None = None,
+    workflow_state: dict | None = None,
+    reset_boundary_active: bool = False,
+    evidence_gap_profile: dict | None = None,
+) -> dict:
+    try:
+        route = task_route or st.session_state.get("last_task_route") or {}
+        app_state = _sync_session_to_application_state()
+        entities = _route_extracted_entities(route)
+        active = _build_response_authority_active_workflow(active_workflow, workflow_state) or {}
+        completed_context = completed_workflow_context(app_state)
+        reset_diagnostics = st.session_state.get("conversation_reset_diagnostics") or {}
+        reset_active = bool(
+            reset_boundary_active
+            or reset_diagnostics.get("conversation_reset_applied")
+            or reset_diagnostics.get("runtime_context_reset_applied")
+            or (app_state.get("developer") or {}).get("conversation_reset_applied")
+        )
+        intent_resolution = _copy_dict(route.get("intent_resolution"))
+        business_context = _copy_dict(
+            route.get("business_context")
+            or (app_state.get("conversation") or {}).get("business_context")
+        )
+        truth_status = _copy_dict(route.get("truth_status"))
+        business_intelligence = _copy_dict(route.get("business_intelligence"))
+        gap_profile = evidence_gap_profile
+        if gap_profile is None:
+            gap_profile = st.session_state.get("last_evidence_gap_profile") or {}
+        profile = evaluate_business_situation(
+            user_message,
+            intent=intent_resolution.get("resolved_intent")
+            or business_context.get("current_message_intent")
+            or business_context.get("detected_intent")
+            or entities.get("detected_intent"),
+            semantic_type=intent_resolution.get("semantic_type")
+            or intent_resolution.get("response_type")
+            or business_context.get("current_message_intent"),
+            extracted_entities=dict(entities or {}),
+            evidence_gap_profile=dict(gap_profile or {}) if isinstance(gap_profile, dict) else {},
+            truth_confidence=truth_status.get("confidence")
+            or business_intelligence.get("confidence")
+            or business_context.get("confidence"),
+            business_context=dict(business_context or {}),
+            active_workflow=dict(active or {}),
+            completed_workflow_context=dict(completed_context or {}) if completed_context else {},
+            reset_boundary_active=reset_active,
+            calculation_result=_business_situation_calculation_result(route, active),
+            recent_context=_business_situation_recent_context(),
+            owner_goal=_business_situation_owner_goal(app_state),
+        )
+        if profile.get("situation_type") not in _CANONICAL_BUSINESS_SITUATION_TYPES:
+            profile = {
+                **profile,
+                "situation_detected": False,
+                "situation_type": BS_NO_BUSINESS_SITUATION,
+                "business_domain": BS_GENERAL,
+                "perspective_stance": BS_NEUTRAL,
+                "risk_level": BS_NONE,
+                "opportunity_level": BS_NONE,
+                "urgency_level": BS_NONE,
+                "owner_attention": None,
+                "recommended_response_posture": BS_NEUTRAL,
+                "reasoning_summary": "business_situation_shadow_unknown_type",
+                "confidence": 0.0,
+            }
+    except Exception as business_situation_error:
+        profile = {
+            "situation_detected": False,
+            "situation_type": BS_NO_BUSINESS_SITUATION,
+            "business_domain": BS_GENERAL,
+            "perspective_stance": BS_NEUTRAL,
+            "risk_level": BS_NONE,
+            "opportunity_level": BS_NONE,
+            "urgency_level": BS_NONE,
+            "owner_attention": None,
+            "recommended_response_posture": BS_NEUTRAL,
+            "reasoning_summary": "business_situation_shadow_error",
+            "confidence": 0.0,
+            "assumptions": [],
+            "diagnostics": {
+                "business_situation_profile_version": "5.13.2",
+                "business_situation_error": f"{type(business_situation_error).__name__}: {business_situation_error}",
+                "routing_changed": False,
+                "planner_changed": False,
+                "workflow_changed": False,
+                "responses_changed": False,
+                "memory_changed": False,
+                "execution_changed": False,
+                "commit_boundary_changed": False,
+            },
+        }
+
+    business_domain = profile.get("business_domain")
+    perspective_stance = profile.get("perspective_stance")
+    risk_level = profile.get("risk_level")
+    opportunity_level = profile.get("opportunity_level")
+    urgency_level = profile.get("urgency_level")
+    posture = profile.get("recommended_response_posture")
+    if business_domain not in _CANONICAL_BUSINESS_DOMAINS:
+        business_domain = BS_GENERAL
+    if perspective_stance not in _CANONICAL_BUSINESS_STANCES:
+        perspective_stance = BS_NEUTRAL
+    if risk_level not in _CANONICAL_BUSINESS_LEVELS:
+        risk_level = BS_NONE
+    if opportunity_level not in _CANONICAL_BUSINESS_LEVELS:
+        opportunity_level = BS_NONE
+    if urgency_level not in _CANONICAL_BUSINESS_LEVELS:
+        urgency_level = BS_NONE
+    if posture not in _CANONICAL_BUSINESS_STANCES:
+        posture = BS_NEUTRAL
+
+    shadow_diagnostics = {
+        "business_situation_profile": profile,
+        "business_situation_detected": bool(profile.get("situation_detected")),
+        "business_situation_type": profile.get("situation_type") or BS_NO_BUSINESS_SITUATION,
+        "business_domain": business_domain,
+        "perspective_stance": perspective_stance,
+        "business_risk_level": risk_level,
+        "business_opportunity_level": opportunity_level,
+        "business_urgency_level": urgency_level,
+        "owner_attention": profile.get("owner_attention"),
+        "recommended_response_posture": posture,
+        "business_reasoning_summary": profile.get("reasoning_summary"),
+        "business_situation_confidence": profile.get("confidence"),
+        "business_situation_shadow_mode": True,
+    }
+    try:
+        st.session_state["last_business_situation_profile"] = profile
+        st.session_state["last_business_situation_diagnostics"] = shadow_diagnostics
         _update_application_section("developer", shadow_diagnostics)
     except Exception:
         pass
@@ -1634,6 +1921,9 @@ def _finalize_ai_pipeline_debug_trace(
     evidence_gap_shadow = st.session_state.get("last_evidence_gap_diagnostics") or {}
     if evidence_gap_shadow:
         response_audit.update(evidence_gap_shadow)
+    business_situation_shadow = st.session_state.get("last_business_situation_diagnostics") or {}
+    if business_situation_shadow:
+        response_audit.update(business_situation_shadow)
     authority_audit = _refresh_cognitive_authority_audit(
         response_source="generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source,
         selected_response_mode=response_mode,
@@ -1740,6 +2030,8 @@ def _reset_chat_session() -> None:
     st.session_state["last_response_authority_diagnostics"] = {}
     st.session_state["last_evidence_gap_profile"] = {}
     st.session_state["last_evidence_gap_diagnostics"] = {}
+    st.session_state["last_business_situation_profile"] = {}
+    st.session_state["last_business_situation_diagnostics"] = {}
     st.session_state["last_pipeline_error"] = None
     st.session_state["chat_history_count"] = 0
     st.session_state["chat_pipeline_in_progress"] = False
@@ -1806,6 +2098,8 @@ def _init_session_state() -> None:
     st.session_state.setdefault("last_response_authority_diagnostics", {})
     st.session_state.setdefault("last_evidence_gap_profile", {})
     st.session_state.setdefault("last_evidence_gap_diagnostics", {})
+    st.session_state.setdefault("last_business_situation_profile", {})
+    st.session_state.setdefault("last_business_situation_diagnostics", {})
     st.session_state.setdefault("last_pipeline_error", None)
     st.session_state.setdefault("last_llm_decision", None)
     st.session_state.setdefault("chat_history_count", 0)
@@ -4576,10 +4870,15 @@ def _show_chat_companion(
     add_pipeline_event("control", "_show_chat_companion", "reset command check")
     if _is_reset_command(user_message):
         _reset_chat_session()
-        _record_evidence_gap_shadow_diagnostics(
+        evidence_shadow = _record_evidence_gap_shadow_diagnostics(
             user_message,
             reset_boundary_active=True,
             intent_ambiguous=False,
+        )
+        _record_business_situation_shadow_diagnostics(
+            user_message,
+            reset_boundary_active=True,
+            evidence_gap_profile=evidence_shadow.get("evidence_gap_profile"),
         )
         _record_response_authority_shadow_decision(
             user_message,
@@ -4646,9 +4945,14 @@ def _show_chat_companion(
     locked_state = _sync_session_to_application_state()
     locked_workflow = conversation_os_active_workflow_state(locked_state)
     if locked_workflow:
-        _record_evidence_gap_shadow_diagnostics(
+        evidence_shadow = _record_evidence_gap_shadow_diagnostics(
             user_message,
             active_workflow=locked_workflow,
+        )
+        _record_business_situation_shadow_diagnostics(
+            user_message,
+            active_workflow=locked_workflow,
+            evidence_gap_profile=evidence_shadow.get("evidence_gap_profile"),
         )
         _record_response_authority_shadow_decision(
             user_message,
@@ -4860,10 +5164,15 @@ def _show_chat_companion(
     _sync_route_intelligence_to_session(task_route)
     _update_ai_pipeline_debug_trace_from_route(debug_trace, task_route)
     route_entities_for_authority = _route_extracted_entities(task_route)
-    _record_evidence_gap_shadow_diagnostics(
+    evidence_shadow = _record_evidence_gap_shadow_diagnostics(
         user_message,
         task_route=task_route,
         intent_ambiguous=bool(route_entities_for_authority.get("intent_ambiguous") or route_entities_for_authority.get("ambiguous_intent")),
+    )
+    _record_business_situation_shadow_diagnostics(
+        user_message,
+        task_route=task_route,
+        evidence_gap_profile=evidence_shadow.get("evidence_gap_profile"),
     )
     _record_response_authority_shadow_decision(
         user_message,
