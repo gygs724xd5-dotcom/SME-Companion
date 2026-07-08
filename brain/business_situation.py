@@ -15,6 +15,49 @@ from brain.truth_runtime import build_truth_runtime
 BUSINESS_SITUATION_VERSION = "5.5.3"
 BUSINESS_SITUATION_SOURCE = "business_situation_runtime"
 
+NO_BUSINESS_SITUATION = "NO_BUSINESS_SITUATION"
+COST_CHANGE = "COST_CHANGE"
+COST_CORRECTION = "COST_CORRECTION"
+PRICING_DECISION = "PRICING_DECISION"
+PROFIT_MARGIN_RISK = "PROFIT_MARGIN_RISK"
+SALES_OPPORTUNITY = "SALES_OPPORTUNITY"
+INVENTORY_RISK = "INVENTORY_RISK"
+CUSTOMER_ISSUE = "CUSTOMER_ISSUE"
+CASHFLOW_CONCERN = "CASHFLOW_CONCERN"
+OPERATIONAL_BOTTLENECK = "OPERATIONAL_BOTTLENECK"
+PLANNING_DECISION = "PLANNING_DECISION"
+WORKFLOW_STATUS = "WORKFLOW_STATUS"
+DATA_QUALITY_ISSUE = "DATA_QUALITY_ISSUE"
+GENERAL_BUSINESS_QUESTION = "GENERAL_BUSINESS_QUESTION"
+
+COST = "COST"
+PRICING = "PRICING"
+SALES = "SALES"
+INVENTORY = "INVENTORY"
+CUSTOMER = "CUSTOMER"
+CASHFLOW = "CASHFLOW"
+OPERATIONS = "OPERATIONS"
+MARKETING = "MARKETING"
+PRODUCT = "PRODUCT"
+SUPPLIER = "SUPPLIER"
+ACCOUNTING = "ACCOUNTING"
+GENERAL = "GENERAL"
+
+ANALYTICAL = "ANALYTICAL"
+CAUTIOUS = "CAUTIOUS"
+PROACTIVE = "PROACTIVE"
+CORRECTIVE = "CORRECTIVE"
+EXPLANATORY = "EXPLANATORY"
+STRATEGIC = "STRATEGIC"
+OPERATIONAL = "OPERATIONAL"
+OWNER_ADVISORY = "OWNER_ADVISORY"
+NEUTRAL = "NEUTRAL"
+
+NONE = "NONE"
+LOW = "LOW"
+MEDIUM = "MEDIUM"
+HIGH = "HIGH"
+
 
 BUSINESS_ALIASES = {
     "bakery": "bakery",
@@ -39,6 +82,462 @@ def _as_list(value: Any) -> list:
     if value in (None, "", {}, ()):
         return []
     return [value]
+
+
+def _bs_normalized_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _bs_lower_text(value: Any) -> str:
+    return _bs_normalized_text(value).lower()
+
+
+def _bs_clamp_confidence(value: Any, default: float = 0.75) -> float:
+    if value is None:
+        return default
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, confidence))
+
+
+def _bs_contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
+
+
+def _bs_has_word(text: str, word: str) -> bool:
+    padded = f" {text.replace('.', ' ').replace(',', ' ').replace('?', ' ').replace('!', ' ')} "
+    return f" {word} " in padded
+
+
+def _bs_is_casual_message(text: str) -> bool:
+    stripped = text.strip()
+    if stripped in {"hi", "hello", "thanks", "thank you", "good morning", "good night"}:
+        return True
+    return any(_bs_has_word(stripped, word) for word in ("hi", "hello", "thanks")) and not _bs_contains_any(
+        stripped,
+        ("business", "cost", "price", "sales", "stock", "customer", "cash", "profit", "margin"),
+    )
+
+
+def _bs_nested_values(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        values: list[str] = []
+        for key, item in value.items():
+            values.append(str(key))
+            values.extend(_bs_nested_values(item))
+        return values
+    if isinstance(value, (list, tuple, set)):
+        values = []
+        for item in value:
+            values.extend(_bs_nested_values(item))
+        return values
+    if value in (None, "", [], {}):
+        return []
+    return [str(value)]
+
+
+def _bs_context_text(*values: Any) -> str:
+    parts: list[str] = []
+    for value in values:
+        parts.extend(_bs_nested_values(value))
+    return " ".join(parts).lower()
+
+
+def _bs_malformed_inputs(
+    *,
+    extracted_entities: Any,
+    evidence_gap_profile: Any,
+    business_context: Any,
+    active_workflow: Any,
+    completed_workflow_context: Any,
+    calculation_result: Any,
+    recent_context: Any,
+) -> list[str]:
+    malformed: list[str] = []
+    if extracted_entities is not None and not isinstance(extracted_entities, dict):
+        malformed.append("extracted_entities")
+    if evidence_gap_profile is not None and not isinstance(evidence_gap_profile, dict):
+        malformed.append("evidence_gap_profile")
+    if business_context is not None and not isinstance(business_context, dict):
+        malformed.append("business_context")
+    if active_workflow is not None and not isinstance(active_workflow, dict):
+        malformed.append("active_workflow")
+    if completed_workflow_context is not None and not isinstance(completed_workflow_context, dict):
+        malformed.append("completed_workflow_context")
+    if calculation_result is not None and not isinstance(calculation_result, dict):
+        malformed.append("calculation_result")
+    if recent_context is not None and not isinstance(recent_context, list):
+        malformed.append("recent_context")
+    return malformed
+
+
+def _bs_evidence_adjustment(evidence_gap_profile: dict) -> tuple[bool, bool, list[str]]:
+    if not isinstance(evidence_gap_profile, dict) or not evidence_gap_profile:
+        return False, False, []
+    gap_type = _bs_normalized_text(evidence_gap_profile.get("gap_type"))
+    insufficient = evidence_gap_profile.get("evidence_sufficient") is False
+    contradictory = gap_type == "CONTRADICTORY_EVIDENCE" or bool(evidence_gap_profile.get("conflicting_fields"))
+    assumptions = []
+    if insufficient:
+        assumptions.append("Evidence Gap profile indicates evidence is not sufficient.")
+    if contradictory:
+        assumptions.append("Evidence Gap profile indicates contradictory evidence.")
+    return insufficient, contradictory, assumptions
+
+
+def _bs_workflow_status(active_workflow: dict) -> str:
+    if not isinstance(active_workflow, dict):
+        return ""
+    status = active_workflow.get("workflow_status") or active_workflow.get("status") or active_workflow.get("step")
+    return _bs_lower_text(status)
+
+
+def _bs_domain_from_context(context_text: str) -> str | None:
+    domain_markers = (
+        (COST, ("cost", "expense", "supplier cost", "cogs")),
+        (PRICING, ("price", "pricing", "discount")),
+        (SALES, ("sales", "revenue", "lead", "conversion")),
+        (INVENTORY, ("inventory", "stock", "out of stock", "shortage")),
+        (CUSTOMER, ("customer", "complaint", "support", "review")),
+        (CASHFLOW, ("cashflow", "cash flow", "cash shortage", "working capital")),
+        (OPERATIONS, ("operation", "bottleneck", "capacity", "staff", "delivery")),
+        (MARKETING, ("marketing", "campaign", "content", "post")),
+        (PRODUCT, ("product", "sku", "item")),
+        (SUPPLIER, ("supplier", "vendor")),
+        (ACCOUNTING, ("accounting", "invoice", "tax", "bookkeeping")),
+    )
+    for domain, markers in domain_markers:
+        if _bs_contains_any(context_text, markers):
+            return domain
+    return None
+
+
+def _bs_profile(
+    *,
+    message: str,
+    situation_type: str,
+    business_domain: str,
+    perspective_stance: str,
+    risk_level: str,
+    opportunity_level: str,
+    urgency_level: str,
+    owner_attention: str | None,
+    recommended_response_posture: str,
+    reasoning_summary: str,
+    confidence: float,
+    assumptions: list[str] | None,
+    diagnostics: dict,
+) -> dict:
+    detected = situation_type != NO_BUSINESS_SITUATION
+    clamped_confidence = _bs_clamp_confidence(confidence)
+    stable_diagnostics = {
+        "business_situation_profile_version": "5.13.1",
+        "user_message_present": bool(message),
+        "business_situation_detected": detected,
+        "business_situation_type": situation_type,
+        "business_domain": business_domain,
+        "perspective_stance": perspective_stance,
+        "business_risk_level": risk_level,
+        "business_opportunity_level": opportunity_level,
+        "business_urgency_level": urgency_level,
+        "owner_attention": owner_attention,
+        "recommended_response_posture": recommended_response_posture,
+        "business_reasoning_summary": reasoning_summary,
+        "business_situation_confidence": clamped_confidence,
+        "business_situation_shadow_mode": True,
+    }
+    stable_diagnostics.update(diagnostics)
+    return {
+        "situation_detected": detected,
+        "situation_type": situation_type,
+        "business_domain": business_domain,
+        "perspective_stance": perspective_stance,
+        "risk_level": risk_level,
+        "opportunity_level": opportunity_level,
+        "urgency_level": urgency_level,
+        "owner_attention": owner_attention,
+        "recommended_response_posture": recommended_response_posture,
+        "reasoning_summary": reasoning_summary,
+        "confidence": clamped_confidence,
+        "assumptions": list(assumptions or []),
+        "diagnostics": stable_diagnostics,
+    }
+
+
+def evaluate_business_situation(
+    user_message: str,
+    *,
+    intent: str | None = None,
+    semantic_type: str | None = None,
+    extracted_entities: dict | None = None,
+    evidence_gap_profile: dict | None = None,
+    truth_confidence: float | None = None,
+    business_context: dict | None = None,
+    active_workflow: dict | None = None,
+    completed_workflow_context: dict | None = None,
+    reset_boundary_active: bool = False,
+    calculation_result: dict | None = None,
+    recent_context: list | None = None,
+    owner_goal: str | None = None,
+) -> dict:
+    """Interpret the business situation behind one user turn.
+
+    This V5.13.1 helper is pure and diagnostic-only. It does not mutate inputs,
+    call external services, choose response mode, run workflows, or generate
+    final user-facing answer text.
+    """
+    message = _bs_normalized_text(user_message)
+    text = message.lower()
+    context = _as_dict(business_context)
+    entities = _as_dict(extracted_entities)
+    evidence = _as_dict(evidence_gap_profile)
+    workflow = _as_dict(active_workflow)
+    completed = _as_dict(completed_workflow_context)
+    calculation = _as_dict(calculation_result)
+    recent = list(recent_context) if isinstance(recent_context, list) else []
+    malformed_inputs = _bs_malformed_inputs(
+        extracted_entities=extracted_entities,
+        evidence_gap_profile=evidence_gap_profile,
+        business_context=business_context,
+        active_workflow=active_workflow,
+        completed_workflow_context=completed_workflow_context,
+        calculation_result=calculation_result,
+        recent_context=recent_context,
+    )
+    evidence_insufficient, evidence_contradictory, evidence_assumptions = _bs_evidence_adjustment(evidence)
+    truth = _bs_clamp_confidence(truth_confidence, default=1.0)
+    workflow_status = _bs_workflow_status(workflow)
+    context_text = _bs_context_text(context, entities, calculation, recent)
+    completed_context_counted = bool(completed and not reset_boundary_active)
+    completed_text = _bs_context_text(completed) if completed_context_counted else ""
+    current_context_text = " ".join(part for part in (context_text, completed_text) if part)
+    inferred_domain = _bs_domain_from_context(current_context_text)
+    intent_text = " ".join([_bs_lower_text(intent), _bs_lower_text(semantic_type)])
+    assumptions = list(evidence_assumptions)
+    confidence = min(0.82, truth)
+    situation_type = NO_BUSINESS_SITUATION
+    business_domain = GENERAL
+    stance = NEUTRAL
+    risk = NONE
+    opportunity = NONE
+    urgency = NONE
+    owner_attention = None
+    posture = NEUTRAL
+    reason = "no_business_situation_detected"
+
+    if not message:
+        confidence = 0.65 if not malformed_inputs else 0.4
+        reason = "empty_message"
+    elif _bs_is_casual_message(text):
+        confidence = 0.9
+        reason = "casual_non_business_message"
+    elif _bs_contains_any(text, ("workflow status", "status of", "where are we", "are we done", "is it complete")) or workflow_status in {
+        "collecting",
+        "executing",
+        "completed",
+        "released",
+    } and _bs_contains_any(text, ("status", "done", "complete", "workflow", "step")):
+        situation_type = WORKFLOW_STATUS
+        business_domain = GENERAL
+        stance = OPERATIONAL
+        risk = NONE
+        urgency = LOW
+        posture = OPERATIONAL
+        confidence = min(0.86, truth)
+        reason = "workflow_status_message"
+        owner_attention = "Track workflow state separately from direct business advice."
+    elif _bs_contains_any(text, ("i meant", "correction", "correct that", "instead", "actually")) and _bs_contains_any(
+        text + " " + intent_text,
+        ("cost", "expense", "supplier cost", "unit cost"),
+    ):
+        situation_type = COST_CORRECTION
+        business_domain = COST
+        stance = CORRECTIVE
+        risk = LOW
+        urgency = LOW
+        posture = CORRECTIVE
+        confidence = min(0.88, truth)
+        reason = "cost_correction_detected"
+        owner_attention = "Use the corrected cost before interpreting margin or price."
+    elif _bs_contains_any(text + " " + intent_text, ("profit", "margin", "break even", "breakeven", "losing money", "not profitable")):
+        situation_type = PROFIT_MARGIN_RISK
+        business_domain = PRICING if _bs_contains_any(text, ("price", "pricing")) else COST
+        stance = ANALYTICAL
+        risk = HIGH if _bs_contains_any(text, ("losing money", "negative", "too low", "not profitable")) else MEDIUM
+        urgency = MEDIUM
+        posture = ANALYTICAL
+        confidence = min(0.87, truth)
+        reason = "profit_margin_risk_detected"
+        owner_attention = "Check whether price, cost, or volume is creating the margin pressure."
+    elif _bs_contains_any(text + " " + intent_text, ("price", "pricing", "charge", "discount")) and _bs_contains_any(
+        text,
+        ("should", "what", "how much", "set", "raise", "lower", "change", "?"),
+    ):
+        situation_type = PRICING_DECISION
+        business_domain = PRICING
+        stance = OWNER_ADVISORY
+        risk = LOW
+        opportunity = MEDIUM
+        urgency = LOW
+        posture = OWNER_ADVISORY
+        confidence = min(0.86, truth)
+        reason = "pricing_decision_question"
+        owner_attention = "Balance customer willingness to pay against cost and margin."
+    elif _bs_contains_any(text + " " + intent_text, ("cost", "expense", "supplier cost", "unit cost", "cogs")) and _bs_contains_any(
+        text,
+        ("increase", "increased", "higher", "rose", "went up", "decrease", "decreased", "lower", "changed", "now", "from", "to"),
+    ):
+        situation_type = COST_CHANGE
+        business_domain = COST
+        stance = ANALYTICAL
+        risk = MEDIUM if _bs_contains_any(text, ("increase", "increased", "higher", "rose", "went up")) else LOW
+        urgency = LOW
+        posture = ANALYTICAL
+        confidence = min(0.86, truth)
+        reason = "analytical_cost_change_statement"
+        owner_attention = "Watch whether the cost movement changes margin or requires a pricing response."
+    elif _bs_contains_any(text + " " + intent_text, ("inventory", "stock", "shortage", "out of stock", "run out", "low stock")):
+        situation_type = INVENTORY_RISK
+        business_domain = INVENTORY
+        stance = OPERATIONAL
+        risk = HIGH if _bs_contains_any(text, ("out of stock", "run out", "shortage")) else MEDIUM
+        urgency = HIGH if risk == HIGH else MEDIUM
+        posture = OPERATIONAL
+        confidence = min(0.86, truth)
+        reason = "inventory_risk_detected"
+        owner_attention = "Protect availability while avoiding over-ordering."
+    elif _bs_contains_any(text + " " + intent_text, ("complaint", "angry customer", "customer issue", "refund", "support", "bad review", "customer said")):
+        situation_type = CUSTOMER_ISSUE
+        business_domain = CUSTOMER
+        stance = CAUTIOUS
+        risk = MEDIUM
+        urgency = MEDIUM
+        opportunity = LOW
+        posture = CAUTIOUS
+        confidence = min(0.85, truth)
+        reason = "customer_issue_detected"
+        owner_attention = "Preserve trust while resolving the specific customer concern."
+    elif _bs_contains_any(text + " " + intent_text, ("cashflow", "cash flow", "cash shortage", "short on cash", "working capital", "can't pay", "cannot pay")):
+        situation_type = CASHFLOW_CONCERN
+        business_domain = CASHFLOW
+        stance = CAUTIOUS
+        risk = HIGH
+        urgency = HIGH
+        posture = CAUTIOUS
+        confidence = min(0.86, truth)
+        reason = "cashflow_concern_detected"
+        owner_attention = "Prioritize near-term cash obligations and inflows."
+    elif _bs_contains_any(text + " " + intent_text, ("bottleneck", "delay", "capacity", "staff shortage", "too slow", "operation")):
+        situation_type = OPERATIONAL_BOTTLENECK
+        business_domain = OPERATIONS
+        stance = OPERATIONAL
+        risk = MEDIUM
+        urgency = MEDIUM
+        posture = OPERATIONAL
+        confidence = min(0.82, truth)
+        reason = "operational_bottleneck_detected"
+        owner_attention = "Identify the constraint slowing delivery or output."
+    elif _bs_contains_any(text + " " + intent_text, ("lead", "sales opportunity", "upsell", "new customer", "big order", "prospect")):
+        situation_type = SALES_OPPORTUNITY
+        business_domain = SALES
+        stance = PROACTIVE
+        opportunity = HIGH
+        urgency = MEDIUM
+        posture = PROACTIVE
+        confidence = min(0.82, truth)
+        reason = "sales_opportunity_detected"
+        owner_attention = "Convert the opportunity without weakening margin or capacity."
+    elif _bs_contains_any(text + " " + intent_text, ("what should i do next", "what to do next", "next step", "plan", "planning", "strategy", "focus on")):
+        situation_type = PLANNING_DECISION
+        business_domain = inferred_domain or GENERAL
+        stance = OWNER_ADVISORY
+        risk = LOW
+        opportunity = MEDIUM
+        urgency = LOW
+        posture = OWNER_ADVISORY
+        confidence = min(0.8, truth)
+        reason = "planning_decision_detected"
+        owner_attention = "Choose the next business lever with the clearest owner impact."
+    elif _bs_contains_any(text + " " + intent_text, ("business", "customer", "sales", "marketing", "product", "supplier", "accounting", "operations")):
+        situation_type = GENERAL_BUSINESS_QUESTION
+        business_domain = _bs_domain_from_context(text + " " + intent_text) or inferred_domain or GENERAL
+        stance = EXPLANATORY
+        risk = LOW
+        urgency = LOW
+        posture = EXPLANATORY
+        confidence = min(0.74, truth)
+        reason = "general_business_question_detected"
+        owner_attention = "Keep the answer tied to the current business decision."
+    elif inferred_domain and _bs_contains_any(text, ("should", "what", "how", "next", "improve", "fix", "help")):
+        situation_type = GENERAL_BUSINESS_QUESTION
+        business_domain = inferred_domain
+        stance = OWNER_ADVISORY
+        risk = LOW
+        urgency = LOW
+        posture = OWNER_ADVISORY
+        confidence = min(0.68, truth)
+        assumptions.append("Business context was used because the current message was generic.")
+        reason = "business_context_informed_generic_turn"
+        owner_attention = "Use durable business context only as background for the current turn."
+
+    if owner_goal and situation_type != NO_BUSINESS_SITUATION:
+        goal = _bs_normalized_text(owner_goal)
+        owner_attention = f"{owner_attention or 'Keep the response tied to the owner goal.'} Owner goal: {goal}."
+
+    if evidence_insufficient or evidence_contradictory:
+        stance = CAUTIOUS
+        posture = CAUTIOUS
+        confidence = min(confidence, 0.45 if evidence_contradictory else 0.52)
+        if evidence_contradictory:
+            risk = MEDIUM if risk in {NONE, LOW} else risk
+            reason = f"{reason}_with_contradictory_evidence"
+        else:
+            reason = f"{reason}_with_insufficient_evidence"
+    confidence = min(confidence, truth)
+
+    diagnostics = {
+        "intent": intent,
+        "semantic_type": semantic_type,
+        "truth_confidence": truth,
+        "evidence_insufficient": evidence_insufficient,
+        "evidence_contradictory": evidence_contradictory,
+        "active_workflow_status": workflow_status or None,
+        "active_workflow_present": bool(workflow),
+        "completed_workflow_context_present": bool(completed),
+        "completed_workflow_context_counted": completed_context_counted,
+        "reset_boundary_active": bool(reset_boundary_active),
+        "business_context_present": bool(context),
+        "extracted_entities_present": bool(entities),
+        "calculation_result_present": bool(calculation),
+        "recent_context_count": len(recent),
+        "owner_goal_present": bool(owner_goal),
+        "malformed_inputs": malformed_inputs,
+        "classification_reason": reason,
+        "routing_changed": False,
+        "planner_changed": False,
+        "workflow_changed": False,
+        "responses_changed": False,
+        "memory_changed": False,
+        "execution_changed": False,
+        "commit_boundary_changed": False,
+    }
+    return _bs_profile(
+        message=message,
+        situation_type=situation_type,
+        business_domain=business_domain,
+        perspective_stance=stance,
+        risk_level=risk,
+        opportunity_level=opportunity,
+        urgency_level=urgency,
+        owner_attention=owner_attention,
+        recommended_response_posture=posture,
+        reasoning_summary=reason,
+        confidence=confidence,
+        assumptions=assumptions,
+        diagnostics=diagnostics,
+    )
 
 
 def _first_text(*values: Any, default: str = "") -> str:
