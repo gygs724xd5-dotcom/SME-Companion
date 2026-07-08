@@ -265,3 +265,7 @@ Add guarded runtime enforcement for reset isolation, completed workflow release,
 ### V5.11.3
 
 Expand diagnostics and acceptance coverage across representative owner-facing conversations, including direct answers, business analysis, workflow starts, workflow continuation, workflow completion, reset isolation, and fallback LLM response.
+
+### V5.11.4
+
+Audit runtime shadow diagnostics for consistency across reset handling, locked workflow handling, normal planner turns, and fail-closed authority errors. Response Authority remains diagnostics-only and must not select final response text, gate workflow behavior, alter reset handling, or change commit boundary behavior.
