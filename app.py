@@ -82,6 +82,19 @@ from brain.goal_engine import (
     evaluate_business_goal,
     get_active_business_goal,
 )
+from brain.evidence_gap import (
+    AMBIGUOUS_INTENT,
+    CALCULATION_INPUT_GAP,
+    CONTRADICTORY_EVIDENCE,
+    MEMORY_LOOKUP_GAP,
+    MISSING_BUSINESS_CONTEXT,
+    MISSING_REQUIRED_FIELD,
+    NO_GAP,
+    STALE_CONTEXT,
+    USER_CONFIRMATION_GAP,
+    WORKFLOW_REQUIREMENT_GAP,
+    evaluate_evidence_gap,
+)
 from brain.general_response_router import build_general_direct_response, select_general_response_route
 from brain.llm_context_builder import build_llm_context
 from brain.llm_orchestrator import build_reasoning_context, decide_llm_usage
@@ -824,6 +837,20 @@ _CANONICAL_RESPONSE_AUTHORITY_MODES = {
 }
 
 
+_CANONICAL_EVIDENCE_GAP_TYPES = {
+    NO_GAP,
+    MISSING_REQUIRED_FIELD,
+    MISSING_BUSINESS_CONTEXT,
+    AMBIGUOUS_INTENT,
+    CONTRADICTORY_EVIDENCE,
+    STALE_CONTEXT,
+    WORKFLOW_REQUIREMENT_GAP,
+    CALCULATION_INPUT_GAP,
+    MEMORY_LOOKUP_GAP,
+    USER_CONFIRMATION_GAP,
+}
+
+
 def _route_extracted_entities(route: dict | None) -> dict:
     route = route or {}
     for container in (
@@ -838,6 +865,64 @@ def _route_extracted_entities(route: dict | None) -> dict:
             return nested
     workflow = route.get("business_workflow") or {}
     return workflow.get("extracted_entities") if isinstance(workflow.get("extracted_entities"), dict) else {}
+
+
+def _copy_dict(value: dict | None) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _field_list(value) -> list[str]:
+    if value in (None, "", [], {}, ()):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _route_provided_fields(route: dict | None) -> dict:
+    route = route or {}
+    provided: dict = {}
+    for container in (
+        route.get("business_workflow") or {},
+        route.get("workflow_state") or {},
+        (route.get("business_context") or {}).get("workflow_intelligence") or {},
+    ):
+        if not isinstance(container, dict):
+            continue
+        for key in ("collected_fields", "provided_fields", "extracted_fields"):
+            fields = container.get(key)
+            if isinstance(fields, dict):
+                provided.update(fields)
+    entities = _route_extracted_entities(route)
+    if entities:
+        provided.update(_copy_dict(entities))
+    return provided
+
+
+def _route_required_fields(route: dict | None) -> list[str]:
+    route = route or {}
+    workflow = route.get("business_workflow") or {}
+    required = []
+    if isinstance(workflow, dict):
+        required.extend(_field_list(workflow.get("required_fields")))
+    clarification = route.get("clarification_authority") or {}
+    if isinstance(clarification, dict):
+        required.extend(_field_list(clarification.get("requested_fields")))
+    return list(dict.fromkeys(required))
+
+
+def _route_conflicting_fields(route: dict | None) -> list[str]:
+    route = route or {}
+    conflicts = []
+    for container in (
+        route,
+        route.get("business_context") or {},
+        route.get("business_intelligence") or {},
+        route.get("truth_status") or {},
+    ):
+        if isinstance(container, dict):
+            conflicts.extend(_field_list(container.get("conflicting_fields")))
+    return list(dict.fromkeys(conflicts))
 
 
 def _route_has_explicit_workflow_intent(route: dict | None) -> bool:
@@ -955,6 +1040,105 @@ def _record_response_authority_shadow_decision(
     try:
         st.session_state["last_response_authority_decision"] = decision
         st.session_state["last_response_authority_diagnostics"] = shadow_diagnostics
+        _update_application_section("developer", shadow_diagnostics)
+    except Exception:
+        pass
+    return shadow_diagnostics
+
+
+def _record_evidence_gap_shadow_diagnostics(
+    user_message: str,
+    *,
+    task_route: dict | None = None,
+    active_workflow: dict | None = None,
+    workflow_state: dict | None = None,
+    reset_boundary_active: bool = False,
+    intent_ambiguous: bool | None = None,
+    conflicting_fields: list[str] | None = None,
+    provided_fields: dict | None = None,
+    required_fields: list[str] | None = None,
+    completed_context: dict | None = None,
+) -> dict:
+    try:
+        route = task_route or st.session_state.get("last_task_route") or {}
+        app_state = _sync_session_to_application_state()
+        entities = _route_extracted_entities(route)
+        active = _build_response_authority_active_workflow(active_workflow, workflow_state) or {}
+        completed = completed_context
+        if completed is None:
+            completed = completed_workflow_context(app_state)
+        reset_diagnostics = st.session_state.get("conversation_reset_diagnostics") or {}
+        reset_active = bool(
+            reset_boundary_active
+            or reset_diagnostics.get("conversation_reset_applied")
+            or reset_diagnostics.get("runtime_context_reset_applied")
+            or (app_state.get("developer") or {}).get("conversation_reset_applied")
+        )
+        active_requirements = _field_list(active.get("missing_fields"))
+        if not active_requirements:
+            active_requirements = _field_list((route.get("business_workflow") or {}).get("missing_fields"))
+        combined_provided = _route_provided_fields(route)
+        if isinstance(active.get("collected_fields"), dict):
+            combined_provided.update(active.get("collected_fields") or {})
+        if isinstance(provided_fields, dict):
+            combined_provided.update(provided_fields)
+        gap_profile = evaluate_evidence_gap(
+            user_message,
+            required_fields=required_fields if required_fields is not None else _route_required_fields(route),
+            provided_fields=combined_provided,
+            known_context=_copy_dict((app_state.get("conversation") or {}).get("business_context")),
+            conflicting_fields=conflicting_fields if conflicting_fields is not None else _route_conflicting_fields(route),
+            active_workflow_requirements=active_requirements,
+            reset_boundary_active=reset_active,
+            completed_workflow_context=_copy_dict(completed),
+            intent_ambiguous=(
+                bool(entities.get("intent_ambiguous") or entities.get("ambiguous_intent"))
+                if intent_ambiguous is None
+                else bool(intent_ambiguous)
+            ),
+        )
+        if gap_profile.get("gap_type") not in _CANONICAL_EVIDENCE_GAP_TYPES:
+            gap_profile = {
+                **gap_profile,
+                "evidence_sufficient": False,
+                "gap_detected": True,
+                "gap_type": USER_CONFIRMATION_GAP,
+                "reason": "evidence_gap_shadow_unknown_type",
+            }
+    except Exception as evidence_gap_error:
+        gap_profile = {
+            "evidence_sufficient": False,
+            "gap_detected": True,
+            "gap_type": USER_CONFIRMATION_GAP,
+            "missing_fields": [],
+            "conflicting_fields": [],
+            "smallest_next_question": None,
+            "can_answer_with_assumptions": False,
+            "assumption_notes": [],
+            "confidence": 0.0,
+            "reason": "evidence_gap_shadow_error",
+            "diagnostics": {
+                "evidence_gap_profile_version": "5.12.2",
+                "evidence_gap_error": f"{type(evidence_gap_error).__name__}: {evidence_gap_error}",
+            },
+        }
+
+    shadow_diagnostics = {
+        "evidence_gap_profile": gap_profile,
+        "evidence_gap_detected": bool(gap_profile.get("gap_detected")),
+        "evidence_gap_type": gap_profile.get("gap_type"),
+        "evidence_missing_fields": list(gap_profile.get("missing_fields") or []),
+        "evidence_conflicting_fields": list(gap_profile.get("conflicting_fields") or []),
+        "evidence_smallest_next_question": gap_profile.get("smallest_next_question"),
+        "evidence_sufficient": bool(gap_profile.get("evidence_sufficient")),
+        "evidence_can_answer_with_assumptions": bool(gap_profile.get("can_answer_with_assumptions")),
+        "evidence_gap_reason": gap_profile.get("reason"),
+        "evidence_gap_confidence": gap_profile.get("confidence"),
+        "evidence_gap_shadow_mode": True,
+    }
+    try:
+        st.session_state["last_evidence_gap_profile"] = gap_profile
+        st.session_state["last_evidence_gap_diagnostics"] = shadow_diagnostics
         _update_application_section("developer", shadow_diagnostics)
     except Exception:
         pass
@@ -1447,6 +1631,9 @@ def _finalize_ai_pipeline_debug_trace(
     response_authority_shadow = st.session_state.get("last_response_authority_diagnostics") or {}
     if response_authority_shadow:
         response_audit.update(response_authority_shadow)
+    evidence_gap_shadow = st.session_state.get("last_evidence_gap_diagnostics") or {}
+    if evidence_gap_shadow:
+        response_audit.update(evidence_gap_shadow)
     authority_audit = _refresh_cognitive_authority_audit(
         response_source="generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source,
         selected_response_mode=response_mode,
@@ -1551,6 +1738,8 @@ def _reset_chat_session() -> None:
     st.session_state["last_response_audit"] = {}
     st.session_state["last_response_authority_decision"] = {}
     st.session_state["last_response_authority_diagnostics"] = {}
+    st.session_state["last_evidence_gap_profile"] = {}
+    st.session_state["last_evidence_gap_diagnostics"] = {}
     st.session_state["last_pipeline_error"] = None
     st.session_state["chat_history_count"] = 0
     st.session_state["chat_pipeline_in_progress"] = False
@@ -1615,6 +1804,8 @@ def _init_session_state() -> None:
     st.session_state.setdefault("last_response_audit", {})
     st.session_state.setdefault("last_response_authority_decision", {})
     st.session_state.setdefault("last_response_authority_diagnostics", {})
+    st.session_state.setdefault("last_evidence_gap_profile", {})
+    st.session_state.setdefault("last_evidence_gap_diagnostics", {})
     st.session_state.setdefault("last_pipeline_error", None)
     st.session_state.setdefault("last_llm_decision", None)
     st.session_state.setdefault("chat_history_count", 0)
@@ -4385,6 +4576,11 @@ def _show_chat_companion(
     add_pipeline_event("control", "_show_chat_companion", "reset command check")
     if _is_reset_command(user_message):
         _reset_chat_session()
+        _record_evidence_gap_shadow_diagnostics(
+            user_message,
+            reset_boundary_active=True,
+            intent_ambiguous=False,
+        )
         _record_response_authority_shadow_decision(
             user_message,
             reset_boundary_active=True,
@@ -4450,6 +4646,10 @@ def _show_chat_companion(
     locked_state = _sync_session_to_application_state()
     locked_workflow = conversation_os_active_workflow_state(locked_state)
     if locked_workflow:
+        _record_evidence_gap_shadow_diagnostics(
+            user_message,
+            active_workflow=locked_workflow,
+        )
         _record_response_authority_shadow_decision(
             user_message,
             active_workflow=locked_workflow,
@@ -4660,6 +4860,11 @@ def _show_chat_companion(
     _sync_route_intelligence_to_session(task_route)
     _update_ai_pipeline_debug_trace_from_route(debug_trace, task_route)
     route_entities_for_authority = _route_extracted_entities(task_route)
+    _record_evidence_gap_shadow_diagnostics(
+        user_message,
+        task_route=task_route,
+        intent_ambiguous=bool(route_entities_for_authority.get("intent_ambiguous") or route_entities_for_authority.get("ambiguous_intent")),
+    )
     _record_response_authority_shadow_decision(
         user_message,
         task_route=task_route,
