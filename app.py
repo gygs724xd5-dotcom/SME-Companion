@@ -94,6 +94,7 @@ from brain.conversation_workflow_engine import (
     WORKFLOW_RECEIPT_CAPTURE,
     detect_workflow,
 )
+from brain.diagnostics_dashboard import build_brain_diagnostics_snapshot
 from brain.workflow_state_machine import (
     cost_calculation_trace,
     detect_workflow_intent,
@@ -946,6 +947,146 @@ _CANONICAL_BUSINESS_LEVELS = {
     BS_MEDIUM,
     BS_HIGH,
 }
+
+
+_BRAIN_DIAGNOSTICS_LAYER_STATUSES = [
+    {
+        "layer_name": "Response Authority",
+        "contract_status": "complete",
+        "helper_status": "complete",
+        "shadow_wiring_status": "complete",
+        "acceptance_status": "complete",
+        "audit_status": "complete",
+        "active_gate_status": "shadow_only",
+    },
+    {
+        "layer_name": "Evidence Gap",
+        "contract_status": "complete",
+        "helper_status": "complete",
+        "shadow_wiring_status": "complete",
+        "acceptance_status": "complete",
+        "audit_status": "complete",
+        "active_gate_status": "shadow_only",
+    },
+    {
+        "layer_name": "Business Situation",
+        "contract_status": "complete",
+        "helper_status": "complete",
+        "shadow_wiring_status": "complete",
+        "acceptance_status": "complete",
+        "audit_status": "complete",
+        "active_gate_status": "shadow_only",
+    },
+]
+
+
+_BRAIN_DIAGNOSTICS_PROTECTED_DIRTY_FILES = [
+    "data/business_memory.json",
+    "data/stores/reefdaddy/reefdaddy/store_profile.json",
+    "docs/v5/GLOSSARY.md",
+]
+
+
+def _brain_diagnostics_test_health() -> dict:
+    return {
+        "total_tests": None,
+        "targeted_response_authority_tests": None,
+        "targeted_evidence_gap_tests": None,
+        "targeted_business_situation_tests": None,
+        "last_full_suite_result": "unknown",
+        "last_full_suite_count": None,
+        "last_diff_check_result": "unknown",
+        "known_warnings": [],
+        "protected_dirty_files": list(_BRAIN_DIAGNOSTICS_PROTECTED_DIRTY_FILES),
+    }
+
+
+def _brain_diagnostics_current_turn_trace(
+    current_turn_trace: dict | None = None,
+    *,
+    response_source: str | None = None,
+    response_mode: str | None = None,
+) -> dict:
+    trace = dict(current_turn_trace or st.session_state.get("ai_pipeline_debug_trace") or {})
+    if response_source is not None:
+        trace.setdefault("final_response_route", response_source)
+    if response_mode is not None:
+        trace.setdefault("response_mode", response_mode)
+    return trace
+
+
+def _record_brain_diagnostics_snapshot_shadow(
+    *,
+    current_turn_trace: dict | None = None,
+    response_source: str | None = None,
+    response_mode: str | None = None,
+) -> dict:
+    trace = _brain_diagnostics_current_turn_trace(
+        current_turn_trace,
+        response_source=response_source,
+        response_mode=response_mode,
+    )
+    try:
+        snapshot = build_brain_diagnostics_snapshot(
+            layer_statuses=_BRAIN_DIAGNOSTICS_LAYER_STATUSES,
+            response_authority_diagnostics=st.session_state.get("last_response_authority_diagnostics") or {},
+            evidence_gap_diagnostics=st.session_state.get("last_evidence_gap_diagnostics") or {},
+            business_situation_diagnostics=st.session_state.get("last_business_situation_diagnostics") or {},
+            test_health=_brain_diagnostics_test_health(),
+            protected_dirty_files=list(_BRAIN_DIAGNOSTICS_PROTECTED_DIRTY_FILES),
+            current_turn_trace=trace,
+            active_gate_status={"default_status": "shadow_only"},
+        )
+    except Exception as snapshot_error:
+        snapshot = {
+            "dashboard_version": "5.14.2",
+            "layer_progress": [],
+            "shadow_diagnostics": {
+                "response_authority": st.session_state.get("last_response_authority_diagnostics") or {},
+                "evidence_gap": st.session_state.get("last_evidence_gap_diagnostics") or {},
+                "business_situation": st.session_state.get("last_business_situation_diagnostics") or {},
+            },
+            "current_turn_trace": trace,
+            "regression_safety_status": {},
+            "test_health": _brain_diagnostics_test_health(),
+            "protected_dirty_files": list(_BRAIN_DIAGNOSTICS_PROTECTED_DIRTY_FILES),
+            "active_vs_shadow_layer_map": {},
+            "mismatch_flags": ["shadow_layer_error"],
+            "next_recommended_step": {
+                "recommendation": "Keep Brain Diagnostics Dashboard snapshot in shadow mode until runtime aggregation is healthy.",
+                "notes": ["brain_diagnostics_snapshot_shadow_error"],
+            },
+            "diagnostics": {
+                "snapshot_helper": "brain.diagnostics_dashboard.build_brain_diagnostics_snapshot",
+                "snapshot_helper_complete": False,
+                "brain_diagnostics_snapshot_shadow_mode": True,
+                "brain_diagnostics_snapshot_reason": "brain_diagnostics_snapshot_shadow_error",
+                "brain_diagnostics_snapshot_error": f"{type(snapshot_error).__name__}: {snapshot_error}",
+                "runtime_mutation": False,
+                "ui_rendered": False,
+                "llm_called": False,
+                "active_gate_changed": False,
+                "response_behavior_changed": False,
+            },
+        }
+
+    try:
+        st.session_state["brain_diagnostics_snapshot"] = snapshot
+        st.session_state["brain_diagnostics_dashboard_snapshot"] = snapshot
+        st.session_state["last_brain_diagnostics_snapshot"] = snapshot
+        st.session_state["brain_diagnostics_snapshot_shadow_mode"] = True
+        _update_application_section(
+            "developer",
+            {
+                "brain_diagnostics_snapshot": snapshot,
+                "brain_diagnostics_dashboard_snapshot": snapshot,
+                "last_brain_diagnostics_snapshot": snapshot,
+                "brain_diagnostics_snapshot_shadow_mode": True,
+            },
+        )
+    except Exception:
+        pass
+    return snapshot
 
 
 def _route_extracted_entities(route: dict | None) -> dict:
@@ -1924,6 +2065,13 @@ def _finalize_ai_pipeline_debug_trace(
     business_situation_shadow = st.session_state.get("last_business_situation_diagnostics") or {}
     if business_situation_shadow:
         response_audit.update(business_situation_shadow)
+    dashboard_snapshot = _record_brain_diagnostics_snapshot_shadow(
+        current_turn_trace=trace or {},
+        response_source=response_source_after_gate,
+        response_mode=response_mode,
+    )
+    response_audit["brain_diagnostics_snapshot_shadow_mode"] = True
+    response_audit["brain_diagnostics_snapshot_observable"] = bool(dashboard_snapshot)
     authority_audit = _refresh_cognitive_authority_audit(
         response_source="generic_fallback" if _is_generic_fallback_reply(final_reply) else response_source,
         selected_response_mode=response_mode,
@@ -2032,6 +2180,10 @@ def _reset_chat_session() -> None:
     st.session_state["last_evidence_gap_diagnostics"] = {}
     st.session_state["last_business_situation_profile"] = {}
     st.session_state["last_business_situation_diagnostics"] = {}
+    st.session_state["brain_diagnostics_snapshot"] = {}
+    st.session_state["brain_diagnostics_dashboard_snapshot"] = {}
+    st.session_state["last_brain_diagnostics_snapshot"] = {}
+    st.session_state["brain_diagnostics_snapshot_shadow_mode"] = True
     st.session_state["last_pipeline_error"] = None
     st.session_state["chat_history_count"] = 0
     st.session_state["chat_pipeline_in_progress"] = False
@@ -2100,6 +2252,10 @@ def _init_session_state() -> None:
     st.session_state.setdefault("last_evidence_gap_diagnostics", {})
     st.session_state.setdefault("last_business_situation_profile", {})
     st.session_state.setdefault("last_business_situation_diagnostics", {})
+    st.session_state.setdefault("brain_diagnostics_snapshot", {})
+    st.session_state.setdefault("brain_diagnostics_dashboard_snapshot", {})
+    st.session_state.setdefault("last_brain_diagnostics_snapshot", {})
+    st.session_state.setdefault("brain_diagnostics_snapshot_shadow_mode", True)
     st.session_state.setdefault("last_pipeline_error", None)
     st.session_state.setdefault("last_llm_decision", None)
     st.session_state.setdefault("chat_history_count", 0)
@@ -4884,6 +5040,13 @@ def _show_chat_companion(
             user_message,
             reset_boundary_active=True,
             explicit_workflow_intent=False,
+        )
+        _record_brain_diagnostics_snapshot_shadow(
+            current_turn_trace={
+                "reset_boundary_status": "active",
+                "final_response_route": "reset",
+            },
+            response_source="reset_response",
         )
         reset_reply = "เริ่มบทสนทนาใหม่แล้วครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
         reset_reply, reset_source, reset_empty = _resolve_assistant_reply(reset_reply, "reset_response")
