@@ -4511,12 +4511,78 @@ def _handle_state_machine_workflow(
     return result
 
 
+_DEVELOPER_DIAGNOSTICS_MAX_DICT_ITEMS = 12
+_DEVELOPER_DIAGNOSTICS_MAX_LIST_ITEMS = 10
+_DEVELOPER_DIAGNOSTICS_MAX_TEXT_CHARS = 500
+_DEVELOPER_DIAGNOSTICS_MAX_DEPTH = 3
+
+
+def _developer_diagnostics_preview(value, *, depth: int = 0):
+    if depth >= _DEVELOPER_DIAGNOSTICS_MAX_DEPTH:
+        text = repr(value)
+        if len(text) > 160:
+            return f"{text[:160]}... [truncated {len(text) - 160} chars]"
+        return text
+    if isinstance(value, dict):
+        preview = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _DEVELOPER_DIAGNOSTICS_MAX_DICT_ITEMS:
+                preview["..."] = f"truncated {len(value) - _DEVELOPER_DIAGNOSTICS_MAX_DICT_ITEMS} key(s)"
+                break
+            preview[str(key)[:120]] = _developer_diagnostics_preview(item, depth=depth + 1)
+        return preview
+    if isinstance(value, (list, tuple)):
+        rows = list(value)
+        preview = [
+            _developer_diagnostics_preview(item, depth=depth + 1)
+            for item in rows[:_DEVELOPER_DIAGNOSTICS_MAX_LIST_ITEMS]
+        ]
+        if len(rows) > _DEVELOPER_DIAGNOSTICS_MAX_LIST_ITEMS:
+            preview.append(f"... truncated {len(rows) - _DEVELOPER_DIAGNOSTICS_MAX_LIST_ITEMS} item(s)")
+        return preview
+    if isinstance(value, str) and len(value) > _DEVELOPER_DIAGNOSTICS_MAX_TEXT_CHARS:
+        return f"{value[:_DEVELOPER_DIAGNOSTICS_MAX_TEXT_CHARS]}... [truncated {len(value) - _DEVELOPER_DIAGNOSTICS_MAX_TEXT_CHARS} chars]"
+    return value
+
+
+def _developer_diagnostics_section_enabled(label: str, key: str) -> bool:
+    st.caption(f"{label} hidden for performance. Enable this section to render.")
+    return bool(
+        st.checkbox(
+            f"Render {label}",
+            value=False,
+            key=key,
+        )
+    )
+
+
+def _render_developer_diagnostics_json(label: str, value, *, key: str) -> None:
+    render_full_raw = bool(
+        st.checkbox(
+            f"Render full raw {label}",
+            value=False,
+            key=key,
+        )
+    )
+    if render_full_raw:
+        st.json(value)
+        return
+    st.caption("Preview only. Full raw diagnostics are skipped by default to keep chat reruns fast.")
+    st.json(_developer_diagnostics_preview(value))
+
+
 def _show_workflow_diagnostics() -> None:
     if not st.session_state.get("developer_mode"):
         return
+    if not _developer_diagnostics_section_enabled(
+        "Workflow Diagnostics",
+        "developer_diagnostics_render_workflow",
+    ):
+        return
     workflow_state = (_ensure_conversation_state().get("workflow_state_v2") or {})
     with st.expander("Workflow Diagnostics", expanded=False):
-        st.json(
+        _render_developer_diagnostics_json(
+            "Workflow Diagnostics",
             {
                 "Conversation OS": conversation_os_developer_diagnostics(_sync_session_to_application_state()),
                 "Current Workflow": workflow_state.get("workflow"),
@@ -4535,17 +4601,24 @@ def _show_workflow_diagnostics() -> None:
                 "Completion Decision": workflow_state.get("completion_decision") or {},
                 "Transition Decision": workflow_state.get("transition_decision") or {},
                 "LLM Decision": (_get_application_state().get("developer") or {}).get("llm_decision") or {},
-            }
+            },
+            key="developer_diagnostics_full_raw_workflow",
         )
 
 
 def _show_shared_application_state_diagnostics() -> None:
     if not st.session_state.get("developer_mode"):
         return
+    if not _developer_diagnostics_section_enabled(
+        "Shared Application State",
+        "developer_diagnostics_render_shared_application_state",
+    ):
+        return
     state = _sync_session_to_application_state()
     reasoning = st.session_state.get("last_reasoning") or (state.get("developer") or {}).get("reasoning_result") or {}
     with st.expander("Shared Application State", expanded=False):
-        st.json(
+        _render_developer_diagnostics_json(
+            "Shared Application State",
             {
                 "Conversation": state.get("conversation") or {},
                 "Workflow": state.get("workflow") or {},
@@ -4557,26 +4630,45 @@ def _show_shared_application_state_diagnostics() -> None:
                 "Current Action": reasoning.get("action") or (state.get("developer") or {}).get("current_action"),
                 "LLM Needed": bool(reasoning.get("llm_needed") or (state.get("developer") or {}).get("llm_needed")),
                 "Workflow Ready": bool(reasoning.get("workflow_ready") or (state.get("developer") or {}).get("workflow_ready")),
-            }
+            },
+            key="developer_diagnostics_full_raw_shared_application_state",
         )
 
 
 def _show_platform_diagnostics() -> None:
     if not st.session_state.get("developer_mode"):
         return
+    if not _developer_diagnostics_section_enabled(
+        "Platform Planner Diagnostics",
+        "developer_diagnostics_render_platform_planner",
+    ):
+        return
     state = _sync_session_to_application_state()
     route = st.session_state.get("last_task_route") or (state.get("developer") or {}).get("task_route") or {}
     with st.expander("Platform Planner Diagnostics", expanded=False):
-        st.json(developer_diagnostics(route))
+        _render_developer_diagnostics_json(
+            "Platform Planner Diagnostics",
+            developer_diagnostics(route),
+            key="developer_diagnostics_full_raw_platform_planner",
+        )
 
 
 def _show_ai_pipeline_debug_trace() -> None:
     if not st.session_state.get("developer_mode"):
         return
+    if not _developer_diagnostics_section_enabled(
+        "AI Pipeline Debug",
+        "developer_diagnostics_render_ai_pipeline_debug",
+    ):
+        return
     trace = get_pipeline_trace() or {}
     with st.expander("AI Pipeline Debug", expanded=False):
         if trace:
-            st.json(trace)
+            _render_developer_diagnostics_json(
+                "AI Pipeline Debug",
+                trace,
+                key="developer_diagnostics_full_raw_ai_pipeline_debug",
+            )
         else:
             st.caption("No chat request traced yet.")
 
@@ -4777,6 +4869,11 @@ def _append_workflow_reply(
 def _show_feedback_summary() -> None:
     if not st.session_state.get("developer_mode"):
         return
+    if not _developer_diagnostics_section_enabled(
+        "Feedback Learning Diagnostics",
+        "developer_diagnostics_render_feedback_learning",
+    ):
+        return
 
     with st.expander("ระบบเรียนรู้จากผู้ใช้", expanded=False):
         show_summary = st.checkbox("แสดงแดชบอร์ดทีมพัฒนา", value=False)
@@ -4790,12 +4887,14 @@ def _show_feedback_summary() -> None:
         st.metric("Backlog เปิดอยู่", counts["backlog_open"])
 
         st.write("จำนวนตามหมวด")
-        st.json(
+        _render_developer_diagnostics_json(
+            "feedback counts",
             {
                 "category": counts["by_category"],
                 "priority": counts["by_priority"],
                 "severity": counts["by_severity"],
-            }
+            },
+            key="developer_diagnostics_full_raw_feedback_counts",
         )
 
         st.write("ฟีเจอร์ที่ถูกขอมากที่สุด")
@@ -4811,7 +4910,11 @@ def _show_feedback_summary() -> None:
             st.markdown(f"- **{issue['title']}** ({issue['priority']}) x{issue['count']}")
 
         st.write("แนวโน้มฟีดแบ็ก")
-        st.json(dashboard["feedback_trend"]["daily_counts"])
+        _render_developer_diagnostics_json(
+            "feedback trend",
+            dashboard["feedback_trend"]["daily_counts"],
+            key="developer_diagnostics_full_raw_feedback_trend",
+        )
 
         st.write("ฟีดแบ็กล่าสุด")
         for record in dashboard["latest_feedback"]:
@@ -4845,6 +4948,11 @@ def _render_alert_list(alerts: list[dict], limit: int = 8) -> None:
 
 def _show_developer_alert_center() -> None:
     if not st.session_state.get("developer_mode"):
+        return
+    if not _developer_diagnostics_section_enabled(
+        "Developer Alert Center",
+        "developer_diagnostics_render_alert_center",
+    ):
         return
 
     chat_history = st.session_state.get("chat_history", [])
@@ -4916,11 +5024,23 @@ def _show_developer_alert_center() -> None:
             st.markdown("#### Latest Alerts")
             _render_alert_list(alerts, limit=10)
             st.markdown("#### 7-Day Trend")
-            st.json(trends.get("seven_day_trend", {}))
+            _render_developer_diagnostics_json(
+                "7-day trend",
+                trends.get("seven_day_trend", {}),
+                key="developer_diagnostics_full_raw_trend_7_day",
+            )
             st.markdown("#### 30-Day Trend")
-            st.json(trends.get("thirty_day_trend", {}))
+            _render_developer_diagnostics_json(
+                "30-day trend",
+                trends.get("thirty_day_trend", {}),
+                key="developer_diagnostics_full_raw_trend_30_day",
+            )
             st.markdown("#### Category Growth")
-            st.json(trends.get("category_growth", {}))
+            _render_developer_diagnostics_json(
+                "category growth",
+                trends.get("category_growth", {}),
+                key="developer_diagnostics_full_raw_category_growth",
+            )
 
         with tabs[1]:
             st.markdown("#### Top Conversation Failures")
@@ -4948,7 +5068,11 @@ def _show_developer_alert_center() -> None:
             for issue in product_dashboard.get("top_ux_problems", []):
                 st.markdown(f"- **{issue.get('title')}** ({issue.get('priority')}) x{issue.get('count')}")
             st.markdown("#### Issue Frequency")
-            st.json(trends.get("issue_frequency", {}))
+            _render_developer_diagnostics_json(
+                "issue frequency",
+                trends.get("issue_frequency", {}),
+                key="developer_diagnostics_full_raw_issue_frequency",
+            )
 
         with tabs[3]:
             st.markdown("#### Conversation Replay")
@@ -6939,7 +7063,16 @@ with st.sidebar.expander("Developer diagnostics", expanded=False):
         st.caption(f"last_pipeline_error: {st.session_state.get('last_pipeline_error') or '-'}")
         st.caption(f"chat_history_count: {st.session_state.get('chat_history_count', 0)}")
         if st.session_state.get("last_llm_decision"):
-            st.json({"last_llm_decision": st.session_state.get("last_llm_decision")})
+            if st.checkbox(
+                "Render last LLM decision diagnostics",
+                value=False,
+                key="developer_diagnostics_render_last_llm_decision",
+            ):
+                _render_developer_diagnostics_json(
+                    "last LLM decision diagnostics",
+                    {"last_llm_decision": st.session_state.get("last_llm_decision")},
+                    key="developer_diagnostics_full_raw_last_llm_decision",
+                )
 safe_set_session_state("developer_mode", developer_mode)
 _update_application_section("developer", {"developer_mode": bool(developer_mode)})
 

@@ -207,6 +207,128 @@ class V5144DiagnosticsDashboardUITest(unittest.TestCase):
         )
         self.assertFalse(any(call[0] == "expander" for call in dummy.calls))
 
+    def test_developer_diagnostics_sections_are_lazy_by_default(self):
+        state = {"developer_mode": True}
+        sections = []
+
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=False)
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "_ensure_conversation_state") as ensure_conversation, \
+            patch.object(app, "_sync_session_to_application_state") as sync_state:
+            app._show_workflow_diagnostics()
+        ensure_conversation.assert_not_called()
+        sync_state.assert_not_called()
+        sections.append(dummy)
+
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=False)
+        with patch.object(app, "st", dummy), patch.object(app, "_sync_session_to_application_state") as sync_state:
+            app._show_shared_application_state_diagnostics()
+        sync_state.assert_not_called()
+        sections.append(dummy)
+
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=False)
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "_sync_session_to_application_state") as sync_state, \
+            patch.object(app, "developer_diagnostics") as planner_diagnostics:
+            app._show_platform_diagnostics()
+        sync_state.assert_not_called()
+        planner_diagnostics.assert_not_called()
+        sections.append(dummy)
+
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=False)
+        with patch.object(app, "st", dummy), patch.object(app, "get_pipeline_trace") as pipeline_trace:
+            app._show_ai_pipeline_debug_trace()
+        pipeline_trace.assert_not_called()
+        sections.append(dummy)
+
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=False)
+        with patch.object(app, "st", dummy), patch.object(app, "prepare_dashboard_data") as prepare_dashboard:
+            app._show_feedback_summary()
+        prepare_dashboard.assert_not_called()
+        sections.append(dummy)
+
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=False)
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "collect_developer_alerts") as collect_alerts, \
+            patch.object(app, "generate_trends") as generate_trends, \
+            patch.object(app, "prepare_dashboard_data") as prepare_dashboard:
+            app._show_developer_alert_center()
+        collect_alerts.assert_not_called()
+        generate_trends.assert_not_called()
+        prepare_dashboard.assert_not_called()
+        sections.append(dummy)
+
+        for dummy in sections:
+            self.assertFalse(any(call[0] == "json" for call in dummy.calls))
+            self.assertFalse(any(call[0] == "expander" for call in dummy.calls))
+            self.assertTrue(
+                any(
+                    call[0] == "caption"
+                    and "hidden for performance" in call[1]
+                    for call in dummy.calls
+                )
+            )
+
+    def test_shared_application_state_diagnostics_render_only_when_enabled(self):
+        state = {"developer_mode": True, "last_reasoning": {"action": "inspect"}}
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True)
+        app_state = {"conversation": {"large": "x" * 5000}, "developer": {}}
+
+        with patch.object(app, "st", dummy), patch.object(app, "_sync_session_to_application_state", return_value=app_state):
+            app._show_shared_application_state_diagnostics()
+
+        self.assertTrue(any(call[0] == "expander" and call[1] == "Shared Application State" for call in dummy.calls))
+        self.assertTrue(any(call[0] == "json" for call in dummy.calls))
+
+    def test_platform_planner_diagnostics_render_only_when_enabled(self):
+        state = {"developer_mode": True, "last_task_route": {"route": "direct"}}
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True)
+
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "_sync_session_to_application_state", return_value={"developer": {}}), \
+            patch.object(app, "developer_diagnostics", return_value={"planner": "ok"}) as planner_diagnostics:
+            app._show_platform_diagnostics()
+
+        planner_diagnostics.assert_called_once_with({"route": "direct"})
+        self.assertTrue(any(call[0] == "expander" and call[1] == "Platform Planner Diagnostics" for call in dummy.calls))
+        self.assertTrue(any(call[0] == "json" for call in dummy.calls))
+
+    def test_ai_pipeline_debug_renders_only_when_enabled(self):
+        state = {"developer_mode": True}
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True)
+
+        with patch.object(app, "st", dummy), patch.object(app, "get_pipeline_trace", return_value={"events": ["ok"]}) as trace:
+            app._show_ai_pipeline_debug_trace()
+
+        trace.assert_called_once()
+        self.assertTrue(any(call[0] == "expander" and call[1] == "AI Pipeline Debug" for call in dummy.calls))
+        self.assertTrue(any(call[0] == "json" for call in dummy.calls))
+
+    def test_developer_diagnostics_json_preview_truncates_by_default(self):
+        dummy = _DummyStreamlit(checkbox_value=False)
+        payload = {"raw": "x" * 5000, "items": [{"payload": "y" * 1000} for _ in range(20)]}
+
+        with patch.object(app, "st", dummy):
+            app._render_developer_diagnostics_json("raw diagnostics", payload, key="raw_diagnostics")
+
+        rendered_json = [call[1] for call in dummy.calls if call[0] == "json"]
+        self.assertTrue(rendered_json)
+        self.assertNotIn("x" * 5000, str(rendered_json))
+        self.assertIn("truncated", str(rendered_json))
+
+    def test_developer_diagnostics_global_lazy_guard_does_not_add_mutating_controls(self):
+        source = inspect.getsource(app)
+        banned_control_phrases = (
+            "active gate",
+            "activate gate",
+            "reset diagnostics",
+            "edit memory",
+            "rewrite response",
+        )
+
+        for phrase in banned_control_phrases:
+            self.assertNotIn(phrase, source.lower())
+
     def test_admin_panel_enable_alone_does_not_render_without_frozen_snapshot(self):
         state = {"developer_mode": True}
         dummy = _DummyStreamlit(session_state=state, checkbox_value=True)
