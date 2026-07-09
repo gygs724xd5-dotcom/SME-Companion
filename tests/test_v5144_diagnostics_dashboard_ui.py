@@ -17,9 +17,10 @@ class _Context:
 
 
 class _DummyStreamlit:
-    def __init__(self, session_state=None, checkbox_value=False):
+    def __init__(self, session_state=None, checkbox_value=False, button_value=False):
         self.session_state = session_state or {}
         self.checkbox_value = checkbox_value
+        self.button_value = button_value
         self.calls = []
 
     def subheader(self, value):
@@ -49,6 +50,10 @@ class _DummyStreamlit:
     def checkbox(self, label, value=False, key=None, help=None):
         self.calls.append(("checkbox", label, value, key, help))
         return self.checkbox_value
+
+    def button(self, label, key=None, help=None, **kwargs):
+        self.calls.append(("button", label, key, help, kwargs))
+        return self.button_value
 
     def json(self, value):
         self.calls.append(("json", copy.deepcopy(value)))
@@ -202,17 +207,113 @@ class V5144DiagnosticsDashboardUITest(unittest.TestCase):
         )
         self.assertFalse(any(call[0] == "expander" for call in dummy.calls))
 
-    def test_admin_panel_renders_dashboard_only_when_explicitly_enabled(self):
+    def test_admin_panel_enable_alone_does_not_render_without_frozen_snapshot(self):
         state = {"developer_mode": True}
         dummy = _DummyStreamlit(session_state=state, checkbox_value=True)
 
         with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
             app._show_brain_dashboard_admin_panel()
 
-        render.assert_called_once_with(diagnostics_state=state)
+        render.assert_not_called()
         self.assertIn(
             ("expander", "SME Brain Diagnostics - developer/admin only", False),
             dummy.calls,
+        )
+        self.assertIn(
+            ("info", "Dashboard enabled. Load a snapshot to render diagnostics."),
+            dummy.calls,
+        )
+        self.assertTrue(
+            any(
+                call[0] == "button"
+                and call[1] == "Load/Refresh Brain Diagnostics Snapshot"
+                and call[2] == "brain_dashboard_refresh_requested"
+                for call in dummy.calls
+            )
+        )
+
+    def test_admin_panel_manual_refresh_stores_frozen_snapshot_from_existing_state(self):
+        snapshot = _minimal_snapshot()
+        state = {
+            "developer_mode": True,
+            "brain_diagnostics_snapshot": snapshot,
+        }
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True, button_value=True)
+
+        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+            app._show_brain_dashboard_admin_panel()
+
+        self.assertEqual(state["brain_dashboard_frozen_snapshot"], snapshot)
+        self.assertIsNot(state["brain_dashboard_frozen_snapshot"], snapshot)
+        self.assertIsNotNone(state["brain_dashboard_frozen_at"])
+        render.assert_called_once_with(
+            snapshot=state["brain_dashboard_frozen_snapshot"],
+            diagnostics_state={},
+        )
+
+    def test_admin_panel_manual_refresh_can_use_last_snapshot_fallback(self):
+        snapshot = _minimal_snapshot()
+        state = {
+            "developer_mode": True,
+            "last_brain_diagnostics_snapshot": snapshot,
+        }
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True, button_value=True)
+
+        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+            app._show_brain_dashboard_admin_panel()
+
+        self.assertEqual(state["brain_dashboard_frozen_snapshot"], snapshot)
+        render.assert_called_once_with(
+            snapshot=state["brain_dashboard_frozen_snapshot"],
+            diagnostics_state={},
+        )
+
+    def test_admin_panel_renders_only_from_existing_frozen_snapshot(self):
+        live_snapshot = _minimal_snapshot()
+        frozen_snapshot = _minimal_snapshot()
+        frozen_snapshot["dashboard_version"] = "frozen"
+        state = {
+            "developer_mode": True,
+            "brain_diagnostics_snapshot": live_snapshot,
+            "brain_dashboard_frozen_snapshot": frozen_snapshot,
+            "brain_dashboard_frozen_at": "2026-07-09T00:00:00+00:00",
+        }
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True, button_value=False)
+
+        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+            app._show_brain_dashboard_admin_panel()
+
+        render.assert_called_once_with(snapshot=frozen_snapshot, diagnostics_state={})
+
+    def test_admin_panel_refresh_does_not_mutate_original_diagnostics_state(self):
+        snapshot = _minimal_snapshot()
+        state = {
+            "developer_mode": True,
+            "brain_diagnostics_snapshot": snapshot,
+            "last_task_route": {"workflow": "unchanged"},
+            "planner_output": {"decision": "unchanged"},
+            "last_generated_response": "unchanged response",
+        }
+        before_snapshot = copy.deepcopy(snapshot)
+        before_runtime_state = {
+            "last_task_route": copy.deepcopy(state["last_task_route"]),
+            "planner_output": copy.deepcopy(state["planner_output"]),
+            "last_generated_response": state["last_generated_response"],
+        }
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True, button_value=True)
+
+        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui"):
+            app._show_brain_dashboard_admin_panel()
+
+        state["brain_dashboard_frozen_snapshot"]["dashboard_version"] = "changed in ui copy"
+        self.assertEqual(snapshot, before_snapshot)
+        self.assertEqual(
+            {
+                "last_task_route": state["last_task_route"],
+                "planner_output": state["planner_output"],
+                "last_generated_response": state["last_generated_response"],
+            },
+            before_runtime_state,
         )
 
     def test_renderer_is_read_only_by_design_where_static_analysis_can_verify(self):

@@ -1,4 +1,5 @@
 import json
+import copy
 import re
 import time
 from datetime import datetime, timezone
@@ -4527,12 +4528,51 @@ def _show_brain_dashboard_admin_panel() -> None:
     render_dashboard = st.checkbox(
         "Render SME Brain Diagnostics Dashboard",
         value=False,
-        key="brain_diagnostics_dashboard_render_enabled",
+        key="brain_dashboard_render_enabled",
     )
     if not render_dashboard:
         return
     with st.expander("SME Brain Diagnostics - developer/admin only", expanded=False):
-        _render_brain_dashboard_admin_ui(diagnostics_state=st.session_state)
+        if st.button(
+            "Load/Refresh Brain Diagnostics Snapshot",
+            key="brain_dashboard_refresh_requested",
+            help="Copies the latest existing diagnostics snapshot into a frozen read-only UI snapshot.",
+        ):
+            _freeze_brain_dashboard_snapshot()
+
+        frozen_snapshot = st.session_state.get("brain_dashboard_frozen_snapshot")
+        if frozen_snapshot is None:
+            st.info("Dashboard enabled. Load a snapshot to render diagnostics.")
+            return
+        if st.session_state.get("brain_dashboard_frozen_at"):
+            st.caption(f"Frozen snapshot loaded at {st.session_state.get('brain_dashboard_frozen_at')}")
+        _render_brain_dashboard_admin_ui(
+            snapshot=frozen_snapshot,
+            diagnostics_state={},
+        )
+
+
+def _freeze_brain_dashboard_snapshot() -> bool:
+    for key in (
+        "brain_diagnostics_snapshot",
+        "last_brain_diagnostics_snapshot",
+        "brain_diagnostics_dashboard_snapshot",
+    ):
+        candidate = st.session_state.get(key)
+        if candidate is None:
+            continue
+        if isinstance(candidate, (dict, list, tuple, set)) and not candidate:
+            continue
+        try:
+            frozen_snapshot = copy.deepcopy(candidate)
+        except Exception:
+            frozen_snapshot = candidate
+        st.session_state["brain_dashboard_frozen_snapshot"] = frozen_snapshot
+        st.session_state["brain_dashboard_frozen_at"] = datetime.now(timezone.utc).isoformat()
+        return True
+    st.session_state["brain_dashboard_frozen_snapshot"] = None
+    st.session_state["brain_dashboard_frozen_at"] = None
+    return False
 
 
 def _handle_dashboard_workflow(user_message: str) -> dict:
