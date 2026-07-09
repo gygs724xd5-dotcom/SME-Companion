@@ -1028,6 +1028,25 @@ def _record_brain_diagnostics_snapshot_shadow(
         response_source=response_source,
         response_mode=response_mode,
     )
+    runtime_enabled = False
+    if not runtime_enabled:
+        snapshot = _brain_diagnostics_snapshot_runtime_disabled(trace)
+        try:
+            st.session_state["brain_diagnostics_snapshot"] = snapshot
+            st.session_state["last_brain_diagnostics_snapshot"] = snapshot
+            st.session_state["brain_diagnostics_snapshot_shadow_mode"] = True
+            _update_application_section(
+                "developer",
+                {
+                    "brain_diagnostics_snapshot": snapshot,
+                    "last_brain_diagnostics_snapshot": snapshot,
+                    "brain_diagnostics_snapshot_shadow_mode": True,
+                },
+            )
+        except Exception:
+            pass
+        return snapshot
+
     try:
         snapshot = build_brain_diagnostics_snapshot(
             layer_statuses=_BRAIN_DIAGNOSTICS_LAYER_STATUSES,
@@ -1101,6 +1120,47 @@ def _record_brain_diagnostics_snapshot_shadow(
     except Exception:
         pass
     return snapshot
+
+
+def _brain_diagnostics_snapshot_runtime_disabled(trace: dict | None = None) -> dict:
+    return {
+        "dashboard_version": "5.14.4.4",
+        "layer_progress": [],
+        "shadow_diagnostics": {
+            "response_authority": st.session_state.get("last_response_authority_diagnostics") or {},
+            "evidence_gap": st.session_state.get("last_evidence_gap_diagnostics") or {},
+            "business_situation": st.session_state.get("last_business_situation_diagnostics") or {},
+        },
+        "current_turn_trace": trace or {},
+        "regression_safety_status": {},
+        "test_health": {},
+        "protected_dirty_files": list(_BRAIN_DIAGNOSTICS_PROTECTED_DIRTY_FILES),
+        "active_vs_shadow_layer_map": {
+            "Dashboard Snapshot": {
+                "mode": "shadow",
+                "active_gate_status": "shadow_only",
+                "readiness_score": 0,
+            }
+        },
+        "mismatch_flags": [],
+        "next_recommended_step": {
+            "recommendation": "Build Brain Diagnostics Dashboard snapshots only from explicit developer/admin refresh.",
+            "notes": ["dashboard_snapshot_runtime_disabled_by_default"],
+        },
+        "diagnostics": {
+            "snapshot_helper": "brain.diagnostics_dashboard.build_brain_diagnostics_snapshot",
+            "snapshot_helper_complete": False,
+            "brain_diagnostics_snapshot_shadow_mode": True,
+            "brain_diagnostics_snapshot_runtime_enabled": False,
+            "brain_diagnostics_snapshot_skipped_reason": "dashboard_snapshot_runtime_disabled_by_default",
+            "brain_diagnostics_snapshot_reason": "dashboard_snapshot_runtime_disabled_by_default",
+            "runtime_mutation": False,
+            "ui_rendered": False,
+            "llm_called": False,
+            "active_gate_changed": False,
+            "response_behavior_changed": False,
+        },
+    }
 
 
 def _route_extracted_entities(route: dict | None) -> dict:
@@ -4536,7 +4596,7 @@ def _show_brain_dashboard_admin_panel() -> None:
         if st.button(
             "Load/Refresh Brain Diagnostics Snapshot",
             key="brain_dashboard_refresh_requested",
-            help="Copies the latest existing diagnostics snapshot into a frozen read-only UI snapshot.",
+            help="Builds a diagnostics snapshot for this developer/admin view and freezes a read-only UI copy.",
         ):
             _freeze_brain_dashboard_snapshot()
 
@@ -4553,23 +4613,33 @@ def _show_brain_dashboard_admin_panel() -> None:
 
 
 def _freeze_brain_dashboard_snapshot() -> bool:
-    for key in (
-        "brain_diagnostics_snapshot",
-        "last_brain_diagnostics_snapshot",
-        "brain_diagnostics_dashboard_snapshot",
-    ):
-        candidate = st.session_state.get(key)
-        if candidate is None:
-            continue
-        if isinstance(candidate, (dict, list, tuple, set)) and not candidate:
-            continue
-        try:
-            frozen_snapshot = copy.deepcopy(candidate)
-        except Exception:
-            frozen_snapshot = candidate
+    trace = _brain_diagnostics_current_turn_trace()
+    try:
+        candidate = build_brain_diagnostics_snapshot(
+            layer_statuses=_BRAIN_DIAGNOSTICS_LAYER_STATUSES,
+            response_authority_diagnostics=st.session_state.get("last_response_authority_diagnostics") or {},
+            evidence_gap_diagnostics=st.session_state.get("last_evidence_gap_diagnostics") or {},
+            business_situation_diagnostics=st.session_state.get("last_business_situation_diagnostics") or {},
+            test_health=_brain_diagnostics_test_health(),
+            protected_dirty_files=list(_BRAIN_DIAGNOSTICS_PROTECTED_DIRTY_FILES),
+            current_turn_trace=trace,
+            active_gate_status={"default_status": "shadow_only"},
+        )
+        candidate = copy.deepcopy(candidate)
+        candidate.setdefault("active_vs_shadow_layer_map", {})["Dashboard Snapshot"] = {
+            "mode": "shadow",
+            "active_gate_status": "shadow_only",
+            "readiness_score": 60,
+        }
+        candidate.setdefault("diagnostics", {})["brain_diagnostics_snapshot_shadow_mode"] = True
+        candidate["diagnostics"]["brain_diagnostics_snapshot_runtime_enabled"] = True
+        candidate["diagnostics"]["brain_diagnostics_snapshot_manual_refresh"] = True
+        frozen_snapshot = copy.deepcopy(candidate)
         st.session_state["brain_dashboard_frozen_snapshot"] = frozen_snapshot
         st.session_state["brain_dashboard_frozen_at"] = datetime.now(timezone.utc).isoformat()
         return True
+    except Exception:
+        pass
     st.session_state["brain_dashboard_frozen_snapshot"] = None
     st.session_state["brain_dashboard_frozen_at"] = None
     return False

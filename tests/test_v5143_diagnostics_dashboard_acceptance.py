@@ -207,27 +207,33 @@ class V5143DiagnosticsDashboardAcceptanceTest(unittest.TestCase):
         session_state["last_response_authority_diagnostics"]["response_authority_mode"] = START_WORKFLOW
         expected_reply = build_general_direct_response(ANALYTICAL_COST)
 
-        snapshot, _, session_state = _record_snapshot(session_state)
+        with patch.object(app, "build_brain_diagnostics_snapshot") as build_snapshot:
+            snapshot, _, session_state = _record_snapshot(session_state)
 
+        build_snapshot.assert_not_called()
         self.assertIs(session_state["brain_diagnostics_snapshot"], snapshot)
-        self.assertIs(session_state["brain_diagnostics_dashboard_snapshot"], snapshot)
+        self.assertNotIn("brain_diagnostics_dashboard_snapshot", session_state)
         self.assertIs(session_state["last_brain_diagnostics_snapshot"], snapshot)
         self.assertTrue(session_state["brain_diagnostics_snapshot_shadow_mode"])
         self.assertEqual(build_general_direct_response(ANALYTICAL_COST), expected_reply)
         self.assertNotIn("START_WORKFLOW", expected_reply)
         self.assertFalse(snapshot["diagnostics"]["response_behavior_changed"])
+        self.assertEqual(
+            snapshot["diagnostics"]["brain_diagnostics_snapshot_skipped_reason"],
+            "dashboard_snapshot_runtime_disabled_by_default",
+        )
 
     def test_dashboard_snapshot_does_not_activate_gates(self):
         snapshot, _, session_state = _record_snapshot()
         layer_map = snapshot["active_vs_shadow_layer_map"]
 
-        for layer_name in ("Response Authority", "Evidence Gap", "Business Situation", "Dashboard Snapshot"):
-            self.assertIn(layer_name, layer_map)
-            self.assertIn(layer_map[layer_name]["mode"], {"shadow", "inactive"})
-            self.assertIn(layer_map[layer_name]["active_gate_status"], {"shadow_only", "inactive"})
+        self.assertEqual(set(layer_map), {"Dashboard Snapshot"})
+        self.assertEqual(layer_map["Dashboard Snapshot"]["mode"], "shadow")
+        self.assertEqual(layer_map["Dashboard Snapshot"]["active_gate_status"], "shadow_only")
         self.assertTrue(session_state["brain_diagnostics_snapshot_shadow_mode"])
         self.assertNotIn("active_gate_violation", snapshot["mismatch_flags"])
         self.assertFalse(snapshot["diagnostics"]["active_gate_changed"])
+        self.assertFalse(snapshot["diagnostics"]["brain_diagnostics_snapshot_runtime_enabled"])
 
     def test_dashboard_snapshot_does_not_override_response_authority_diagnostics(self):
         session_state = _session_state()
@@ -378,13 +384,14 @@ class V5143DiagnosticsDashboardAcceptanceTest(unittest.TestCase):
 
     def test_dashboard_snapshot_fail_closed_diagnostics_do_not_crash_final_response_flow(self):
         expected_reply = build_general_direct_response(ANALYTICAL_COST)
-        with patch.object(app, "build_brain_diagnostics_snapshot", side_effect=RuntimeError("boom")):
+        with patch.object(app, "build_brain_diagnostics_snapshot", side_effect=RuntimeError("boom")) as build_snapshot:
             snapshot, _, session_state = _record_snapshot({"conversation_reset_diagnostics": {}})
 
+        build_snapshot.assert_not_called()
         self.assertTrue(session_state["brain_diagnostics_snapshot_shadow_mode"])
         self.assertEqual(
             snapshot["diagnostics"]["brain_diagnostics_snapshot_reason"],
-            "brain_diagnostics_snapshot_shadow_error",
+            "dashboard_snapshot_runtime_disabled_by_default",
         )
         self.assertFalse(snapshot["diagnostics"]["response_behavior_changed"])
         self.assertEqual(build_general_direct_response(ANALYTICAL_COST), expected_reply)

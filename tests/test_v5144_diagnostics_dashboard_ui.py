@@ -211,9 +211,12 @@ class V5144DiagnosticsDashboardUITest(unittest.TestCase):
         state = {"developer_mode": True}
         dummy = _DummyStreamlit(session_state=state, checkbox_value=True)
 
-        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "build_brain_diagnostics_snapshot") as build_snapshot, \
+            patch.object(app, "_render_brain_dashboard_admin_ui") as render:
             app._show_brain_dashboard_admin_panel()
 
+        build_snapshot.assert_not_called()
         render.assert_not_called()
         self.assertIn(
             ("expander", "SME Brain Diagnostics - developer/admin only", False),
@@ -232,37 +235,48 @@ class V5144DiagnosticsDashboardUITest(unittest.TestCase):
             )
         )
 
-    def test_admin_panel_manual_refresh_stores_frozen_snapshot_from_existing_state(self):
+    def test_admin_panel_manual_refresh_builds_and_stores_frozen_snapshot(self):
         snapshot = _minimal_snapshot()
         state = {
             "developer_mode": True,
-            "brain_diagnostics_snapshot": snapshot,
         }
         dummy = _DummyStreamlit(session_state=state, checkbox_value=True, button_value=True)
 
-        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "build_brain_diagnostics_snapshot", return_value=snapshot) as build_snapshot, \
+            patch.object(app, "_render_brain_dashboard_admin_ui") as render:
             app._show_brain_dashboard_admin_panel()
 
-        self.assertEqual(state["brain_dashboard_frozen_snapshot"], snapshot)
+        build_snapshot.assert_called_once()
+        self.assertEqual(state["brain_dashboard_frozen_snapshot"]["dashboard_version"], snapshot["dashboard_version"])
         self.assertIsNot(state["brain_dashboard_frozen_snapshot"], snapshot)
         self.assertIsNotNone(state["brain_dashboard_frozen_at"])
+        self.assertTrue(state["brain_dashboard_frozen_snapshot"]["diagnostics"]["brain_diagnostics_snapshot_manual_refresh"])
         render.assert_called_once_with(
             snapshot=state["brain_dashboard_frozen_snapshot"],
             diagnostics_state={},
         )
 
-    def test_admin_panel_manual_refresh_can_use_last_snapshot_fallback(self):
+    def test_admin_panel_manual_refresh_ignores_existing_snapshot_fallbacks(self):
         snapshot = _minimal_snapshot()
+        old_snapshot = _minimal_snapshot()
+        old_snapshot["dashboard_version"] = "old"
         state = {
             "developer_mode": True,
-            "last_brain_diagnostics_snapshot": snapshot,
+            "last_brain_diagnostics_snapshot": old_snapshot,
+            "brain_diagnostics_dashboard_snapshot": old_snapshot,
         }
         dummy = _DummyStreamlit(session_state=state, checkbox_value=True, button_value=True)
 
-        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "build_brain_diagnostics_snapshot", return_value=snapshot) as build_snapshot, \
+            patch.object(app, "_render_brain_dashboard_admin_ui") as render:
             app._show_brain_dashboard_admin_panel()
 
-        self.assertEqual(state["brain_dashboard_frozen_snapshot"], snapshot)
+        build_snapshot.assert_called_once()
+        self.assertEqual(state["brain_dashboard_frozen_snapshot"]["dashboard_version"], snapshot["dashboard_version"])
+        self.assertEqual(state["last_brain_diagnostics_snapshot"], old_snapshot)
+        self.assertEqual(state["brain_diagnostics_dashboard_snapshot"], old_snapshot)
         render.assert_called_once_with(
             snapshot=state["brain_dashboard_frozen_snapshot"],
             diagnostics_state={},
@@ -315,6 +329,24 @@ class V5144DiagnosticsDashboardUITest(unittest.TestCase):
             },
             before_runtime_state,
         )
+
+    def test_admin_panel_manual_refresh_fail_closed_when_build_fails(self):
+        state = {
+            "developer_mode": True,
+            "brain_dashboard_frozen_snapshot": _minimal_snapshot(),
+            "brain_dashboard_frozen_at": "2026-07-09T00:00:00+00:00",
+        }
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True, button_value=True)
+
+        with patch.object(app, "st", dummy), \
+            patch.object(app, "build_brain_diagnostics_snapshot", side_effect=RuntimeError("boom")), \
+            patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+            app._show_brain_dashboard_admin_panel()
+
+        self.assertIsNone(state["brain_dashboard_frozen_snapshot"])
+        self.assertIsNone(state["brain_dashboard_frozen_at"])
+        render.assert_not_called()
+        self.assertIn(("info", "Dashboard enabled. Load a snapshot to render diagnostics."), dummy.calls)
 
     def test_renderer_is_read_only_by_design_where_static_analysis_can_verify(self):
         source = inspect.getsource(dashboard_ui.render_brain_diagnostics_dashboard)

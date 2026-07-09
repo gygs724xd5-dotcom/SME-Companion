@@ -278,14 +278,15 @@ class V5145DiagnosticsDashboardRuntimeAuditTest(unittest.TestCase):
     def test_snapshot_fail_closed_diagnostics_remain_stable(self):
         state = _diagnostics_state()
         expected_reply = build_general_direct_response(ANALYTICAL_COST)
-        with patch.object(app, "build_brain_diagnostics_snapshot", side_effect=RuntimeError("boom")):
+        with patch.object(app, "build_brain_diagnostics_snapshot", side_effect=RuntimeError("boom")) as build_snapshot:
             snapshot = _record_snapshot(state)
 
+        build_snapshot.assert_not_called()
         self.assertTrue(state["brain_diagnostics_snapshot_shadow_mode"])
-        self.assertEqual(snapshot["mismatch_flags"], ["shadow_layer_error"])
+        self.assertEqual(snapshot["mismatch_flags"], [])
         self.assertEqual(
             snapshot["diagnostics"]["brain_diagnostics_snapshot_reason"],
-            "brain_diagnostics_snapshot_shadow_error",
+            "dashboard_snapshot_runtime_disabled_by_default",
         )
         self.assertFalse(snapshot["diagnostics"]["response_behavior_changed"])
         self.assertEqual(build_general_direct_response(ANALYTICAL_COST), expected_reply)

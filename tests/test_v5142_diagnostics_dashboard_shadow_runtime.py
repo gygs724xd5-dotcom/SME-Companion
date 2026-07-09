@@ -117,17 +117,24 @@ def _dirty_completed_cost_state():
 
 
 class V5142DiagnosticsDashboardShadowRuntimeTest(unittest.TestCase):
-    def test_runtime_helper_computes_and_stores_shadow_snapshot(self):
-        snapshot, developer_updates, session_state = _record_snapshot(
-            current_turn_trace={"final_response_route": "direct"}
-        )
+    def test_runtime_helper_records_lightweight_skipped_snapshot_by_default(self):
+        with patch.object(app, "build_brain_diagnostics_snapshot") as build_snapshot:
+            snapshot, developer_updates, session_state = _record_snapshot(
+                current_turn_trace={"final_response_route": "direct"}
+            )
 
+        build_snapshot.assert_not_called()
         self.assertEqual(set(snapshot), STABLE_SNAPSHOT_KEYS)
         self.assertIs(session_state["brain_diagnostics_snapshot"], snapshot)
-        self.assertIs(session_state["brain_diagnostics_dashboard_snapshot"], snapshot)
+        self.assertNotIn("brain_diagnostics_dashboard_snapshot", session_state)
         self.assertIs(session_state["last_brain_diagnostics_snapshot"], snapshot)
         self.assertTrue(session_state["brain_diagnostics_snapshot_shadow_mode"])
         self.assertIs(developer_updates["brain_diagnostics_snapshot"], snapshot)
+        self.assertFalse(snapshot["diagnostics"]["brain_diagnostics_snapshot_runtime_enabled"])
+        self.assertEqual(
+            snapshot["diagnostics"]["brain_diagnostics_snapshot_skipped_reason"],
+            "dashboard_snapshot_runtime_disabled_by_default",
+        )
 
     def test_snapshot_includes_response_authority_evidence_gap_and_business_situation(self):
         snapshot, _, _ = _record_snapshot()
@@ -152,16 +159,17 @@ class V5142DiagnosticsDashboardShadowRuntimeTest(unittest.TestCase):
             self.assertEqual(status["mode"], "shadow")
             self.assertEqual(status["active_gate_status"], "shadow_only")
 
-    def test_snapshot_fail_closed_path_does_not_crash_final_response_flow(self):
+    def test_disabled_runtime_does_not_call_snapshot_builder_or_change_response_flow(self):
         expected_reply = build_general_direct_response(ANALYTICAL_COST)
-        with patch.object(app, "build_brain_diagnostics_snapshot", side_effect=RuntimeError("boom")):
+        with patch.object(app, "build_brain_diagnostics_snapshot", side_effect=RuntimeError("boom")) as build_snapshot:
             snapshot, _, session_state = _record_snapshot()
 
+        build_snapshot.assert_not_called()
         self.assertEqual(build_general_direct_response(ANALYTICAL_COST), expected_reply)
         self.assertTrue(session_state["brain_diagnostics_snapshot_shadow_mode"])
         self.assertEqual(
             snapshot["diagnostics"]["brain_diagnostics_snapshot_reason"],
-            "brain_diagnostics_snapshot_shadow_error",
+            "dashboard_snapshot_runtime_disabled_by_default",
         )
         self.assertFalse(snapshot["diagnostics"]["response_behavior_changed"])
 
