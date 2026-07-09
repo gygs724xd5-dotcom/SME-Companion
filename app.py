@@ -1037,6 +1037,12 @@ def _record_brain_diagnostics_snapshot_shadow(
             current_turn_trace=trace,
             active_gate_status={"default_status": "shadow_only"},
         )
+        snapshot.setdefault("active_vs_shadow_layer_map", {})["Dashboard Snapshot"] = {
+            "mode": "shadow",
+            "active_gate_status": "shadow_only",
+            "readiness_score": 60,
+        }
+        snapshot.setdefault("diagnostics", {})["brain_diagnostics_snapshot_shadow_mode"] = True
     except Exception as snapshot_error:
         snapshot = {
             "dashboard_version": "5.14.2",
@@ -1050,7 +1056,13 @@ def _record_brain_diagnostics_snapshot_shadow(
             "regression_safety_status": {},
             "test_health": _brain_diagnostics_test_health(),
             "protected_dirty_files": list(_BRAIN_DIAGNOSTICS_PROTECTED_DIRTY_FILES),
-            "active_vs_shadow_layer_map": {},
+            "active_vs_shadow_layer_map": {
+                "Dashboard Snapshot": {
+                    "mode": "shadow",
+                    "active_gate_status": "shadow_only",
+                    "readiness_score": 60,
+                }
+            },
             "mismatch_flags": ["shadow_layer_error"],
             "next_recommended_step": {
                 "recommendation": "Keep Brain Diagnostics Dashboard snapshot in shadow mode until runtime aggregation is healthy.",
