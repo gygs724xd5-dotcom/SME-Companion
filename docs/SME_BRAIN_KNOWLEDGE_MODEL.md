@@ -44,6 +44,8 @@ Operational or domain rules that guide action, such as margin thresholds, refund
 
 Bounded capabilities that can perform work under Brain supervision.
 
+The V5.15.0 Business Skill Schema contract defines the reusable skill fields, evidence requirements, reasoning contract, response boundaries, lifecycle, and diagnostics keys for these capabilities.
+
 ### Experience
 
 Patterns learned from prior cases, business history, outcomes, or observed practice.
