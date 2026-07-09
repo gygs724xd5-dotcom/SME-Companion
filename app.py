@@ -95,6 +95,7 @@ from brain.conversation_workflow_engine import (
     detect_workflow,
 )
 from brain.diagnostics_dashboard import build_brain_diagnostics_snapshot
+from brain.diagnostics_dashboard_ui import render_brain_diagnostics_dashboard as _render_brain_dashboard_admin_ui
 from brain.workflow_state_machine import (
     cost_calculation_trace,
     detect_workflow_intent,
@@ -4519,6 +4520,13 @@ def _show_ai_pipeline_debug_trace() -> None:
             st.caption("No chat request traced yet.")
 
 
+def _show_brain_dashboard_admin_panel() -> None:
+    if not st.session_state.get("developer_mode"):
+        return
+    with st.expander("SME Brain Diagnostics - developer/admin only", expanded=False):
+        _render_brain_dashboard_admin_ui(diagnostics_state=st.session_state)
+
+
 def _handle_dashboard_workflow(user_message: str) -> dict:
     record_product_feedback(user_message, conversation_id=st.session_state.get("conversation_id"))
     _clear_workflow_state_v2()
@@ -5002,6 +5010,7 @@ def _show_chat_companion(
     _show_shared_application_state_diagnostics()
     _show_platform_diagnostics()
     _show_ai_pipeline_debug_trace()
+    _show_brain_dashboard_admin_panel()
 
     if st.session_state.get("demo_mode") and not st.session_state["chat_history"]:
         _show_demo_chat_suggestions()
