@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 import streamlit as st
 
+
+_MAX_LAYER_ROWS = 8
+_MAX_SHADOW_MAP_ROWS = 12
+_MAX_FLAGS = 12
+_MAX_LIST_ITEMS = 10
+_MAX_DICT_ITEMS = 12
+_MAX_TEXT_CHARS = 500
+_MAX_JSON_DEPTH = 3
 
 _SNAPSHOT_STATE_KEYS = (
     "brain_diagnostics_snapshot",
@@ -20,11 +27,11 @@ _DIAGNOSTIC_STATE_KEYS = (
 
 
 def _as_dict(value: Any) -> dict:
-    return deepcopy(value) if isinstance(value, dict) else {}
+    return value if isinstance(value, dict) else {}
 
 
 def _as_list(value: Any) -> list:
-    return deepcopy(value) if isinstance(value, list) else []
+    return value if isinstance(value, list) else []
 
 
 def _state_get(state: Any, key: str, default: Any = None) -> Any:
@@ -38,32 +45,32 @@ def _state_get(state: Any, key: str, default: Any = None) -> Any:
 
 def _resolve_snapshot(snapshot: dict | None, diagnostics_state: dict | None) -> dict | None:
     if snapshot is not None:
-        return deepcopy(snapshot) if isinstance(snapshot, dict) else snapshot
+        return snapshot
 
     state = diagnostics_state if diagnostics_state is not None else st.session_state
     for key in _SNAPSHOT_STATE_KEYS:
         candidate = _state_get(state, key)
         if isinstance(candidate, dict) and candidate:
-            return deepcopy(candidate)
+            return candidate
         if candidate not in (None, {}, []):
             return candidate
     return None
 
 
 def _snapshot_with_state_diagnostics(snapshot: dict, diagnostics_state: dict | None) -> dict:
-    result = deepcopy(snapshot)
+    result = dict(snapshot)
     if diagnostics_state is None:
         diagnostics_state = st.session_state
-    shadow = result.setdefault("shadow_diagnostics", {})
+    shadow = dict(_as_dict(result.get("shadow_diagnostics")))
     if not isinstance(shadow, dict):
-        result["shadow_diagnostics"] = {}
         shadow = result["shadow_diagnostics"]
     for section, state_key in _DIAGNOSTIC_STATE_KEYS:
         if shadow.get(section):
             continue
         diagnostics = _state_get(diagnostics_state, state_key)
         if isinstance(diagnostics, dict) and diagnostics:
-            shadow[section] = deepcopy(diagnostics)
+            shadow[section] = diagnostics
+    result["shadow_diagnostics"] = shadow
     return result
 
 
@@ -78,18 +85,62 @@ def _metric_text(value: Any, fallback: str = "unknown") -> str:
         return fallback
     if isinstance(value, bool):
         return "yes" if value else "no"
-    return str(value)
+    return _safe_text(value)
 
 
-def _json_view(value: Any) -> None:
+def _safe_text(value: Any, max_chars: int = _MAX_TEXT_CHARS) -> str:
+    text = str(value)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}... [truncated {len(text) - max_chars} chars]"
+
+
+def _limited_sequence(value: list, limit: int = _MAX_LIST_ITEMS) -> list:
+    rows = value[:limit]
+    if len(value) > limit:
+        rows = [*rows, f"... truncated {len(value) - limit} item(s)"]
+    return rows
+
+
+def _preview_value(value: Any, *, depth: int = 0) -> Any:
+    if depth >= _MAX_JSON_DEPTH:
+        return _safe_text(value, 160)
+    if isinstance(value, dict):
+        preview = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _MAX_DICT_ITEMS:
+                preview["..."] = f"truncated {len(value) - _MAX_DICT_ITEMS} key(s)"
+                break
+            preview[_safe_text(key, 120)] = _preview_value(item, depth=depth + 1)
+        return preview
+    if isinstance(value, list):
+        return [_preview_value(item, depth=depth + 1) for item in _limited_sequence(value)]
+    if isinstance(value, tuple):
+        return [_preview_value(item, depth=depth + 1) for item in _limited_sequence(list(value))]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return _safe_text(value) if isinstance(value, str) else value
+    return _safe_text(repr(value))
+
+
+def _json_view(value: Any, *, full: bool = False) -> None:
+    rendered = value if full else _preview_value(value)
     try:
-        st.json(value)
+        st.json(rendered)
     except Exception as json_error:
         try:
             st.warning(f"Unable to render JSON view: {type(json_error).__name__}")
-            st.json({"raw_snapshot_repr": repr(value)})
+            st.json({"raw_snapshot_repr": _safe_text(repr(value))})
         except Exception:
             st.warning("Unable to render raw diagnostics snapshot.")
+
+
+def _render_preview_expander(label: str, value: Any, *, full_raw: bool = False) -> None:
+    with st.expander(label, expanded=False):
+        if full_raw:
+            _json_view(value, full=True)
+            return
+        st.caption("Preview only. Full raw diagnostics are skipped by default to keep chat reruns fast.")
+        _json_view(value)
 
 
 def _shadow_mode_text(value: Any) -> str:
@@ -107,7 +158,7 @@ def _render_layer_progress(snapshot: dict) -> None:
         if not rows:
             st.caption("No layer progress rows recorded.")
             return
-        for row in rows:
+        for row in rows[:_MAX_LAYER_ROWS]:
             if not isinstance(row, dict):
                 continue
             st.caption(_metric_text(row.get("layer_name"), "Unnamed layer"))
@@ -117,6 +168,8 @@ def _render_layer_progress(snapshot: dict) -> None:
             cols[1].metric("Gate", _metric_text(row.get("active_gate_status")))
             cols[2].metric("Risk", _metric_text(row.get("risk_level")))
             cols[3].metric("Audit", _metric_text(row.get("audit_status")))
+        if len(rows) > _MAX_LAYER_ROWS:
+            st.caption(f"{len(rows) - _MAX_LAYER_ROWS} additional layer row(s) hidden by performance guard.")
 
 
 def _render_shadow_map(snapshot: dict) -> None:
@@ -127,9 +180,12 @@ def _render_shadow_map(snapshot: dict) -> None:
             st.caption("No active/shadow map recorded.")
             return
         cols = st.columns(3)
-        for index, (name, status) in enumerate(layer_map.items()):
+        items = list(layer_map.items())
+        for index, (name, status) in enumerate(items[:_MAX_SHADOW_MAP_ROWS]):
             status = _as_dict(status)
             cols[index % 3].metric(name, _metric_text(status.get("mode")), _metric_text(status.get("active_gate_status")))
+        if len(items) > _MAX_SHADOW_MAP_ROWS:
+            st.caption(f"{len(items) - _MAX_SHADOW_MAP_ROWS} additional layer status row(s) hidden by performance guard.")
 
 
 def _render_current_turn_trace(snapshot: dict) -> None:
@@ -143,8 +199,7 @@ def _render_current_turn_trace(snapshot: dict) -> None:
         cols[0].metric("Route", _metric_text(trace.get("final_response_route")))
         cols[1].metric("Response Mode", _metric_text(trace.get("response_mode")))
         cols[2].metric("Reset Boundary", _metric_text(trace.get("reset_boundary_status")))
-        with st.expander("Trace details", expanded=False):
-            _json_view(trace)
+        _render_preview_expander("Trace details", trace)
 
 
 def _render_diagnostic_section(snapshot: dict, title: str, section_key: str, shadow_key: str) -> None:
@@ -158,8 +213,7 @@ def _render_diagnostic_section(snapshot: dict, title: str, section_key: str, sha
         cols[0].metric("Shadow Mode", _shadow_mode_text(diagnostics.get(shadow_key)))
         cols[1].metric("Type", _metric_text(diagnostics.get(f"{section_key}_type") or diagnostics.get("business_situation_type")))
         cols[2].metric("Confidence", _metric_text(diagnostics.get(f"{section_key}_confidence") or diagnostics.get("business_situation_confidence")))
-        with st.expander(f"{title} raw diagnostics", expanded=False):
-            _json_view(diagnostics)
+        _render_preview_expander(f"{title} raw diagnostics", diagnostics)
 
 
 def _render_flags_and_safety(snapshot: dict) -> None:
@@ -167,7 +221,9 @@ def _render_flags_and_safety(snapshot: dict) -> None:
         st.subheader("Mismatch Flags")
         flags = _as_list(snapshot.get("mismatch_flags"))
         if flags:
-            st.warning(", ".join(str(flag) for flag in flags))
+            visible_flags = [_safe_text(flag, 120) for flag in flags[:_MAX_FLAGS]]
+            suffix = "" if len(flags) <= _MAX_FLAGS else f" ... {len(flags) - _MAX_FLAGS} more"
+            st.warning(", ".join(visible_flags) + suffix)
         else:
             st.info("No mismatch flags recorded.")
 
@@ -179,8 +235,7 @@ def _render_flags_and_safety(snapshot: dict) -> None:
         cols[0].metric("Full Suite", _metric_text(health.get("last_full_suite_result")))
         cols[1].metric("Suite Count", _metric_text(health.get("last_full_suite_count")))
         cols[2].metric("Diff Check", _metric_text(health.get("last_diff_check_result")))
-        with st.expander("Regression safety details", expanded=False):
-            _json_view({"test_health": health, "regression_safety_status": regression})
+        _render_preview_expander("Regression safety details", {"test_health": health, "regression_safety_status": regression})
 
 
 def _render_protected_and_next(snapshot: dict) -> None:
@@ -190,7 +245,7 @@ def _render_protected_and_next(snapshot: dict) -> None:
         if not protected:
             protected = _as_list(_as_dict(snapshot.get("test_health")).get("protected_dirty_files"))
         if protected:
-            _json_view(protected)
+            _json_view(_limited_sequence(protected))
         else:
             st.caption("No protected dirty files recorded in snapshot.")
 
@@ -204,12 +259,14 @@ def _render_protected_and_next(snapshot: dict) -> None:
             st.caption("No recommendation recorded.")
         notes = _as_list(next_step.get("notes"))
         if notes:
-            _json_view({"notes": notes})
+            _json_view({"notes": _limited_sequence(notes)})
 
 
 def render_brain_diagnostics_dashboard(
     snapshot: dict | None = None,
     diagnostics_state: dict | None = None,
+    *,
+    render_full_raw_snapshot: bool = False,
 ) -> None:
     """Render the read-only SME Brain Diagnostics Dashboard prototype.
 
@@ -226,8 +283,7 @@ def render_brain_diagnostics_dashboard(
         return
     if not isinstance(resolved, dict):
         st.warning("Brain diagnostics snapshot is malformed. Raw snapshot is shown for debugging.")
-        with st.expander("Raw Snapshot", expanded=False):
-            _json_view(resolved)
+        _render_preview_expander("Raw Snapshot", resolved, full_raw=render_full_raw_snapshot)
         return
 
     try:
@@ -258,9 +314,7 @@ def render_brain_diagnostics_dashboard(
         )
         _render_flags_and_safety(dashboard_snapshot)
         _render_protected_and_next(dashboard_snapshot)
-        with st.expander("Raw Snapshot", expanded=False):
-            _json_view(dashboard_snapshot)
+        _render_preview_expander("Raw Snapshot", dashboard_snapshot, full_raw=render_full_raw_snapshot)
     except Exception as render_error:
         st.warning(f"Brain diagnostics dashboard failed safely: {type(render_error).__name__}")
-        with st.expander("Raw Snapshot", expanded=False):
-            _json_view(resolved)
+        _render_preview_expander("Raw Snapshot", resolved, full_raw=render_full_raw_snapshot)

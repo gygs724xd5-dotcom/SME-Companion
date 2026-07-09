@@ -126,6 +126,41 @@ class V5144DiagnosticsDashboardUITest(unittest.TestCase):
         self.assertIn(("subheader", "SME Brain Diagnostics"), dummy.calls)
         self.assertTrue(any(call[0] == "json" for call in dummy.calls))
 
+    def test_renderer_does_not_render_large_raw_snapshot_by_default(self):
+        snapshot = _minimal_snapshot()
+        snapshot["diagnostics"]["large_raw_payload"] = "x" * 5000
+        snapshot["current_turn_trace"]["events"] = [
+            {"event": index, "payload": "y" * 1000}
+            for index in range(50)
+        ]
+
+        dummy = self._render_with_dummy(snapshot, diagnostics_state={})
+        rendered_json = [call[1] for call in dummy.calls if call[0] == "json"]
+
+        self.assertTrue(rendered_json)
+        self.assertNotIn("x" * 5000, str(rendered_json))
+        self.assertIn("truncated", str(rendered_json))
+        self.assertTrue(
+            any(
+                call[0] == "caption"
+                and "Full raw diagnostics are skipped by default" in call[1]
+                for call in dummy.calls
+            )
+        )
+
+    def test_renderer_can_opt_in_to_full_raw_snapshot_for_admin_debugging(self):
+        snapshot = _minimal_snapshot()
+        snapshot["diagnostics"]["large_raw_payload"] = "x" * 5000
+
+        dummy = self._render_with_dummy(
+            snapshot,
+            diagnostics_state={},
+            render_full_raw_snapshot=True,
+        )
+        rendered_json = [call[1] for call in dummy.calls if call[0] == "json"]
+
+        self.assertTrue(any("x" * 5000 in str(value) for value in rendered_json))
+
     def test_renderer_handles_malformed_snapshot_defensively(self):
         dummy = self._render_with_dummy(["bad", "shape"], diagnostics_state={})
 
