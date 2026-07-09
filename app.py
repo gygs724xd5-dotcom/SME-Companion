@@ -4523,6 +4523,14 @@ def _show_ai_pipeline_debug_trace() -> None:
 def _show_brain_dashboard_admin_panel() -> None:
     if not st.session_state.get("developer_mode"):
         return
+    st.caption("Brain Diagnostics Dashboard hidden for performance. Enable to render.")
+    render_dashboard = st.checkbox(
+        "Render SME Brain Diagnostics Dashboard",
+        value=False,
+        key="brain_diagnostics_dashboard_render_enabled",
+    )
+    if not render_dashboard:
+        return
     with st.expander("SME Brain Diagnostics - developer/admin only", expanded=False):
         _render_brain_dashboard_admin_ui(diagnostics_state=st.session_state)
 

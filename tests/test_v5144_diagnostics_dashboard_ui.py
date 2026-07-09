@@ -4,6 +4,7 @@ import inspect
 import unittest
 from unittest.mock import patch
 
+import app
 import brain.diagnostics_dashboard_ui as dashboard_ui
 
 
@@ -16,8 +17,9 @@ class _Context:
 
 
 class _DummyStreamlit:
-    def __init__(self):
-        self.session_state = {}
+    def __init__(self, session_state=None, checkbox_value=False):
+        self.session_state = session_state or {}
+        self.checkbox_value = checkbox_value
         self.calls = []
 
     def subheader(self, value):
@@ -43,6 +45,10 @@ class _DummyStreamlit:
     def expander(self, label, expanded=False):
         self.calls.append(("expander", label, expanded))
         return _Context()
+
+    def checkbox(self, label, value=False, key=None, help=None):
+        self.calls.append(("checkbox", label, value, key, help))
+        return self.checkbox_value
 
     def json(self, value):
         self.calls.append(("json", copy.deepcopy(value)))
@@ -173,6 +179,41 @@ class V5144DiagnosticsDashboardUITest(unittest.TestCase):
         dummy = self._render_with_dummy(diagnostics_state={"brain_diagnostics_dashboard_snapshot": snapshot})
 
         self.assertIn(("subheader", "Brain Layer Progress"), dummy.calls)
+
+    def test_admin_panel_hides_dashboard_renderer_by_default(self):
+        state = {"developer_mode": True}
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=False)
+
+        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+            app._show_brain_dashboard_admin_panel()
+
+        render.assert_not_called()
+        self.assertIn(
+            ("caption", "Brain Diagnostics Dashboard hidden for performance. Enable to render."),
+            dummy.calls,
+        )
+        self.assertTrue(
+            any(
+                call[0] == "checkbox"
+                and call[1] == "Render SME Brain Diagnostics Dashboard"
+                and call[2] is False
+                for call in dummy.calls
+            )
+        )
+        self.assertFalse(any(call[0] == "expander" for call in dummy.calls))
+
+    def test_admin_panel_renders_dashboard_only_when_explicitly_enabled(self):
+        state = {"developer_mode": True}
+        dummy = _DummyStreamlit(session_state=state, checkbox_value=True)
+
+        with patch.object(app, "st", dummy), patch.object(app, "_render_brain_dashboard_admin_ui") as render:
+            app._show_brain_dashboard_admin_panel()
+
+        render.assert_called_once_with(diagnostics_state=state)
+        self.assertIn(
+            ("expander", "SME Brain Diagnostics - developer/admin only", False),
+            dummy.calls,
+        )
 
     def test_renderer_is_read_only_by_design_where_static_analysis_can_verify(self):
         source = inspect.getsource(dashboard_ui.render_brain_diagnostics_dashboard)
