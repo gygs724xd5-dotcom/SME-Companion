@@ -86,22 +86,24 @@ class V5157BusinessSkillLifecyclePromotionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_approved_lifecycle_promotion(promoted)
 
-    def test_registry_has_exact_mixed_statuses_and_validates(self):
-        self.assertEqual(len(self.current), 10)
-        unit_tested = [skill.skill_id for skill in self.current if skill.active_status == UNIT_TESTED]
+    def test_manifest_still_builds_exact_intermediate_state_and_registry_validates(self):
+        intermediate = apply_approved_lifecycle_promotions(self.baseline)
+        self.assertEqual(len(intermediate), 10)
+        unit_tested = [skill.skill_id for skill in intermediate if skill.active_status == UNIT_TESTED]
         self.assertEqual(tuple(unit_tested), APPROVED_PROMOTION_SKILL_IDS)
-        self.assertEqual(sum(skill.active_status == CONTRACTED for skill in self.current), 8)
-        self.assertFalse(any(skill.active_status == SHADOW_AVAILABLE for skill in self.current))
+        self.assertEqual(sum(skill.active_status == CONTRACTED for skill in intermediate), 8)
+        self.assertFalse(any(skill.active_status == SHADOW_AVAILABLE for skill in intermediate))
         self.assertTrue(validate_business_skill_registry()["valid"])
 
-    def test_unit_tested_cost_skills_remain_shadow_ineligible(self):
-        for skill in self.current[:2]:
+    def test_unit_tested_intermediate_skills_remain_shadow_ineligible(self):
+        intermediate = apply_approved_lifecycle_promotions(self.baseline)
+        for skill in intermediate[:2]:
             candidate = {"skill_id": skill.skill_id, "candidate_confidence": 1.0, "candidate_valid": True,
                          "candidate_shadow_only": True, "candidate_selected": False, "candidate_authorized": False}
             evidence = {"skill_id": skill.skill_id, "evidence_ready": True, "evidence_valid": True,
                         "evidence_shadow_only": True, "evidence_selected": False, "evidence_authorized": False,
                         "evidence_executed": False, "evidence_confidence": 1.0}
-            result = select_shadow_business_skill([candidate], [evidence], self.current)
+            result = select_shadow_business_skill([candidate], [evidence], intermediate)
             self.assertEqual(result["selection_status"], LIFECYCLE_INELIGIBLE)
             self.assertIsNone(result["shadow_selected_skill_id"])
 

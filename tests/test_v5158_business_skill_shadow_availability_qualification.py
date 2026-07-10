@@ -23,11 +23,18 @@ CASES = {
 
 
 class V5158BusinessSkillShadowAvailabilityQualificationTests(unittest.TestCase):
+    def historical_registry(self):
+        return tuple(replace(skill, active_status=UNIT_TESTED)
+                     if skill.skill_id in CASES else skill
+                     for skill in get_business_skill_registry())
+
     def qualify(self, skill_id, message=None, evidence=None, **kwargs):
         default_message, default_evidence = CASES[skill_id]
+        registry = self.historical_registry()
+        skill = next(item for item in registry if item.skill_id == skill_id)
         return qualify_business_skill_shadow_availability(
-            get_business_skill(skill_id), default_message if message is None else message,
-            default_evidence if evidence is None else evidence, **kwargs,
+            skill, default_message if message is None else message,
+            default_evidence if evidence is None else evidence, registry, **kwargs,
         )
 
     def test_both_cost_skills_pass_full_path_independently(self):
@@ -45,15 +52,15 @@ class V5158BusinessSkillShadowAvailabilityQualificationTests(unittest.TestCase):
                 self.assertTrue(report.promotion_recommended)
                 self.assertEqual(report.recommended_next_status, SHADOW_AVAILABLE)
 
-    def test_registry_remains_unit_tested_and_none_shadow_available(self):
+    def test_qualification_does_not_change_promoted_canonical_registry(self):
         before = get_business_skill_registry()
         for skill_id in CASES:
             self.qualify(skill_id)
         after = get_business_skill_registry()
         self.assertEqual(before, after)
-        self.assertEqual(sum(s.active_status == UNIT_TESTED for s in after), 2)
+        self.assertEqual(sum(s.active_status == UNIT_TESTED for s in after), 0)
         self.assertEqual(sum(s.active_status == CONTRACTED for s in after), 8)
-        self.assertEqual(sum(s.active_status == SHADOW_AVAILABLE for s in after), 0)
+        self.assertEqual(sum(s.active_status == SHADOW_AVAILABLE for s in after), 2)
 
     def test_unrelated_and_context_only_messages_do_not_match(self):
         for skill_id in CASES:
@@ -94,15 +101,16 @@ class V5158BusinessSkillShadowAvailabilityQualificationTests(unittest.TestCase):
         self.assertEqual(mapping["mapping_status"], "INVALID")
 
     def test_required_confirmation_blocks_until_confirmed(self):
-        source = get_business_skill("cost.change_analysis.v1")
+        registry = self.historical_registry()
+        source = next(item for item in registry if item.skill_id == "cost.change_analysis.v1")
         contract = replace(source.required_evidence[0], user_confirmation_required=True)
         source = replace(source, required_evidence=(contract, *source.required_evidence[1:]))
         missing = qualify_business_skill_shadow_availability(
-            source, CASES[source.skill_id][0], {"previous_cost": 30, "current_cost": 40}
+            source, CASES[source.skill_id][0], {"previous_cost": 30, "current_cost": 40}, registry
         )
         confirmed = qualify_business_skill_shadow_availability(
             source, CASES[source.skill_id][0],
-            {"previous_cost": {"value": 30, "user_confirmed": True}, "current_cost": 40}
+            {"previous_cost": {"value": 30, "user_confirmed": True}, "current_cost": 40}, registry
         )
         self.assertFalse(missing.qualified)
         self.assertTrue(confirmed.qualified)
@@ -127,7 +135,8 @@ class V5158BusinessSkillShadowAvailabilityQualificationTests(unittest.TestCase):
         self.assertEqual(per_unit.shadow_selection_result, "AMBIGUOUS_CANDIDATES")
 
     def test_wrong_lifecycle_unknown_and_unsupported_are_rejected(self):
-        target = get_business_skill("cost.change_analysis.v1")
+        registry = self.historical_registry()
+        target = next(item for item in registry if item.skill_id == "cost.change_analysis.v1")
         wrong = replace(target, active_status=SHADOW_AVAILABLE)
         result = qualify_business_skill_shadow_availability(wrong, "cost increased", {})
         self.assertEqual(result.qualification_status, INVALID_SOURCE_LIFECYCLE)
@@ -138,7 +147,8 @@ class V5158BusinessSkillShadowAvailabilityQualificationTests(unittest.TestCase):
         self.assertIsNone(get_shadow_availability_qualification_target("COST.CHANGE_ANALYSIS.V1"))
 
     def test_determinism_batch_order_and_mutation_safety(self):
-        skill = get_business_skill("cost.change_analysis.v1")
+        registry = self.historical_registry()
+        skill = next(item for item in registry if item.skill_id == "cost.change_analysis.v1")
         message = CASES[skill.skill_id][0]
         evidence = copy.deepcopy(CASES[skill.skill_id][1])
         before = copy.deepcopy((skill, message, evidence, get_business_skill_registry()))
@@ -147,7 +157,7 @@ class V5158BusinessSkillShadowAvailabilityQualificationTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual((skill, message, evidence, get_business_skill_registry()), before)
         inputs = {sid: {"current_message": msg, "evidence": ev} for sid, (msg, ev) in reversed(tuple(CASES.items()))}
-        batch = qualify_business_skills_shadow_availability(inputs)
+        batch = qualify_business_skills_shadow_availability(inputs, registry)
         self.assertEqual(tuple(r.skill_id for r in batch.reports), tuple(CASES))
         self.assertEqual(batch.qualified_skill_ids, tuple(CASES))
         self.assertEqual(batch.lifecycle_mutations_applied, 0)

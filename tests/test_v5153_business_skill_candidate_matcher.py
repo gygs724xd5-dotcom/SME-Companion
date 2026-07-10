@@ -127,7 +127,7 @@ class V5153BusinessSkillCandidateMatcherTest(unittest.TestCase):
         registry = get_business_skill_registry()
         self.assertEqual(len(registry), 10)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
-        self.assertEqual(sum(skill.active_status == "UNIT_TESTED" for skill in registry), 2)
+        self.assertEqual(sum(skill.active_status == "SHADOW_AVAILABLE" for skill in registry), 2)
 
     def test_module_has_no_legacy_runtime_or_readiness_imports(self):
         source = inspect.getsource(matcher_module)

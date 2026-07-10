@@ -55,8 +55,8 @@ class BusinessSkillShadowSelectorTests(unittest.TestCase):
         mismatch = {**self.candidate, "active_status": CONTRACTED}
         self.assertEqual(self.decision(candidates=[mismatch])["selection_status"], LIFECYCLE_INELIGIBLE)
 
-    def test_contracted_real_registry_and_unit_tested_are_ineligible(self):
-        real = get_business_skill_registry()[0]
+    def test_contracted_and_unit_tested_are_ineligible(self):
+        real = replace(get_business_skill_registry()[0], active_status=CONTRACTED)
         candidate = score_business_skill_candidate("cost increased", real)
         evidence = map_business_skill_evidence(real, {"previous_cost": 30, "current_cost": 40})
         result = select_shadow_business_skill([candidate], [evidence])
@@ -156,11 +156,12 @@ class BusinessSkillShadowSelectorTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual((candidates, evidence, registry), before)
 
-    def test_real_registry_remains_ten_and_none_are_shadow_available(self):
+    def test_real_registry_has_two_shadow_available_skills(self):
         registry = get_business_skill_registry()
         self.assertEqual(len(registry), 10)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
-        self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in registry), 2)
+        self.assertEqual(sum(skill.active_status == SHADOW_AVAILABLE for skill in registry), 2)
+        self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in registry), 0)
 
     def test_module_has_no_forbidden_runtime_imports(self):
         path = Path(__file__).parents[1] / "brain" / "business_skill_shadow_selector.py"

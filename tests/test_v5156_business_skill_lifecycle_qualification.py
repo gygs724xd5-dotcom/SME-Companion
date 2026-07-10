@@ -175,7 +175,7 @@ class V5156BusinessSkillLifecycleQualificationTests(unittest.TestCase):
         self.assertTrue(batch["all_registry_skills_unchanged"])
         self.assertEqual(tuple(skill.active_status for skill in self.registry), before)
         current = get_business_skill_registry()
-        self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in current), 2)
+        self.assertEqual(sum(skill.active_status == SHADOW_AVAILABLE for skill in current), 2)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in current), 8)
 
     def test_diagnostics_are_safe_and_contain_no_evidence_values(self):
