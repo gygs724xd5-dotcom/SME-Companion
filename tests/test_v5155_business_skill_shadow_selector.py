@@ -156,10 +156,11 @@ class BusinessSkillShadowSelectorTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual((candidates, evidence, registry), before)
 
-    def test_real_registry_remains_exactly_ten_contracted_skills(self):
+    def test_real_registry_remains_ten_and_none_are_shadow_available(self):
         registry = get_business_skill_registry()
         self.assertEqual(len(registry), 10)
-        self.assertTrue(all(skill.active_status == CONTRACTED for skill in registry))
+        self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
+        self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in registry), 2)
 
     def test_module_has_no_forbidden_runtime_imports(self):
         path = Path(__file__).parents[1] / "brain" / "business_skill_shadow_selector.py"

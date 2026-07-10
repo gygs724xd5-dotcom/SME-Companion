@@ -29,9 +29,10 @@ from brain.business_skill import (
     create_cost_change_analysis_skill,
     validate_business_skill,
 )
+from brain.business_skill_lifecycle_manifest import apply_approved_lifecycle_promotions
 
 
-BUSINESS_SKILL_REGISTRY_VERSION = "5.15.2"
+BUSINESS_SKILL_REGISTRY_VERSION = "5.15.7"
 
 EXPECTED_SEED_SKILL_IDS = (
     "cost.change_analysis.v1",
@@ -348,7 +349,7 @@ def build_seed_business_skills() -> tuple[ContractBusinessSkill, ...]:
     This is declarative seed data only. Building the tuple does not activate,
     match, execute, route, or render any skill.
     """
-    return (
+    declarative_seeds = (
         create_cost_change_analysis_skill(),
         _create_cost_per_unit_calculation_skill(),
         _create_promotion_margin_check_skill(),
@@ -360,6 +361,7 @@ def build_seed_business_skills() -> tuple[ContractBusinessSkill, ...]:
         _create_customer_complaint_triage_skill(),
         _create_daily_task_checklist_skill(),
     )
+    return apply_approved_lifecycle_promotions(declarative_seeds)
 
 
 def get_business_skill_registry() -> tuple[ContractBusinessSkill, ...]:

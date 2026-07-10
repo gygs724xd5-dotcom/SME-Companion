@@ -558,6 +558,25 @@ Qualification grants no shadow selection, runtime selection, authorization,
 reasoning execution, follow-up generation, response authority, or response
 generation.
 
+### V5.15.7
+
+Controlled `UNIT_TESTED` lifecycle promotion.
+
+V5.15.7 applies the committed V5.15.6 qualification evidence through an
+immutable promotion manifest. Exactly `cost.change_analysis.v1` and
+`cost.per_unit_calculation.v1` advance from `CONTRACTED` to `UNIT_TESTED`;
+the other eight canonical seed Skills remain `CONTRACTED`. The manifest is the
+single promotion authority and copy-based application preserves the immutable
+Skill contracts apart from `active_status` and deterministic test references.
+
+`UNIT_TESTED` records only that the initial unit-test qualification passed. It
+does not make a Skill shadow available, selected, authorized, executable,
+reasoning-active, workflow-active, response-authoritative, or stable. No Skill
+is `SHADOW_AVAILABLE`, the V5.15.5 selector continues to reject both promoted
+Cost Skills, and runtime behavior remains untouched. Any future transition to
+`SHADOW_AVAILABLE` requires separate acceptance evidence and a separate
+controlled lifecycle change.
+
 ## 22. Recommended Next Step
 
 After V5.15.0, implement a pure `BusinessSkill` schema helper.

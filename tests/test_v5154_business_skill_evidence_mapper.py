@@ -134,9 +134,11 @@ class BusinessSkillEvidenceMapperTests(unittest.TestCase):
         self.assertEqual(diagnostics["evidence_mappings"][0]["observed_value"], "[REDACTED]")
         self.assertNotIn("private", repr(diagnostics))
 
-    def test_all_registry_skills_remain_contracted(self):
-        self.assertEqual(len(get_business_skill_registry()), 10)
-        self.assertTrue(all(skill.active_status == CONTRACTED for skill in get_business_skill_registry()))
+    def test_current_lifecycle_progression_does_not_change_evidence_boundary(self):
+        registry = get_business_skill_registry()
+        self.assertEqual(len(registry), 10)
+        self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
+        self.assertEqual(sum(skill.active_status == "UNIT_TESTED" for skill in registry), 2)
 
 
 if __name__ == "__main__":

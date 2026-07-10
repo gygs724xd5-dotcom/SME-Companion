@@ -123,9 +123,11 @@ class V5153BusinessSkillCandidateMatcherTest(unittest.TestCase):
         self.assertTrue(result["shadow_mode"])
         self.assertIn("Current-message-only", result["matching_boundary"])
 
-    def test_all_seed_skills_remain_contracted(self):
-        self.assertEqual(len(get_business_skill_registry()), 10)
-        self.assertTrue(all(skill.active_status == CONTRACTED for skill in get_business_skill_registry()))
+    def test_current_lifecycle_progression_does_not_change_candidate_boundary(self):
+        registry = get_business_skill_registry()
+        self.assertEqual(len(registry), 10)
+        self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
+        self.assertEqual(sum(skill.active_status == "UNIT_TESTED" for skill in registry), 2)
 
     def test_module_has_no_legacy_runtime_or_readiness_imports(self):
         source = inspect.getsource(matcher_module)

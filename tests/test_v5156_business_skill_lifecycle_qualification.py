@@ -47,7 +47,7 @@ def complete_qualification_evidence():
 
 class V5156BusinessSkillLifecycleQualificationTests(unittest.TestCase):
     def setUp(self):
-        self.registry = get_business_skill_registry()
+        self.registry = tuple(replace(skill, active_status=CONTRACTED) for skill in get_business_skill_registry())
         self.by_id = {skill.skill_id: skill for skill in self.registry}
 
     def candidate_matrix(self, skill_id):
@@ -174,7 +174,9 @@ class V5156BusinessSkillLifecycleQualificationTests(unittest.TestCase):
         self.assertEqual(batch["lifecycle_mutations_applied"], 0)
         self.assertTrue(batch["all_registry_skills_unchanged"])
         self.assertEqual(tuple(skill.active_status for skill in self.registry), before)
-        self.assertTrue(all(skill.active_status == CONTRACTED for skill in get_business_skill_registry()))
+        current = get_business_skill_registry()
+        self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in current), 2)
+        self.assertEqual(sum(skill.active_status == CONTRACTED for skill in current), 8)
 
     def test_diagnostics_are_safe_and_contain_no_evidence_values(self):
         evidence = {skill_id: complete_qualification_evidence() for skill_id in QUALIFICATION_TARGET_SKILL_IDS}
