@@ -541,7 +541,22 @@ response generation, response authority, or lifecycle promotion.
 
 ### V5.15.6
 
-Runtime audit.
+Business Skill unit-test qualification.
+
+V5.15.6 evaluates explicit deterministic test evidence and may recommend
+`UNIT_TESTED`; qualification evidence is not a lifecycle mutation, and a
+`UNIT_TESTED` recommendation is not `SHADOW_AVAILABLE`. Initial qualification
+scope is limited to `cost.change_analysis.v1` and
+`cost.per_unit_calculation.v1`. The other eight seed skills are out of scope,
+and all ten real seed skills remain `CONTRACTED` during this step.
+
+Test claims must be assembled from actual executed candidate, evidence,
+determinism, mutation-safety, boundary, regression, and suite checks. The pure
+production qualifier only evaluates that explicit record; it does not discover
+or execute tests. Promotion requires a separate controlled lifecycle change.
+Qualification grants no shadow selection, runtime selection, authorization,
+reasoning execution, follow-up generation, response authority, or response
+generation.
 
 ## 22. Recommended Next Step
 
