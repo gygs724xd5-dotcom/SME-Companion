@@ -493,7 +493,17 @@ response generation.
 
 ### V5.15.3
 
-Skill selection shadow helper.
+Canonical Business Skill candidate matching.
+
+V5.15.3 adds deterministic, current-message-only discovery against the canonical
+seed registry. A candidate is a relevance diagnostic, not a selected or authorized
+skill, and matching does not inspect evidence readiness, execute a skill, or grant
+response authority. Results remain shadow-only and all ten seed skills remain
+`CONTRACTED`; candidate capability does not advance lifecycle status.
+
+`brain/business_skill_matcher.py` remains the legacy runtime-era matcher.
+`brain/business_skill_candidate_matcher.py` is the separate canonical,
+registry-backed V5.15.3 matcher. The systems are intentionally not connected.
 
 ### V5.15.4
 
