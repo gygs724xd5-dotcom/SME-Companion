@@ -507,7 +507,20 @@ registry-backed V5.15.3 matcher. The systems are intentionally not connected.
 
 ### V5.15.4
 
-Skill diagnostics dashboard integration.
+Canonical Business Skill evidence mapping.
+
+V5.15.4 adds a pure mapping layer for evidence explicitly supplied to a
+canonical skill contract. Evidence mapping is not evidence extraction, and
+evidence readiness is neither reasoning readiness nor skill selection or
+authorization. Candidate relevance confidence remains separate from evidence
+observation confidence and is never reused by the mapper.
+
+Allowed assumptions are mapped as proposals only; they are not applied to
+reasoning or runtime state. Sensitive evidence is never automatically assumed
+and its values are redacted from mapper diagnostics. Mapping remains
+shadow-only: it cannot select, authorize, execute, ask questions, generate a
+response, grant response authority, or advance lifecycle. All ten seed skills
+remain `CONTRACTED`.
 
 ### V5.15.5
 
