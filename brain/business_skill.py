@@ -452,6 +452,7 @@ def create_cost_change_analysis_skill() -> BusinessSkill:
             "cost changed",
             "cost went up",
             "cost went down",
+            "ต้นทุนเปลี่ยนไปเท่าไร",
         ),
         example_questions=(
             "ต้นทุนเพิ่มจาก 30 เป็น 40 บาท กระทบยังไง",

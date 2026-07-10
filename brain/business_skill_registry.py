@@ -33,7 +33,7 @@ from brain.business_skill_lifecycle_manifest import apply_approved_lifecycle_pro
 from brain.business_skill_shadow_availability_manifest import apply_approved_shadow_availability_promotions
 
 
-BUSINESS_SKILL_REGISTRY_VERSION = "5.15.9"
+BUSINESS_SKILL_REGISTRY_VERSION = "5.15.9.1"
 
 EXPECTED_SEED_SKILL_IDS = (
     "cost.change_analysis.v1",
@@ -126,7 +126,13 @@ def _create_cost_per_unit_calculation_skill() -> ContractBusinessSkill:
         business_domain=COST,
         business_subdomain="Unit Economics",
         skill_category=CALCULATION,
-        intent_patterns=("cost per unit", "unit cost", "calculate unit cost", "ต้นทุนต่อหน่วย"),
+        intent_patterns=(
+            "cost per unit",
+            "unit cost",
+            "calculate unit cost",
+            "ต้นทุนต่อหน่วย",
+            "ต้นทุนต่อชิ้น",
+        ),
         example_questions=(
             "ต้นทุนรวม 1,200 บาท ได้สินค้า 40 ชิ้น ต้นทุนต่อชิ้นเท่าไหร่",
             "ช่วยคิดต้นทุนต่อหน่วยให้หน่อย",

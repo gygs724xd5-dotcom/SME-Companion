@@ -131,7 +131,7 @@ class V5159BusinessSkillShadowAvailabilityPromotionTests(unittest.TestCase):
 
     def test_registry_has_exact_v5159_state(self):
         registry = get_business_skill_registry()
-        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9")
+        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9.1")
         self.assertEqual(tuple(skill.skill_id for skill in registry if skill.active_status == SHADOW_AVAILABLE), APPROVED_SHADOW_AVAILABILITY_SKILL_IDS)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
         self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in registry), 0)

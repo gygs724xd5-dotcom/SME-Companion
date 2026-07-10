@@ -149,7 +149,7 @@ class V5152BusinessSkillRegistryTest(unittest.TestCase):
             self.assertNotIn(name, registry_module.__dict__)
 
     def test_registry_version_reflects_lifecycle_promotion(self):
-        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9")
+        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9.1")
 
 
 if __name__ == "__main__":
