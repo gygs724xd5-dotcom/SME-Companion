@@ -484,6 +484,13 @@ Pure `BusinessSkill` model/helper and tests.
 
 Skill registry contract and seed skill metadata.
 
+V5.15.2 adds a controlled pure Python seed registry in `brain/business_skill_registry.py`.
+The registry contains only repository-owned seed `BusinessSkill` contracts, preserves
+deterministic order, and exposes lookup, listing, and validation helpers. All seed
+entries remain `CONTRACTED`; the registry does not activate skill matching,
+execution, routing, workflow behavior, LLM context, response authority, or final
+response generation.
+
 ### V5.15.3
 
 Skill selection shadow helper.

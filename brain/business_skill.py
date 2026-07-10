@@ -483,6 +483,10 @@ def create_cost_change_analysis_skill() -> BusinessSkill:
             "absolute_difference = current_cost - previous_cost",
             "percentage_change = absolute_difference / previous_cost when previous_cost is non-zero",
         ),
+        business_rules=(
+            "do not infer prior or current cost when missing",
+            "treat zero previous cost as blocking percentage change calculation",
+        ),
         confidence_policy="downgrade when cost evidence is missing, stale, contradictory, or assumed",
         risk_policy="block reasoning when required cost evidence is missing and cannot be assumed",
         assumptions_policy="do not assume financial inputs unless explicitly allowed by evidence contract",
