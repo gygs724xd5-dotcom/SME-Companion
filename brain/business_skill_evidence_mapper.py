@@ -213,7 +213,10 @@ def map_required_evidence(evidence_contract: Any, available_evidence: Any) -> di
         source_ok = _source_satisfies(observation.get("source", "unknown"), contract.get("source", ""))
         freshness_ok = _freshness_satisfies(observation.get("freshness", "unknown"), contract.get("freshness", ""))
         confidence_ok = observation.get("confidence", 0.0) >= confidence_required
-        if errors or validation_status != "VALID":
+        if observation.get("assumed") and not can_assume:
+            status = INVALID
+            reasons.append("assumed evidence is disallowed by the evidence contract")
+        elif errors or validation_status != "VALID":
             status = INVALID
             reasons.extend(errors or ["field type could not be validated"])
         elif not source_ok:
