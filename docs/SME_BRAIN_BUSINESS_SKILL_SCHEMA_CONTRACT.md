@@ -524,7 +524,20 @@ remain `CONTRACTED`.
 
 ### V5.15.5
 
-Acceptance guards.
+Canonical Business Skill shadow selection policy.
+
+Candidate matching is not shadow selection. Evidence readiness is required but
+is not sufficient: exact canonical identity, candidate and evidence boundary
+flags, confidence, and lifecycle eligibility must also pass. `DRAFT`,
+`CONTRACTED`, and `UNIT_TESTED` skills are ineligible; shadow selection begins at
+`SHADOW_AVAILABLE`. Therefore the real ten-skill registry, whose entries remain
+`CONTRACTED`, cannot produce a shadow selection.
+
+When multiple eligible candidates are too close in candidate confidence, the
+ambiguity gate blocks selection; evidence confidence never breaks a relevance
+tie. A successful result is only a diagnostic shadow hypothesis. It grants no
+runtime or workflow selection, authorization, execution, reasoning, question or
+response generation, response authority, or lifecycle promotion.
 
 ### V5.15.6
 
