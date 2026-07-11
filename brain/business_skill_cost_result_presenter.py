@@ -1,13 +1,17 @@
-"""V5.15.16 pure controlled presenter for canonical Cost execution results.
+"""V5.15.16.1 pure controlled presenter with two-layer integrity binding.
 
 The output is an internal draft only.  This module has no execution, runtime,
 response, persistence, model, network, or tool authority.
+SHA-256 provides deterministic integrity inside the trusted process; it is not
+a signature, MAC, caller authentication, or protection against valid replay.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
+import hashlib
+import json
 import re
 from typing import Any, Iterable
 
@@ -15,7 +19,10 @@ from brain.business_skill import LIMITED_ACTIVE
 from brain.business_skill_cost_execution import COST_EXECUTION_VERSION, EXECUTED, CostExecutionResult, CostMetric
 from brain.business_skill_registry import BUSINESS_SKILL_REGISTRY_VERSION, get_business_skill_registry
 
-PRESENTATION_VERSION = "5.15.16"
+HISTORICAL_PRESENTATION_VERSION = "5.15.16"
+PRESENTATION_VERSION = "5.15.16.1"
+DRAFT_BINDING_SCHEMA_VERSION = 1
+PRESENTATION_BINDING_SCHEMA_VERSION = 1
 PRESENTATION_DRAFTED = "PRESENTATION_DRAFTED"
 PRESENTATION_DENIED = "PRESENTATION_DENIED"
 PRESENTATION_INVALID = "PRESENTATION_INVALID"
@@ -89,11 +96,24 @@ class CostResponseDraft:
     locale: str
     fields: tuple[CostPresentationField, ...]
     draft_text: str
+    source_presentation_id: str
     source_execution_id: str
     source_request_id: str
     source_skill_id: str
     internal_draft_only: bool = True
     content_version: str = PRESENTATION_VERSION
+    presentation_generated: bool = True
+    source_executed: bool = True
+    source_calculated: bool = True
+    business_reasoning_generated: bool = False
+    runtime_routed: bool = False
+    tools_invoked: bool = False
+    persisted: bool = False
+    follow_up_generated: bool = False
+    response_generated: bool = False
+    response_committed: bool = False
+    draft_binding_schema_version: int = DRAFT_BINDING_SCHEMA_VERSION
+    draft_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -121,12 +141,145 @@ class CostPresentationResult:
     follow_up_generated: bool = False
     response_generated: bool = False
     response_committed: bool = False
+    presentation_binding_schema_version: int = PRESENTATION_BINDING_SCHEMA_VERSION
+    presentation_digest: str = ""
 
 
 @dataclass(frozen=True)
 class CostPresentationBatch:
     presentation_version: str
     results: tuple[CostPresentationResult, ...]
+
+
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_AUTHORITY_FIELDS = ("business_reasoning_generated", "runtime_routed", "tools_invoked", "persisted",
+                     "follow_up_generated", "response_generated", "response_committed")
+
+
+def _canonical_digest(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _draft_payload(draft: CostResponseDraft) -> dict[str, Any]:
+    return {
+        "draft_binding_schema_version": draft.draft_binding_schema_version,
+        "content_version": draft.content_version,
+        "template_id": draft.template_id,
+        "locale": draft.locale,
+        "fields": [{"name": x.name, "label": x.label, "display_value": x.display_value, "unit": x.unit}
+                   for x in draft.fields],
+        "draft_text": draft.draft_text,
+        "source_presentation_id": draft.source_presentation_id,
+        "source_execution_id": draft.source_execution_id,
+        "source_request_id": draft.source_request_id,
+        "source_skill_id": draft.source_skill_id,
+        "internal_draft_only": draft.internal_draft_only,
+        "presentation_generated": draft.presentation_generated,
+        "source_executed": draft.source_executed,
+        "source_calculated": draft.source_calculated,
+        **{name: getattr(draft, name) for name in _AUTHORITY_FIELDS},
+    }
+
+
+def _presentation_payload(result: CostPresentationResult) -> dict[str, Any]:
+    denial = None if result.denial is None else {
+        "reason_codes": list(result.denial.reason_codes), "first_failed_gate": result.denial.first_failed_gate}
+    draft_identity = None if result.draft is None else {
+        "draft_digest": result.draft.draft_digest,
+        "source_presentation_id": result.draft.source_presentation_id,
+        "source_execution_id": result.draft.source_execution_id,
+        "source_request_id": result.draft.source_request_id,
+        "source_skill_id": result.draft.source_skill_id,
+        "template_id": result.draft.template_id,
+        "locale": result.draft.locale,
+        "content_version": result.draft.content_version,
+    }
+    return {
+        "presentation_binding_schema_version": result.presentation_binding_schema_version,
+        "presentation_version": PRESENTATION_VERSION,
+        "presentation_id": result.presentation_id,
+        "outcome": result.outcome,
+        "gate_results": [{"gate": x.gate, "passed": x.passed, "reason_codes": list(x.reason_codes)}
+                         for x in result.gate_results],
+        "reason_codes": list(result.reason_codes),
+        "draft": draft_identity,
+        "denial": denial,
+        "presentation_generated": result.presentation_generated,
+        "internal_draft_only": result.internal_draft_only,
+        "source_executed": result.source_executed,
+        "source_calculated": result.source_calculated,
+        **{name: getattr(result, name) for name in _AUTHORITY_FIELDS},
+    }
+
+
+def verify_cost_response_draft_integrity(draft: Any) -> bool:
+    try:
+        if type(draft) is not CostResponseDraft or draft.draft_binding_schema_version != DRAFT_BINDING_SCHEMA_VERSION:
+            return False
+        if draft.content_version != PRESENTATION_VERSION or not _DIGEST.fullmatch(draft.draft_digest):
+            return False
+        if not all(isinstance(x, str) and x for x in (draft.template_id, draft.source_presentation_id,
+                draft.source_execution_id, draft.source_request_id, draft.source_skill_id)):
+            return False
+        if draft.locale != SUPPORTED_LOCALE or draft.template_id != _TEMPLATES.get(draft.source_skill_id):
+            return False
+        if type(draft.fields) is not tuple or not draft.fields or any(type(x) is not CostPresentationField for x in draft.fields):
+            return False
+        names = tuple(x.name for x in draft.fields)
+        if len(names) != len(set(names)) or names != tuple(x[0] for x in _SCHEMAS[draft.source_skill_id]):
+            return False
+        if not (draft.internal_draft_only and draft.presentation_generated and draft.source_executed and draft.source_calculated):
+            return False
+        if any(getattr(draft, name) for name in _AUTHORITY_FIELDS):
+            return False
+        return draft.draft_digest == _canonical_digest(_draft_payload(draft))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def verify_cost_presentation_result_integrity(result: Any) -> bool:
+    try:
+        if type(result) is not CostPresentationResult or result.presentation_binding_schema_version != PRESENTATION_BINDING_SCHEMA_VERSION:
+            return False
+        if not _DIGEST.fullmatch(result.presentation_digest) or type(result.gate_results) is not tuple:
+            return False
+        if tuple(x.gate for x in result.gate_results) != GATE_ORDER or any(type(x) is not CostPresentationGateResult for x in result.gate_results):
+            return False
+        failures = tuple(code for gate in result.gate_results for code in gate.reason_codes if code != "PASSED")
+        if any(g.passed != (g.reason_codes == ("PASSED",)) for g in result.gate_results):
+            return False
+        if result.outcome == PRESENTATION_DRAFTED:
+            if failures or result.reason_codes != ("ALL_PRESENTATION_GATES_PASSED",) or result.denial is not None:
+                return False
+            if not verify_cost_response_draft_integrity(result.draft):
+                return False
+            if result.draft.source_presentation_id != result.presentation_id:
+                return False
+            if not (result.presentation_generated and result.internal_draft_only and result.source_executed and result.source_calculated):
+                return False
+        elif result.outcome in (PRESENTATION_DENIED, PRESENTATION_INVALID):
+            if result.draft is not None or result.denial is None or not failures or result.reason_codes != failures:
+                return False
+            if result.denial.reason_codes != failures or result.denial.first_failed_gate != next(g.gate for g in result.gate_results if not g.passed):
+                return False
+            if any((result.presentation_generated, result.internal_draft_only, result.source_executed, result.source_calculated)):
+                return False
+        else:
+            return False
+        if any(getattr(result, name) for name in _AUTHORITY_FIELDS):
+            return False
+        return result.presentation_digest == _canonical_digest(_presentation_payload(result))
+    except (AttributeError, StopIteration, TypeError, ValueError):
+        return False
+
+
+def _bind_draft(draft: CostResponseDraft) -> CostResponseDraft:
+    return CostResponseDraft(**{**draft.__dict__, "draft_digest": _canonical_digest(_draft_payload(draft))})
+
+
+def _bind_result(result: CostPresentationResult) -> CostPresentationResult:
+    return CostPresentationResult(**{**result.__dict__, "presentation_digest": _canonical_digest(_presentation_payload(result))})
 
 
 def _gate(name: str, reasons: Iterable[str]) -> CostPresentationGateResult:
@@ -229,8 +382,8 @@ def present_cost_result(request: Any, policy: CostPresentationPolicy | None = No
     first = next((gate.gate for gate in gates if not gate.passed), None)
     if first:
         outcome = PRESENTATION_INVALID if first in ("REQUEST_VALIDITY", "RESULT_SCHEMA") else PRESENTATION_DENIED
-        return CostPresentationResult(pid if isinstance(pid, str) else "", outcome, gates, failures,
-                                      denial=CostPresentationDenial(failures, first))
+        return _bind_result(CostPresentationResult(pid if isinstance(pid, str) else "", outcome, gates, failures,
+                                      denial=CostPresentationDenial(failures, first)))
     metrics = {x.name: x for x in source.metrics}
     if skill == "cost.change_analysis.v1":
         labels = (("previous_cost", "ต้นทุนเดิม"), ("current_cost", "ต้นทุนปัจจุบัน"),
@@ -255,10 +408,10 @@ def present_cost_result(request: Any, policy: CostPresentationPolicy | None = No
         fields = [CostPresentationField(n, label, _display(metrics[n].value, scale), metrics[n].unit)
                   for n, label, scale in specs]
         lines = [f"{x.label}: {x.display_value}" for x in fields]
-    draft = CostResponseDraft(_TEMPLATES[skill], policy.locale, tuple(fields), "\n".join(lines),
-                              execution_id, request_id, skill)
-    return CostPresentationResult(pid, PRESENTATION_DRAFTED, gates, ("ALL_PRESENTATION_GATES_PASSED",),
-        draft=draft, presentation_generated=True, internal_draft_only=True, source_executed=True, source_calculated=True)
+    draft = _bind_draft(CostResponseDraft(_TEMPLATES[skill], policy.locale, tuple(fields), "\n".join(lines),
+                              pid, execution_id, request_id, skill))
+    return _bind_result(CostPresentationResult(pid, PRESENTATION_DRAFTED, gates, ("ALL_PRESENTATION_GATES_PASSED",),
+        draft=draft, presentation_generated=True, internal_draft_only=True, source_executed=True, source_calculated=True))
 
 
 def present_cost_results(requests: Iterable[Any], policy: CostPresentationPolicy | None = None) -> CostPresentationBatch:
@@ -272,7 +425,7 @@ def present_cost_results(requests: Iterable[Any], policy: CostPresentationPolicy
         if result.presentation_id in duplicates:
             reasons = ("DUPLICATE_PRESENTATION_ID",)
             gates = tuple(_gate(g.gate, reasons if g.gate == "REQUEST_VALIDITY" else ()) for g in result.gate_results)
-            result = CostPresentationResult(result.presentation_id, PRESENTATION_INVALID, gates, reasons,
-                denial=CostPresentationDenial(reasons, "REQUEST_VALIDITY"))
+            result = _bind_result(CostPresentationResult(result.presentation_id, PRESENTATION_INVALID, gates, reasons,
+                denial=CostPresentationDenial(reasons, "REQUEST_VALIDITY")))
         results.append(result)
     return CostPresentationBatch(PRESENTATION_VERSION, tuple(results))

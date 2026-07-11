@@ -45,6 +45,8 @@ def test_exact_per_unit(total, quantity, cpu):
 def test_determinism_authority_and_immutability():
     source = execution(); first = present(source); second = present(source)
     assert first == second
+    assert verify_cost_response_draft_integrity(first.draft)
+    assert verify_cost_presentation_result_integrity(first)
     assert first.presentation_generated and first.internal_draft_only and first.source_executed and first.source_calculated
     assert not any(getattr(first, x) for x in ("business_reasoning_generated","runtime_routed","tools_invoked","persisted","follow_up_generated","response_generated","response_committed"))
     with pytest.raises(dataclasses.FrozenInstanceError): first.draft.draft_text = "evil"
@@ -59,6 +61,7 @@ def test_tampered_sources_denied(change, reason):
     result = present(source, eid="e1", rid="r1", skill="cost.change_analysis.v1")
     assert result.outcome == PRESENTATION_DENIED and reason in result.reason_codes and result.draft is None
     assert not result.presentation_generated and not result.internal_draft_only
+    assert verify_cost_presentation_result_integrity(result)
 
 @pytest.mark.parametrize("metrics,reason", [
     (lambda m: m[:-1], "MISSING_METRICS"), (lambda m: m+(m[-1],), "DUPLICATE_METRICS"),
@@ -69,6 +72,7 @@ def test_tampered_sources_denied(change, reason):
 def test_schema_defects_invalid(metrics, reason):
     source=execution(); result=present(dataclasses.replace(source, metrics=metrics(source.metrics)))
     assert result.outcome == PRESENTATION_INVALID and reason in result.reason_codes
+    assert verify_cost_presentation_result_integrity(result)
 
 def test_request_policy_batch_and_injection_boundaries():
     source=execution()
@@ -85,6 +89,7 @@ def test_contract_versions_registry_and_no_runtime_imports():
     from brain.business_skill import LIMITED_ACTIVE
     from brain.business_skill_registry import BUSINESS_SKILL_REGISTRY_VERSION, get_business_skill_registry
     assert BUSINESS_SKILL_REGISTRY_VERSION == "5.15.13"
+    assert HISTORICAL_PRESENTATION_VERSION == "5.15.16" and PRESENTATION_VERSION == "5.15.16.1"
     assert sum(x.active_status == LIMITED_ACTIVE for x in get_business_skill_registry()) == 2
     source = open("brain/business_skill_cost_result_presenter.py", encoding="utf-8").read()
     assert "import app" not in source and "execute_cost_skill" not in source
