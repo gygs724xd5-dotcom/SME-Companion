@@ -9,14 +9,19 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Any, Iterable, Mapping
 
 from brain.business_skill import LIMITED_ACTIVE
 from brain.business_skill_candidate_matcher import match_business_skill_candidates
-from brain.business_skill_evidence_mapper import map_candidate_skill_evidence
+from brain.business_skill_candidate_matcher import BUSINESS_SKILL_CANDIDATE_MATCHER_VERSION
+from brain.business_skill_evidence_mapper import BUSINESS_SKILL_EVIDENCE_MAPPER_VERSION, map_candidate_skill_evidence
 from brain.business_skill_registry import BUSINESS_SKILL_REGISTRY_VERSION, get_business_skill_registry
 
-LIMITED_ACTIVATION_GATEWAY_VERSION = "5.15.14"
+LIMITED_ACTIVATION_GATEWAY_VERSION = "5.15.14.1"
+HISTORICAL_LIMITED_ACTIVATION_GATEWAY_VERSION = "5.15.14"
+ACTIVATION_BINDING_SCHEMA_VERSION = "1"
 LIMITED_EXECUTION_ELIGIBLE = "LIMITED_EXECUTION_ELIGIBLE"
 LIMITED_EXECUTION_DENIED = "LIMITED_EXECUTION_DENIED"
 SUPPORTED_SKILL_IDS = ("cost.change_analysis.v1", "cost.per_unit_calculation.v1")
@@ -31,6 +36,10 @@ _AUTHORITY_KEYS = frozenset(("executed", "calculated", "reasoning_executed", "ru
     "tools_invoked", "persisted", "follow_up_generated", "response_generated",
     "response_committed", "response", "answer", "callback", "execution_callback",
     "runtime_route", "tool_invocation", "persistence_command"))
+_CANONICAL_EVIDENCE_ORDER = {
+    "cost.change_analysis.v1": ("previous_cost", "current_cost"),
+    "cost.per_unit_calculation.v1": ("total_cost", "unit_quantity", "waste_or_loss_quantity"),
+}
 
 
 def _freeze(value: Any) -> Any:
@@ -97,6 +106,53 @@ class LimitedActivationGateResult:
 
 
 @dataclass(frozen=True)
+class ActivationEvidenceItem:
+    evidence_id: str
+    canonical_type: str
+    normalized_value: Any
+    required: bool
+    confidence: float | None
+    source: str | None
+    freshness: str | None
+    freshness_sufficient: bool
+    confidence_sufficient: bool
+    assumed: bool
+    user_confirmed: bool
+    validation_rule: str
+    validation_status: str
+    mapping_status: str
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "normalized_value", _freeze(self.normalized_value))
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+
+
+@dataclass(frozen=True)
+class ActivationRequestBinding:
+    binding_schema_version: str
+    request_id: str
+    requested_skill_id: str
+    matched_skill_id: str
+    current_message: str
+    activation_scope: str
+    reference_time: str
+    registry_version: str
+    matcher_version: str
+    evidence_mapper_version: str
+    gateway_policy_version: str
+    candidate_score: float
+    candidate_confidence: float
+    evidence_confidence: float
+    evidence_ready: bool
+    evidence_snapshot: tuple[ActivationEvidenceItem, ...]
+    binding_digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence_snapshot", tuple(self.evidence_snapshot))
+
+
+@dataclass(frozen=True)
 class LimitedActivationDenial:
     reason_codes: tuple[str, ...]
     first_failed_gate: str
@@ -116,6 +172,7 @@ class LimitedActivationDecision:
     gate_results: tuple[LimitedActivationGateResult, ...]
     reason_codes: tuple[str, ...]
     denial: LimitedActivationDenial | None
+    binding: ActivationRequestBinding | None = None
     executed: bool = False
     calculated: bool = False
     reasoning_executed: bool = False
@@ -125,6 +182,78 @@ class LimitedActivationDecision:
     follow_up_generated: bool = False
     response_generated: bool = False
     response_committed: bool = False
+
+
+def _canonical_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ValueError("non-finite binding value")
+        return {"$float": format(value, ".17g")}
+    if isinstance(value, tuple):
+        if all(isinstance(x, tuple) and len(x) == 2 and isinstance(x[0], str) for x in value):
+            return {k: _canonical_value(v) for k, v in value}
+        return [_canonical_value(x) for x in value]
+    raise ValueError("unsupported binding value")
+
+
+def _binding_payload(binding: ActivationRequestBinding) -> dict[str, Any]:
+    return {
+        "binding_schema_version": binding.binding_schema_version, "request_id": binding.request_id,
+        "requested_skill_id": binding.requested_skill_id, "matched_skill_id": binding.matched_skill_id,
+        "current_message": binding.current_message, "activation_scope": binding.activation_scope,
+        "reference_time": binding.reference_time, "registry_version": binding.registry_version,
+        "matcher_version": binding.matcher_version, "evidence_mapper_version": binding.evidence_mapper_version,
+        "gateway_policy_version": binding.gateway_policy_version, "candidate_score": _canonical_value(binding.candidate_score),
+        "candidate_confidence": _canonical_value(binding.candidate_confidence),
+        "evidence_confidence": _canonical_value(binding.evidence_confidence), "evidence_ready": binding.evidence_ready,
+        "evidence_snapshot": [{name: _canonical_value(getattr(item, name)) for name in (
+            "evidence_id", "canonical_type", "normalized_value", "required", "confidence", "source", "freshness",
+            "freshness_sufficient", "confidence_sufficient", "assumed", "user_confirmed", "validation_rule",
+            "validation_status", "mapping_status", "reason_codes")} for item in binding.evidence_snapshot],
+    }
+
+
+def _digest(binding: ActivationRequestBinding) -> str:
+    raw = json.dumps(_binding_payload(binding), ensure_ascii=False, sort_keys=False, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def verify_activation_request_binding(binding: Any) -> bool:
+    """Verify integrity inside the trusted Gateway flow; this is not a signature or caller authentication."""
+    try:
+        if not isinstance(binding, ActivationRequestBinding) or binding.binding_schema_version != ACTIVATION_BINDING_SCHEMA_VERSION:
+            return False
+        strings = (binding.request_id, binding.requested_skill_id, binding.matched_skill_id, binding.current_message,
+                   binding.activation_scope, binding.reference_time, binding.registry_version, binding.matcher_version,
+                   binding.evidence_mapper_version, binding.gateway_policy_version)
+        if any(not isinstance(x, str) or not x for x in strings): return False
+        ids = tuple(x.evidence_id for x in binding.evidence_snapshot)
+        if any(not isinstance(x, ActivationEvidenceItem) or not x.evidence_id or not x.canonical_type for x in binding.evidence_snapshot): return False
+        if len(ids) != len(set(ids)): return False
+        canonical = _CANONICAL_EVIDENCE_ORDER.get(binding.matched_skill_id)
+        if canonical is None or any(x not in canonical for x in ids): return False
+        if tuple(sorted(binding.evidence_snapshot, key=lambda x: canonical.index(x.evidence_id))) != binding.evidence_snapshot: return False
+        return len(binding.binding_digest) == 64 and binding.binding_digest == _digest(binding)
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _make_binding(rid: str, skill_id: str, msg: str, scope: str, ref: str, policy_version: str,
+                  top: dict[str, Any], mapped: dict[str, Any]) -> ActivationRequestBinding:
+    order = _CANONICAL_EVIDENCE_ORDER[skill_id]
+    items = tuple(sorted((ActivationEvidenceItem(
+        x["field_name"], x["expected_field_type"], x["observed_value"], x["required"], x["observed_confidence"],
+        x["observed_source"], x["observed_freshness"], x["freshness_sufficient"], x["confidence_sufficient"],
+        x["assumed"], x["user_confirmed"], x["validation_rule"], x["validation_status"], x["mapping_status"],
+        tuple(x["reasons"])) for x in mapped["evidence_mappings"] if x["value_present"]),
+        key=lambda x: order.index(x.evidence_id)))
+    base = ActivationRequestBinding(ACTIVATION_BINDING_SCHEMA_VERSION, rid, skill_id, top["skill_id"], msg.strip(), scope,
+        ref, BUSINESS_SKILL_REGISTRY_VERSION, BUSINESS_SKILL_CANDIDATE_MATCHER_VERSION, BUSINESS_SKILL_EVIDENCE_MAPPER_VERSION,
+        policy_version, top["candidate_score"], top["candidate_confidence"], mapped["evidence_confidence_floor"],
+        mapped["evidence_ready"], items, "")
+    return ActivationRequestBinding(**{**base.__dict__, "binding_digest": _digest(base)})
 
 
 @dataclass(frozen=True)
@@ -177,6 +306,10 @@ def decide_limited_activation(request: Any, policy: LimitedActivationPolicy | No
     if floor is None or floor < policy.minimum_evidence_confidence: evidence_reasons.append("EVIDENCE_CONFIDENCE_BELOW_THRESHOLD")
     for item in mapped.get("evidence_mappings", ()):
         if item.get("blocking"): evidence_reasons.append(f"EVIDENCE_{item.get('mapping_status')}:{item.get('field_name')}")
+    known_evidence = {item.get("field_name") for item in mapped.get("evidence_mappings", ())}
+    if isinstance(evidence, dict):
+        for unknown in sorted(set(map(str, evidence)) - known_evidence):
+            evidence_reasons.append(f"EVIDENCE_UNKNOWN:{unknown}")
     ambiguity = ["COMPETING_CANDIDATES"] if len(candidates) > 1 else []
     current = [] if top is not None and top.get("matched_intent_patterns") or top is not None and top.get("matched_example_questions") else ["CURRENT_MESSAGE_DOES_NOT_SUPPORT_REQUEST"]
     authority_reasons = []
@@ -189,10 +322,11 @@ def decide_limited_activation(request: Any, policy: LimitedActivationPolicy | No
     failures = tuple(code for gate in gates for code in gate.reason_codes if code != "PASSED")
     passed = not failures
     denial = None if passed else LimitedActivationDenial(failures, next(x.gate for x in gates if not x.passed))
+    binding = (_make_binding(rid, skill_id, msg, scope, ref, policy.policy_version, top, mapped) if passed else None)
     return LimitedActivationDecision(str(rid) if isinstance(rid, str) else "", LIMITED_EXECUTION_ELIGIBLE if passed else LIMITED_EXECUTION_DENIED,
         str(skill_id) if isinstance(skill_id, str) else "", skill_id if passed else None, BUSINESS_SKILL_REGISTRY_VERSION,
         policy.policy_version, top.get("candidate_score") if top else None, top.get("candidate_confidence") if top else None,
-        floor, gates, failures or ("ALL_ELIGIBILITY_GATES_PASSED",), denial)
+        floor, gates, failures or ("ALL_ELIGIBILITY_GATES_PASSED",), denial, binding)
 
 
 def decide_limited_activations(requests: Iterable[Any], policy: LimitedActivationPolicy | None = None) -> LimitedActivationDecisionBatch:

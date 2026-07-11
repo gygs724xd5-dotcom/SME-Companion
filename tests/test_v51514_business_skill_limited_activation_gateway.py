@@ -17,7 +17,7 @@ def rich(value, **kw):
     x = {"value": value, "confidence": 1.0, "source": "current_turn", "freshness": "current", "user_confirmed": True}; x.update(kw); return x
 CHANGE_E = {"previous_cost": rich(20000), "current_cost": rich(24000)}
 UNIT_E = {"total_cost": rich(1000), "unit_quantity": rich(100)}
-def req(rid="r1", message=CHANGE, evidence=CHANGE_E, skill="cost.change_analysis.v1", scope=SUPPORTED_ACTIVATION_SCOPE, version="5.15.14", **kw):
+def req(rid="r1", message=CHANGE, evidence=CHANGE_E, skill="cost.change_analysis.v1", scope=SUPPORTED_ACTIVATION_SCOPE, version="5.15.14.1", **kw):
     return LimitedActivationRequest(rid, message, evidence, kw.get("reference_time", NOW), skill, scope, version, kw.get("authority_inputs", ()))
 
 @pytest.mark.parametrize("activation_request", [req(), req("r2", UNIT, UNIT_E, "cost.per_unit_calculation.v1")])
@@ -31,7 +31,7 @@ def test_exact_positive_canonical_decisions_and_no_authority(activation_request)
         assert getattr(result, name) is False
 
 def test_frozen_contracts_policy_and_registry_are_unchanged():
-    for cls in (LimitedActivationPolicy, LimitedActivationRequest, LimitedActivationGateResult, LimitedActivationDecision, LimitedActivationDecisionBatch, LimitedActivationDenial):
+    for cls in (LimitedActivationPolicy, LimitedActivationRequest, LimitedActivationGateResult, LimitedActivationDecision, LimitedActivationDecisionBatch, LimitedActivationDenial, ActivationEvidenceItem, ActivationRequestBinding):
         assert cls.__dataclass_params__.frozen
     assert BUSINESS_SKILL_REGISTRY_VERSION == "5.15.13"
     registry = get_business_skill_registry()
