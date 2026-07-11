@@ -31,9 +31,10 @@ from brain.business_skill import (
 )
 from brain.business_skill_lifecycle_manifest import apply_approved_lifecycle_promotions
 from brain.business_skill_shadow_availability_manifest import apply_approved_shadow_availability_promotions
+from brain.business_skill_limited_activation_manifest import apply_approved_limited_activation_promotions
 
 
-BUSINESS_SKILL_REGISTRY_VERSION = "5.15.9.1"
+BUSINESS_SKILL_REGISTRY_VERSION = "5.15.13"
 
 EXPECTED_SEED_SKILL_IDS = (
     "cost.change_analysis.v1",
@@ -369,7 +370,8 @@ def build_seed_business_skills() -> tuple[ContractBusinessSkill, ...]:
         _create_daily_task_checklist_skill(),
     )
     unit_tested_seeds = apply_approved_lifecycle_promotions(declarative_seeds)
-    return apply_approved_shadow_availability_promotions(unit_tested_seeds)
+    shadow_seeds = apply_approved_shadow_availability_promotions(unit_tested_seeds)
+    return apply_approved_limited_activation_promotions(shadow_seeds)
 
 
 def get_business_skill_registry() -> tuple[ContractBusinessSkill, ...]:

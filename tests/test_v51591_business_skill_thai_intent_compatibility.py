@@ -98,13 +98,13 @@ class V51591BusinessSkillThaiIntentCompatibilityTests(unittest.TestCase):
             self.assertEqual(changed, ("intent_patterns",))
 
     def test_version_lifecycle_and_candidate_authority_boundaries_are_unchanged(self):
-        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9.1")
+        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.13")
         self.assertEqual(BUSINESS_SKILL_CANDIDATE_MATCHER_VERSION, "5.15.3")
         registry = get_business_skill_registry()
-        self.assertEqual(sum(item.active_status == SHADOW_AVAILABLE for item in registry), 2)
+        self.assertEqual(sum(item.active_status == SHADOW_AVAILABLE for item in registry), 0)
         self.assertEqual(sum(item.active_status == CONTRACTED for item in registry), 8)
         self.assertEqual(sum(item.active_status == UNIT_TESTED for item in registry), 0)
-        self.assertEqual(sum(item.active_status == LIMITED_ACTIVE for item in registry), 0)
+        self.assertEqual(sum(item.active_status == LIMITED_ACTIVE for item in registry), 2)
         self.assertEqual(sum(item.active_status == STABLE for item in registry), 0)
         for candidate in self.candidates(CHANGE_MESSAGE) + self.candidates(PER_UNIT_MESSAGE):
             self.assertTrue(candidate["candidate_shadow_mode"])

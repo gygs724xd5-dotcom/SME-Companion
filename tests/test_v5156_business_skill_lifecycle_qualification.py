@@ -5,7 +5,7 @@ import unittest
 from dataclasses import replace
 
 import brain.business_skill_lifecycle_qualification as qualification_module
-from brain.business_skill import CONTRACTED, COST, SHADOW_AVAILABLE, UNIT_TESTED, BusinessSkill
+from brain.business_skill import CONTRACTED, COST, LIMITED_ACTIVE, SHADOW_AVAILABLE, UNIT_TESTED, BusinessSkill
 from brain.business_skill_candidate_matcher import match_business_skill_candidates, top_business_skill_candidate
 from brain.business_skill_evidence_mapper import map_business_skill_evidence
 from brain.business_skill_lifecycle_qualification import (
@@ -175,7 +175,7 @@ class V5156BusinessSkillLifecycleQualificationTests(unittest.TestCase):
         self.assertTrue(batch["all_registry_skills_unchanged"])
         self.assertEqual(tuple(skill.active_status for skill in self.registry), before)
         current = get_business_skill_registry()
-        self.assertEqual(sum(skill.active_status == SHADOW_AVAILABLE for skill in current), 2)
+        self.assertEqual(sum(skill.active_status == LIMITED_ACTIVE for skill in current), 2)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in current), 8)
 
     def test_diagnostics_are_safe_and_contain_no_evidence_values(self):

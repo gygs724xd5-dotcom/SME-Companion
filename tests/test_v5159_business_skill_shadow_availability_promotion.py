@@ -131,11 +131,11 @@ class V5159BusinessSkillShadowAvailabilityPromotionTests(unittest.TestCase):
 
     def test_registry_has_exact_v5159_state(self):
         registry = get_business_skill_registry()
-        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9.1")
-        self.assertEqual(tuple(skill.skill_id for skill in registry if skill.active_status == SHADOW_AVAILABLE), APPROVED_SHADOW_AVAILABILITY_SKILL_IDS)
+        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.13")
+        self.assertEqual(tuple(skill.skill_id for skill in registry if skill.active_status == LIMITED_ACTIVE), APPROVED_SHADOW_AVAILABILITY_SKILL_IDS)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
         self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in registry), 0)
-        self.assertEqual(sum(skill.active_status == LIMITED_ACTIVE for skill in registry), 0)
+        self.assertEqual(sum(skill.active_status == LIMITED_ACTIVE for skill in registry), 2)
         self.assertEqual(sum(skill.active_status == STABLE for skill in registry), 0)
         self.assertTrue(validate_business_skill_registry()["valid"])
 
@@ -144,11 +144,18 @@ class V5159BusinessSkillShadowAvailabilityPromotionTests(unittest.TestCase):
             skill,
             active_status=CONTRACTED,
             tests_required=tuple(test for test in skill.tests_required if "test_v5156_" not in test and
-                                 "test_v5157_" not in test and "test_v5158_" not in test and "test_v5159_" not in test),
+                                 "test_v5157_" not in test and "test_v5158_" not in test and "test_v5159_" not in test and
+                                 "test_v51512_" not in test and "test_v51513_" not in test),
         ) for skill in get_business_skill_registry())
         intermediate = apply_approved_lifecycle_promotions(contracted)
         final = apply_approved_shadow_availability_promotions(intermediate)
-        self.assertEqual(final, get_business_skill_registry())
+        historical = tuple(dataclasses.replace(
+            skill, active_status=SHADOW_AVAILABLE,
+            tests_required=tuple(test for test in skill.tests_required
+                                 if "test_v51512_" not in test and "test_v51513_" not in test),
+        ) if skill.skill_id in APPROVED_SHADOW_AVAILABILITY_SKILL_IDS else skill
+            for skill in get_business_skill_registry())
+        self.assertEqual(final, historical)
         self.assertEqual(tuple(item.qualification_version for item in APPROVED_LIFECYCLE_PROMOTIONS), ("5.15.6", "5.15.6"))
         for before, after in zip(contracted, final):
             changed = {field.name for field in dataclasses.fields(before) if getattr(before, field.name) != getattr(after, field.name)}

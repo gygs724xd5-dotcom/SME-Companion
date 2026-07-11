@@ -47,11 +47,11 @@ class V5152BusinessSkillRegistryTest(unittest.TestCase):
         skills = get_business_skill_registry()
         statuses = {skill.active_status for skill in skills}
 
-        self.assertEqual({skill.skill_id for skill in skills if skill.active_status == SHADOW_AVAILABLE}, {
+        self.assertEqual({skill.skill_id for skill in skills if skill.active_status == LIMITED_ACTIVE}, {
             "cost.change_analysis.v1", "cost.per_unit_calculation.v1",
         })
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in skills), 8)
-        self.assertNotIn(LIMITED_ACTIVE, statuses)
+        self.assertNotIn(SHADOW_AVAILABLE, statuses)
         self.assertNotIn(STABLE, statuses)
 
     def test_exact_lookup_returns_correct_skill(self):
@@ -115,7 +115,7 @@ class V5152BusinessSkillRegistryTest(unittest.TestCase):
         self.assertEqual(tuple(first["skill_ids"]), EXPECTED_SEED_SKILL_IDS)
         self.assertEqual(first["duplicate_skill_ids"], [])
         self.assertEqual(first["invalid_skill_ids"], [])
-        self.assertEqual(first["status_counts"], {SHADOW_AVAILABLE: 2, CONTRACTED: 8})
+        self.assertEqual(first["status_counts"], {LIMITED_ACTIVE: 2, CONTRACTED: 8})
 
     def test_duplicate_detection_works_with_injected_registry(self):
         skills = list(build_seed_business_skills())
@@ -149,7 +149,7 @@ class V5152BusinessSkillRegistryTest(unittest.TestCase):
             self.assertNotIn(name, registry_module.__dict__)
 
     def test_registry_version_reflects_lifecycle_promotion(self):
-        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9.1")
+        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.13")
 
 
 if __name__ == "__main__":

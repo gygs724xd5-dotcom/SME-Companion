@@ -57,7 +57,7 @@ def qualification_input(skill, prefix):
 
 
 def test_positive_exact_results_determinism_and_boundaries():
-    skills = [x for x in get_business_skill_registry() if x.skill_id in QUALIFICATION_SKILL_IDS]
+    skills = [x for x in get_v51512_shadow_registry() if x.skill_id in QUALIFICATION_SKILL_IDS]
     inputs = tuple(qualification_input(x, f"s{i}-") for i, x in enumerate(skills))
     before = get_business_skill_registry()
     first = qualify_limited_activation(reversed(inputs), qualification_id="qa-51512", reference_time=NOW)
@@ -117,7 +117,7 @@ def test_validation_frozen_mutation_safety_and_authority_surface():
 
 
 def test_identity_unknown_unsupported_duplicate_and_conflicting_inputs():
-    registry = get_business_skill_registry()
+    registry = get_v51512_shadow_registry()
     cost = next(x for x in registry if x.skill_id == QUALIFICATION_SKILL_IDS[0])
     unsupported = next(x for x in registry if x.skill_id.startswith("pricing."))
     unknown = replace(cost, skill_id="cost.unknown.v1")

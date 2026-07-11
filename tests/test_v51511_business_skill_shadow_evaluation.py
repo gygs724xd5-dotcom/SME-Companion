@@ -35,7 +35,7 @@ def case(case_id, message, evidence, label, skill=None):
 class V51511ShadowEvaluationTests(unittest.TestCase):
     def test_versions_frozen_contracts_registry_and_positive_fixtures(self):
         self.assertEqual(BUSINESS_SKILL_SHADOW_EVALUATION_VERSION, "5.15.11")
-        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9.1")
+        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.13")
         for contract in (ExpectedShadowOutcome, ShadowEvaluationCase, ShadowDriftFinding,
                          ShadowEvaluationResult, ShadowSkillTotal, ShadowEvaluationSummary):
             self.assertTrue(contract.__dataclass_params__.frozen)

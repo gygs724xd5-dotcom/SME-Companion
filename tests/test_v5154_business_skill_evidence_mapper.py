@@ -138,7 +138,7 @@ class BusinessSkillEvidenceMapperTests(unittest.TestCase):
         registry = get_business_skill_registry()
         self.assertEqual(len(registry), 10)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
-        self.assertEqual(sum(skill.active_status == "SHADOW_AVAILABLE" for skill in registry), 2)
+        self.assertEqual(sum(skill.active_status == "LIMITED_ACTIVE" for skill in registry), 2)
 
 
 if __name__ == "__main__":

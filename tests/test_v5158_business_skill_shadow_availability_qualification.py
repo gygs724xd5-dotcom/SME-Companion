@@ -2,7 +2,7 @@ import copy
 import unittest
 from dataclasses import replace
 
-from brain.business_skill import CONTRACTED, SHADOW_AVAILABLE, UNIT_TESTED, RequiredEvidence
+from brain.business_skill import CONTRACTED, LIMITED_ACTIVE, SHADOW_AVAILABLE, UNIT_TESTED, RequiredEvidence
 from brain.business_skill_registry import get_business_skill, get_business_skill_registry
 from brain.business_skill_shadow_availability_qualification import (
     INVALID_SOURCE_LIFECYCLE,
@@ -60,7 +60,7 @@ class V5158BusinessSkillShadowAvailabilityQualificationTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(sum(s.active_status == UNIT_TESTED for s in after), 0)
         self.assertEqual(sum(s.active_status == CONTRACTED for s in after), 8)
-        self.assertEqual(sum(s.active_status == SHADOW_AVAILABLE for s in after), 2)
+        self.assertEqual(sum(s.active_status == LIMITED_ACTIVE for s in after), 2)
 
     def test_unrelated_and_context_only_messages_do_not_match(self):
         for skill_id in CASES:

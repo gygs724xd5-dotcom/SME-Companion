@@ -6,10 +6,10 @@ persist, or produce a business response.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
-from brain.business_skill import SHADOW_AVAILABLE, BusinessSkill
+from brain.business_skill import LIMITED_ACTIVE, SHADOW_AVAILABLE, BusinessSkill
 from brain.business_skill_registry import BUSINESS_SKILL_REGISTRY_VERSION, get_business_skill_registry
 from brain.business_skill_shadow_evaluation import (
     FALSE_NEGATIVE, FALSE_POSITIVE, MISCLASSIFICATION, ShadowEvaluationCase,
@@ -36,6 +36,17 @@ REQUIRED_HISTORY = (
 GATE_ORDER = ("SKILL_IDENTITY", "LIFECYCLE", "LIFECYCLE_HISTORY", "OBSERVATION_VOLUME",
               "EVALUATION_QUALITY", "COVERAGE", "DETERMINISM", "MUTATION_SAFETY",
               "AUTHORITY_BOUNDARY")
+
+
+def get_v51512_shadow_registry() -> tuple[BusinessSkill, ...]:
+    """Return the isolated historical input view used by V5.15.12."""
+    return tuple(
+        replace(skill, active_status=SHADOW_AVAILABLE,
+                tests_required=tuple(ref for ref in skill.tests_required
+                                     if "test_v51512_" not in ref and "test_v51513_" not in ref))
+        if skill.skill_id in QUALIFICATION_SKILL_IDS and skill.active_status == LIMITED_ACTIVE else skill
+        for skill in get_business_skill_registry()
+    )
 
 
 @dataclass(frozen=True)
@@ -136,7 +147,7 @@ def _qualify_one(item: LimitedActivationQualificationInput, qualification_id: st
                  duplicate_ids: set[str]) -> LimitedActivationQualificationResult:
     skill = item.skill
     skill_id = getattr(skill, "skill_id", "")
-    canonical = {x.skill_id: x for x in get_business_skill_registry()}.get(skill_id)
+    canonical = {x.skill_id: x for x in get_v51512_shadow_registry()}.get(skill_id)
     identity = []
     if skill_id not in QUALIFICATION_SKILL_IDS: identity.append("UNKNOWN_OR_UNSUPPORTED_SKILL")
     if skill_id in duplicate_ids: identity.append("DUPLICATE_OR_CONFLICTING_SKILL_INPUT")

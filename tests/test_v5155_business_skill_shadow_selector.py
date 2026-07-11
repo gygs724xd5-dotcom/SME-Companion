@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from brain.business_skill import CONTRACTED, SHADOW_AVAILABLE, UNIT_TESTED
+from brain.business_skill import CONTRACTED, LIMITED_ACTIVE, SHADOW_AVAILABLE, UNIT_TESTED
 from brain.business_skill_candidate_matcher import score_business_skill_candidate
 from brain.business_skill_evidence_mapper import map_business_skill_evidence
 from brain.business_skill_registry import get_business_skill_registry
@@ -160,7 +160,8 @@ class BusinessSkillShadowSelectorTests(unittest.TestCase):
         registry = get_business_skill_registry()
         self.assertEqual(len(registry), 10)
         self.assertEqual(sum(skill.active_status == CONTRACTED for skill in registry), 8)
-        self.assertEqual(sum(skill.active_status == SHADOW_AVAILABLE for skill in registry), 2)
+        self.assertEqual(sum(skill.active_status == SHADOW_AVAILABLE for skill in registry), 0)
+        self.assertEqual(sum(skill.active_status == LIMITED_ACTIVE for skill in registry), 2)
         self.assertEqual(sum(skill.active_status == UNIT_TESTED for skill in registry), 0)
 
     def test_module_has_no_forbidden_runtime_imports(self):

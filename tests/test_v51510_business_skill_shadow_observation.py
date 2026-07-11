@@ -50,14 +50,14 @@ def request(message=CHANGE, evidence=CHANGE_EVIDENCE):
 class V51510BusinessSkillShadowObservationTests(unittest.TestCase):
     def test_versions_immutable_contracts_and_registry_counts(self):
         self.assertEqual(BUSINESS_SKILL_SHADOW_OBSERVATION_VERSION, "5.15.10")
-        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.9.1")
+        self.assertEqual(BUSINESS_SKILL_REGISTRY_VERSION, "5.15.13")
         for contract in (ShadowEvidenceInput, ShadowObservationRequest, ShadowObservation):
             self.assertTrue(contract.__dataclass_params__.frozen)
         registry = get_business_skill_registry()
-        self.assertEqual(sum(x.active_status == SHADOW_AVAILABLE for x in registry), 2)
+        self.assertEqual(sum(x.active_status == SHADOW_AVAILABLE for x in registry), 0)
         self.assertEqual(sum(x.active_status == CONTRACTED for x in registry), 8)
         self.assertEqual(sum(x.active_status == UNIT_TESTED for x in registry), 0)
-        self.assertEqual(sum(x.active_status == LIMITED_ACTIVE for x in registry), 0)
+        self.assertEqual(sum(x.active_status == LIMITED_ACTIVE for x in registry), 2)
         self.assertEqual(sum(x.active_status == STABLE for x in registry), 0)
 
     def assert_positive(self, message, evidence, skill_id):
@@ -70,7 +70,7 @@ class V51510BusinessSkillShadowObservationTests(unittest.TestCase):
         self.assertEqual(result.candidates[0].score, 70)
         self.assertTrue(result.evidence_ready)
         self.assertEqual(result.evidence_confidence, 1.0)
-        self.assertEqual(result.canonical_lifecycle_status, SHADOW_AVAILABLE)
+        self.assertEqual(result.canonical_lifecycle_status, LIMITED_ACTIVE)
         self.assertTrue(result.lifecycle_gate_passed)
         self.assertTrue(result.confidence_gate_passed)
         self.assertTrue(result.ambiguity_gate_passed)
