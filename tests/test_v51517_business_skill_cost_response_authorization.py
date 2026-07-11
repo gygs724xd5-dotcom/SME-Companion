@@ -1,4 +1,4 @@
-"""V5.15.17 cost response authorization boundary tests.
+"""V5.15.17/V5.15.17.1 cost response authorization boundary tests.
 
 Digest verification cannot detect identical valid replay. SHA-256 is not a
 signature, MAC, authentication, or protection from wholesale reconstruction
@@ -55,6 +55,8 @@ def test_change_artifacts_are_exact_bound_deterministic_and_authority_limited(va
     assert verify_cost_response_draft_integrity(source.draft)
     assert verify_cost_presentation_result_integrity(source)
     artifact = first.authorized_artifact
+    assert artifact.authorization_scope == LIMITED_COST_RESPONSE
+    assert artifact.authorization_policy_version == COST_RESPONSE_AUTHORIZATION_VERSION
     assert artifact.authorized_text.encode() == source.draft.draft_text.encode()
     assert (artifact.presentation_integrity_digest, artifact.draft_integrity_digest) == (
         source.presentation_digest, source.draft.draft_digest)

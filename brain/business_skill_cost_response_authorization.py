@@ -1,4 +1,4 @@
-"""V5.15.17 cost-response delivery authorization boundary.
+"""V5.15.17.1 cost-response delivery authorization boundary.
 
 Authorization consumes only a canonical V5.15.16.1 presentation result.  It
 does not execute, calculate, present, rewrite, route, commit, invoke tools,
@@ -33,7 +33,10 @@ from brain.business_skill_cost_result_presenter import (
     verify_cost_response_draft_integrity,
 )
 
-AUTHORIZATION_POLICY_VERSION = "5.15.17"
+HISTORICAL_COST_RESPONSE_AUTHORIZATION_VERSION = "5.15.17"
+COST_RESPONSE_AUTHORIZATION_VERSION = "5.15.17.1"
+# Compatibility name retained for callers of the original V5.15.17 contract.
+AUTHORIZATION_POLICY_VERSION = COST_RESPONSE_AUTHORIZATION_VERSION
 LIMITED_COST_RESPONSE = "LIMITED_COST_RESPONSE"
 USER_TEXT_RESPONSE = "USER_TEXT_RESPONSE"
 RESPONSE_DELIVERY_ELIGIBLE = "RESPONSE_DELIVERY_ELIGIBLE"
@@ -105,6 +108,7 @@ class AuthorizedCostResponseArtifact:
     source_request_id: str
     source_skill_id: str
     authorization_policy_version: str
+    authorization_scope: str
     presentation_integrity_digest: str
     draft_integrity_digest: str
     template_id: str
@@ -240,8 +244,8 @@ def authorize_cost_response(
 
     artifact = AuthorizedCostResponseArtifact(
         aid, source.presentation_id, draft.source_execution_id, draft.source_request_id, draft.source_skill_id,
-        policy.policy_version, source.presentation_digest, draft.draft_digest, draft.template_id, draft.locale,
-        policy.target_channel, draft.draft_text,
+        policy.policy_version, request.authorization_scope, source.presentation_digest, draft.draft_digest,
+        draft.template_id, draft.locale, policy.target_channel, draft.draft_text,
     )
     return CostResponseAuthorizationDecision(
         aid, RESPONSE_DELIVERY_ELIGIBLE, gates, ("ALL_AUTHORIZATION_GATES_PASSED",),
