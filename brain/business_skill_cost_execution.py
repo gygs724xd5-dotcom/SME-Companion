@@ -26,7 +26,8 @@ from brain.business_skill_limited_activation_gateway import (
 )
 from brain.business_skill_registry import BUSINESS_SKILL_REGISTRY_VERSION, get_business_skill_registry
 
-COST_EXECUTION_VERSION = "5.15.15"
+HISTORICAL_COST_EXECUTION_VERSION = "5.15.15"
+COST_EXECUTION_VERSION = "5.15.15.1"
 EXECUTED = "EXECUTED"
 EXECUTION_DENIED = "EXECUTION_DENIED"
 EXECUTION_INVALID = "EXECUTION_INVALID"
@@ -256,14 +257,18 @@ def execute_cost_skill(request: Any, policy: CostExecutionPolicy | None = None) 
                 change = current - previous
                 direction = "INCREASED" if change > 0 else "DECREASED" if change < 0 else "UNCHANGED"
                 percentage = (change / previous) * Decimal(100) if previous != 0 else None
-                metrics = (CostMetric("absolute_change", "currency", _format(change, policy)),
+                metrics = (CostMetric("previous_cost", "currency", _format(previous, policy)),
+                           CostMetric("current_cost", "currency", _format(current, policy)),
+                           CostMetric("absolute_change", "currency", _format(change, policy)),
                            CostMetric("percentage_change", "percent", _format(percentage, policy) if percentage is not None else None,
                                       percentage is not None, None if percentage is not None else "PREVIOUS_COST_ZERO"),
                            CostMetric("direction", "category", direction))
                 formula_id = "cost.change_analysis.v1/formula.v1"
             else:
                 result = operands["total_cost"] / operands["unit_quantity"]
-                metrics = (CostMetric("cost_per_unit", "currency_per_unit", _format(result, policy)),)
+                metrics = (CostMetric("total_cost", "currency", _format(operands["total_cost"], policy)),
+                           CostMetric("unit_quantity", "unit", _format(operands["unit_quantity"], policy)),
+                           CostMetric("cost_per_unit", "currency_per_unit", _format(result, policy)))
                 formula_id = "cost.per_unit_calculation.v1/formula.v1"
     denial = CostExecutionDenial(failures, first) if outcome == EXECUTION_DENIED else None
     error = CostExecutionError(failures, first) if outcome == EXECUTION_INVALID else None

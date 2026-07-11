@@ -43,6 +43,8 @@ def test_change_exact_outputs(previous, current, absolute, percentage, direction
     result = execute(evidence={"previous_cost": rich(previous), "current_cost": rich(current)})
     assert result.outcome == EXECUTED
     assert tuple((x.name, x.unit, x.value) for x in result.metrics) == (
+        ("previous_cost", "currency", f"{previous:.6f}"),
+        ("current_cost", "currency", f"{current:.6f}"),
         ("absolute_change", "currency", absolute),
         ("percentage_change", "percent", percentage),
         ("direction", "category", direction))
@@ -50,21 +52,26 @@ def test_change_exact_outputs(previous, current, absolute, percentage, direction
 
 def test_zero_previous_has_explicit_undefined_percentage():
     result = execute(evidence={"previous_cost": rich(0), "current_cost": rich(5)})
-    assert result.metrics[0].value == "5.000000"
-    assert result.metrics[1] == CostMetric("percentage_change", "percent", None, False, "PREVIOUS_COST_ZERO")
+    assert result.metrics[2].value == "5.000000"
+    assert result.metrics[3] == CostMetric("percentage_change", "percent", None, False, "PREVIOUS_COST_ZERO")
 
 
 @pytest.mark.parametrize("total,quantity,expected", [(1000, 100, "10.000000"), (1, 6, "0.166667"), (1.0000005, 1, "1.000001")])
 def test_per_unit_exact_and_round_half_up(total, quantity, expected):
     result = execute("cost.per_unit_calculation.v1", {"total_cost": rich(total), "unit_quantity": rich(quantity)})
     assert result.outcome == EXECUTED
-    assert result.metrics == (CostMetric("cost_per_unit", "currency_per_unit", expected),)
+    assert result.metrics == (CostMetric("total_cost", "currency", f"{total:.6f}"),
+                              CostMetric("unit_quantity", "unit", f"{quantity:.6f}"),
+                              CostMetric("cost_per_unit", "currency_per_unit", expected))
 
 
 def test_optional_waste_is_bound_but_not_formula_operand():
     absent = execute("cost.per_unit_calculation.v1", {"total_cost": rich(100), "unit_quantity": rich(8)})
     present = execute("cost.per_unit_calculation.v1", {"total_cost": rich(100), "unit_quantity": rich(8), "waste_or_loss_quantity": rich(2)})
-    assert absent.metrics == present.metrics == (CostMetric("cost_per_unit", "currency_per_unit", "12.500000"),)
+    expected = (CostMetric("total_cost", "currency", "100.000000"),
+                CostMetric("unit_quantity", "unit", "8.000000"),
+                CostMetric("cost_per_unit", "currency_per_unit", "12.500000"))
+    assert absent.metrics == present.metrics == expected
 
 
 def test_contracts_policy_gates_and_authority_flags():
