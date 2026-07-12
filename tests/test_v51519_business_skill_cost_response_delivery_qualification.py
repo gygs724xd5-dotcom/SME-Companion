@@ -26,6 +26,8 @@ def test_both_skills_are_ready_using_real_canonical_adapter_results():
     batch=qualify_cost_response_delivery((make("cost.per_unit_calculation.v1","2"),make()),qualification_id="q1",reference_time=NOW)
     assert [x.skill_id for x in batch.results]==["cost.change_analysis.v1","cost.per_unit_calculation.v1"]
     assert all(x.recommendation==CostDeliveryQualificationRecommendation(READY_FOR_FEATURE_GATED_DELIVERY_INTEGRATION,ALL_DELIVERY_READINESS_GATES_PASSED) for x in batch.results)
+    assert all(verify_cost_delivery_qualification_result_integrity(x) for x in batch.results)
+    assert all(verify_cost_delivery_qualification_binding(x.binding) for x in batch.results)
     assert all(tuple(g.gate for g in x.gate_results)==GATE_ORDER for x in batch.results)
     assert all(not any((x.runtime_routed,x.response_delivered,x.response_generated,x.response_committed,x.persisted,x.tools_invoked)) for x in batch.results)
 
@@ -63,7 +65,7 @@ def test_duplicate_order_determinism_frozen_and_no_mutation():
     assert first==second and before==(a,b)
     dup=qualify_cost_response_delivery((a,dataclasses.replace(b,case_id=a.case_id)),qualification_id="q",reference_time=NOW)
     assert all("DUPLICATE_CASE_ID" in x.reason_codes for x in dup.results)
-    for obj in (CostDeliveryQualificationPolicy(),a,first.results[0].gate_results[0],first.results[0].recommendation,first.results[0],first):
+    for obj in (CostDeliveryQualificationPolicy(),a,first.results[0].gate_results[0],first.results[0].recommendation,first.results[0].binding,first.results[0],first):
         with pytest.raises((dataclasses.FrozenInstanceError,AttributeError)): obj.version="x"
 
 def test_authority_and_import_audit():

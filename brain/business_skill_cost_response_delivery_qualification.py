@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
+import json
 import re
 import unicodedata
 from typing import Any, Iterable
@@ -24,7 +26,10 @@ from brain.business_skill_cost_response_authorization import (
     AuthorizedCostResponseArtifact, CostResponseAuthorizationDecision,
 )
 
-QUALIFICATION_VERSION = "5.15.19"
+HISTORICAL_COST_DELIVERY_QUALIFICATION_VERSION = "5.15.19"
+COST_DELIVERY_QUALIFICATION_VERSION = "5.15.19.1"
+QUALIFICATION_VERSION = COST_DELIVERY_QUALIFICATION_VERSION
+BINDING_SCHEMA_VERSION = "5.15.19.1"
 READY_FOR_FEATURE_GATED_DELIVERY_INTEGRATION = "READY_FOR_FEATURE_GATED_DELIVERY_INTEGRATION"
 DELIVERY_INTEGRATION_NOT_READY = "DELIVERY_INTEGRATION_NOT_READY"
 ALL_DELIVERY_READINESS_GATES_PASSED = "ALL_DELIVERY_READINESS_GATES_PASSED"
@@ -86,12 +91,51 @@ class CostDeliveryQualificationRecommendation:
 class CostDeliveryQualificationDenial:
     reason_codes: tuple[str, ...]; first_failed_gate: str
 @dataclass(frozen=True)
+class CostDeliveryQualificationBinding:
+    binding_schema_version: str
+    qualification_version: str
+    qualification_id: str
+    reference_time: str
+    case_id: str
+    skill_id: str
+    adapter_version: str
+    adapter_request_id: str
+    adapter_outcome: str
+    payload_digest: str
+    payload_authorization_id: str
+    payload_presentation_id: str
+    payload_execution_id: str
+    payload_request_id: str
+    payload_skill_id: str
+    presentation_digest: str
+    draft_digest: str
+    scope: str
+    locale: str
+    target_channel: str
+    output_mode: str
+    recommendation: str
+    gate_snapshot: tuple[tuple[str, bool, tuple[str, ...]], ...]
+    reason_codes: tuple[str, ...]
+    response_generated: bool
+    response_committed: bool
+    runtime_routed: bool
+    persisted: bool
+    tools_invoked: bool
+    follow_up_generated: bool
+    business_reasoning_executed: bool
+    execution_performed: bool
+    calculation_performed: bool
+    presentation_rendered: bool
+    authorization_performed: bool
+    qualification_digest: str
+@dataclass(frozen=True)
 class CostDeliveryQualificationResult:
     qualification_id: str; reference_time: str; case_id: str; skill_id: str
     gate_results: tuple[CostDeliveryQualificationGateResult, ...]
     reason_codes: tuple[str, ...]
     recommendation: CostDeliveryQualificationRecommendation | None = None
     denial: CostDeliveryQualificationDenial | None = None
+    binding: CostDeliveryQualificationBinding | None = None
     runtime_routed: bool = False; response_delivered: bool = False
     response_generated: bool = False; response_committed: bool = False
     persisted: bool = False; tools_invoked: bool = False
@@ -109,6 +153,92 @@ def _valid_ref(value):
     try: parsed = datetime.fromisoformat(value)
     except ValueError: return False
     return parsed.tzinfo is not None
+
+_HEX = re.compile(r"^[0-9a-f]{64}$")
+_AUTHORITY_FIELDS = ("response_generated", "response_committed", "runtime_routed",
+    "persisted", "tools_invoked", "follow_up_generated", "business_reasoning_executed",
+    "execution_performed", "calculation_performed", "presentation_rendered",
+    "authorization_performed")
+
+def _canonical_reference_time(value):
+    parsed = datetime.fromisoformat(value)
+    return parsed.isoformat(timespec="seconds")
+
+def _binding_material(binding):
+    return {name: getattr(binding, name) for name in binding.__dataclass_fields__
+            if name != "qualification_digest"}
+
+def _binding_digest(material):
+    encoded = json.dumps(material, ensure_ascii=False, separators=(",", ":"),
+                         allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+def verify_cost_delivery_qualification_binding(binding: Any) -> bool:
+    try:
+        if type(binding) is not CostDeliveryQualificationBinding: return False
+        if (binding.binding_schema_version != BINDING_SCHEMA_VERSION or
+                binding.qualification_version != COST_DELIVERY_QUALIFICATION_VERSION): return False
+        if not _valid_ref(binding.reference_time) or binding.reference_time != _canonical_reference_time(binding.reference_time): return False
+        ids = (binding.qualification_id, binding.case_id, binding.skill_id,
+               binding.adapter_request_id, binding.payload_authorization_id,
+               binding.payload_presentation_id, binding.payload_execution_id,
+               binding.payload_request_id, binding.payload_skill_id)
+        if any(type(x) is not str or not _ID.fullmatch(x) for x in ids): return False
+        if binding.skill_id not in _SKILLS or binding.payload_skill_id != binding.skill_id: return False
+        if binding.adapter_version != COST_RESPONSE_ADAPTER_VERSION or binding.adapter_outcome != RESPONSE_PAYLOAD_PREPARED: return False
+        if any(type(x) is not str or not _HEX.fullmatch(x) for x in
+               (binding.payload_digest, binding.presentation_digest, binding.draft_digest,
+                binding.qualification_digest)): return False
+        if (binding.scope, binding.locale, binding.target_channel, binding.output_mode) != (
+                LIMITED_COST_RESPONSE, SUPPORTED_LOCALE, USER_TEXT_RESPONSE, PREPARED_ONLY): return False
+        if binding.recommendation != READY_FOR_FEATURE_GATED_DELIVERY_INTEGRATION: return False
+        if type(binding.gate_snapshot) is not tuple or len(binding.gate_snapshot) != len(GATE_ORDER): return False
+        if tuple(x[0] for x in binding.gate_snapshot) != GATE_ORDER or len(set(x[0] for x in binding.gate_snapshot)) != len(GATE_ORDER): return False
+        for item in binding.gate_snapshot:
+            if type(item) is not tuple or len(item) != 3 or type(item[1]) is not bool or type(item[2]) is not tuple: return False
+            if not item[1] or item[2] != ("PASSED",): return False
+        if binding.reason_codes != (ALL_DELIVERY_READINESS_GATES_PASSED,) or len(set(binding.reason_codes)) != len(binding.reason_codes): return False
+        if any(type(getattr(binding, x)) is not bool or getattr(binding, x) for x in _AUTHORITY_FIELDS): return False
+        return binding.qualification_digest == _binding_digest(_binding_material(binding))
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return False
+
+def verify_cost_delivery_qualification_result_integrity(result: Any) -> bool:
+    try:
+        if type(result) is not CostDeliveryQualificationResult: return False
+        if any(type(x) is not str or not _ID.fullmatch(x) for x in
+               (result.qualification_id, result.case_id, result.skill_id)): return False
+        if not _valid_ref(result.reference_time): return False
+        if tuple(g.gate for g in result.gate_results) != GATE_ORDER or len(set(g.gate for g in result.gate_results)) != len(GATE_ORDER): return False
+        if any(type(g) is not CostDeliveryQualificationGateResult or type(g.passed) is not bool or
+               type(g.reason_codes) is not tuple or not g.reason_codes or
+               len(set(g.reason_codes)) != len(g.reason_codes) or
+               any(type(code) is not str or not code for code in g.reason_codes) or
+               (g.passed != (g.reason_codes == ("PASSED",)))
+               for g in result.gate_results): return False
+        if type(result.reason_codes) is not tuple or not result.reason_codes or len(set(result.reason_codes)) != len(result.reason_codes): return False
+        qualified = result.recommendation == CostDeliveryQualificationRecommendation(
+            READY_FOR_FEATURE_GATED_DELIVERY_INTEGRATION, ALL_DELIVERY_READINESS_GATES_PASSED)
+        if qualified:
+            b = result.binding
+            return (result.denial is None and result.reason_codes == (ALL_DELIVERY_READINESS_GATES_PASSED,)
+                    and all(g.passed and g.reason_codes == ("PASSED",) for g in result.gate_results)
+                    and verify_cost_delivery_qualification_binding(b)
+                    and (b.qualification_id, b.reference_time, b.case_id, b.skill_id) ==
+                        (result.qualification_id, result.reference_time, result.case_id, result.skill_id)
+                    and b.gate_snapshot == tuple((g.gate, g.passed, g.reason_codes) for g in result.gate_results)
+                    and b.reason_codes == result.reason_codes
+                    and not any(getattr(result, x) for x in ("runtime_routed", "response_delivered",
+                        "response_generated", "response_committed", "persisted", "tools_invoked")))
+        failures = tuple(code for gate in result.gate_results for code in gate.reason_codes if code != "PASSED")
+        return (result.binding is None and result.recommendation is None and
+                type(result.denial) is CostDeliveryQualificationDenial and failures == result.reason_codes
+                and result.denial.reason_codes == result.reason_codes
+                and result.denial.first_failed_gate == next(g.gate for g in result.gate_results if not g.passed)
+                and not any(getattr(result, x) for x in ("runtime_routed", "response_delivered",
+                    "response_generated", "response_committed", "persisted", "tools_invoked")))
+    except (AttributeError, TypeError, ValueError, StopIteration):
+        return False
 
 def _qualify(case, qid, ref, policy, duplicate):
     typed = type(case) is CostDeliveryQualificationCase
@@ -160,7 +290,24 @@ def _qualify(case, qid, ref, policy, duplicate):
     skill=getattr(case,"skill_id","") if isinstance(getattr(case,"skill_id",None),str) else ""
     if failures: return CostDeliveryQualificationResult(qid,ref,cid,skill,gates,failures,denial=CostDeliveryQualificationDenial(failures,next(g.gate for g in gates if not g.passed)))
     rec=CostDeliveryQualificationRecommendation(READY_FOR_FEATURE_GATED_DELIVERY_INTEGRATION,ALL_DELIVERY_READINESS_GATES_PASSED)
-    return CostDeliveryQualificationResult(qid,ref,cid,skill,gates,(ALL_DELIVERY_READINESS_GATES_PASSED,),recommendation=rec)
+    reason_codes=(ALL_DELIVERY_READINESS_GATES_PASSED,)
+    canonical_ref=_canonical_reference_time(ref)
+    values=dict(binding_schema_version=BINDING_SCHEMA_VERSION,
+        qualification_version=COST_DELIVERY_QUALIFICATION_VERSION,
+        qualification_id=qid, reference_time=canonical_ref, case_id=cid, skill_id=skill,
+        adapter_version=payload.adapter_version, adapter_request_id=result.adapter_request_id,
+        adapter_outcome=result.outcome, payload_digest=payload.payload_digest,
+        payload_authorization_id=payload.source_authorization_id,
+        payload_presentation_id=payload.source_presentation_id,
+        payload_execution_id=payload.source_execution_id, payload_request_id=payload.source_request_id,
+        payload_skill_id=payload.source_skill_id, presentation_digest=payload.presentation_digest,
+        draft_digest=payload.draft_digest, scope=payload.scope, locale=payload.locale,
+        target_channel=payload.target_channel, output_mode=payload.output_mode,
+        recommendation=rec.recommendation,
+        gate_snapshot=tuple((g.gate,g.passed,g.reason_codes) for g in gates),
+        reason_codes=reason_codes, **{name:getattr(result,name) for name in _AUTHORITY_FIELDS})
+    binding=CostDeliveryQualificationBinding(**values,qualification_digest=_binding_digest(values))
+    return CostDeliveryQualificationResult(qid,canonical_ref,cid,skill,gates,reason_codes,recommendation=rec,binding=binding)
 
 def qualify_cost_response_delivery(cases: Iterable[Any], *, qualification_id: str, reference_time: str, policy: CostDeliveryQualificationPolicy|None=None):
     if not isinstance(qualification_id,str) or not _ID.fullmatch(qualification_id): raise ValueError("explicit valid qualification_id is required")
