@@ -47,6 +47,11 @@ from brain.conversation_understanding_engine import (
 )
 from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.production_turn_context import resolve_production_turn_context, verify_production_turn_context
+from brain.production_feature_gate_owner import (
+    LIMITED_COST_RESPONSE_RUNTIME_BRIDGE,
+    PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION,
+    resolve_production_feature_gate_evaluation,
+)
 from brain.production_response_candidate import (
     CLARIFICATION as RESPONSE_ORIGIN_CLARIFICATION,
     DIRECT_ANSWER as RESPONSE_ORIGIN_DIRECT_ANSWER,
@@ -2359,6 +2364,7 @@ def _reset_chat_session() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = conversation_id
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_feature_gate_evaluation"] = None
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
     st.session_state["current_production_turn_commit_receipt"] = None
@@ -2437,6 +2443,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("generated_revenue", None)
     st.session_state.setdefault("conversation_id", str(uuid4()))
     st.session_state.setdefault("current_production_turn_context", None)
+    st.session_state.setdefault("current_production_feature_gate_evaluation", None)
     st.session_state.setdefault("current_production_response_candidate", None)
     st.session_state.setdefault("current_production_final_response_resolution", None)
     st.session_state.setdefault("current_production_turn_commit_receipt", None)
@@ -2857,6 +2864,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_feature_gate_evaluation"] = None
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
     st.session_state["current_production_turn_commit_receipt"] = None
@@ -2885,6 +2893,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_feature_gate_evaluation"] = None
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
     st.session_state["current_production_turn_commit_receipt"] = None
@@ -5450,6 +5459,14 @@ def _show_chat_companion(
         st.session_state.get("conversation_id"),
         turn_ordinal,
         user_message,
+    )
+    st.session_state["current_production_feature_gate_evaluation"] = (
+        resolve_production_feature_gate_evaluation(
+            st.session_state.get("current_production_feature_gate_evaluation"),
+            PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION,
+            st.session_state["current_production_turn_context"],
+            LIMITED_COST_RESPONSE_RUNTIME_BRIDGE,
+        )
     )
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
