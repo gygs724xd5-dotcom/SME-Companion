@@ -46,7 +46,23 @@ from brain.conversation_understanding_engine import (
     understand_conversation,
 )
 from brain.cost_intent_isolation import is_strong_cost_calculation_message
-from brain.production_turn_context import resolve_production_turn_context
+from brain.production_turn_context import resolve_production_turn_context, verify_production_turn_context
+from brain.production_response_candidate import (
+    CLARIFICATION as RESPONSE_ORIGIN_CLARIFICATION,
+    DIRECT_ANSWER as RESPONSE_ORIGIN_DIRECT_ANSWER,
+    EXCEPTION_FALLBACK as RESPONSE_ORIGIN_EXCEPTION_FALLBACK,
+    GENERAL_RESPONSE as RESPONSE_ORIGIN_GENERAL_RESPONSE,
+    LEGACY_GUARDED as RESPONSE_ORIGIN_LEGACY_GUARDED,
+    PLANNER_FIRST as RESPONSE_ORIGIN_PLANNER_FIRST,
+    PRODUCT_FEEDBACK as RESPONSE_ORIGIN_PRODUCT_FEEDBACK,
+    RESET as RESPONSE_ORIGIN_RESET,
+    SIMPLE_FOLLOWUP as RESPONSE_ORIGIN_SIMPLE_FOLLOWUP,
+    STRUCTURED_RUNTIME as RESPONSE_ORIGIN_STRUCTURED_RUNTIME,
+    TEMPORARY_INTERRUPT as RESPONSE_ORIGIN_TEMPORARY_INTERRUPT,
+    WORKFLOW as RESPONSE_ORIGIN_WORKFLOW,
+    ORIGIN_KIND_REGISTRY,
+    create_production_response_candidate,
+)
 from brain.business_situation import (
     ACCOUNTING as BS_ACCOUNTING,
     ANALYTICAL as BS_ANALYTICAL,
@@ -1655,6 +1671,29 @@ def _resolve_assistant_reply(reply: str | None, response_source: str) -> tuple[s
     return EMPTY_CHAT_RESPONSE_FALLBACK, "empty_response_fallback", True
 
 
+def _record_turn_bound_response_candidate(
+    response_text: str,
+    candidate_origin: str,
+    *,
+    workflow_identity: str | None = None,
+    intent_identity: str | None = None,
+    topic_identity: str | None = None,
+):
+    """Expose provisional evidence without selecting, guarding, or committing it."""
+    context = st.session_state.get("current_production_turn_context")
+    candidate = create_production_response_candidate(
+        context,
+        candidate_origin,
+        ORIGIN_KIND_REGISTRY[candidate_origin],
+        response_text,
+        workflow_identity=workflow_identity or None,
+        intent_identity=intent_identity or None,
+        topic_identity=topic_identity or None,
+    )
+    st.session_state["current_production_response_candidate"] = candidate
+    return candidate
+
+
 def _source_when_workflow_response_blocked(route: dict | None) -> str:
     route = route or {}
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or {}
@@ -1732,8 +1771,15 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
         return
 
     fallback_reply, response_source, response_empty = _resolve_assistant_reply(None, "empty_response_fallback")
-    history = st.session_state.setdefault("chat_history", [])
+    context = st.session_state.get("current_production_turn_context")
     last_chat_input = st.session_state.get("last_chat_input")
+    if (
+        verify_production_turn_context(context)
+        and context.conversation_id == st.session_state.get("conversation_id")
+        and context.user_message == last_chat_input
+    ):
+        _record_turn_bound_response_candidate(fallback_reply, RESPONSE_ORIGIN_EXCEPTION_FALLBACK)
+    history = st.session_state.setdefault("chat_history", [])
     rendered_user = False
 
     if last_chat_input and not (
@@ -2238,6 +2284,7 @@ def _reset_chat_session() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = conversation_id
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_response_candidate"] = None
     st.session_state["conversation_state"] = _new_conversation_state()
     st.session_state["pending_followup"] = None
     st.session_state["last_reasoning"] = None
@@ -2313,6 +2360,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("generated_revenue", None)
     st.session_state.setdefault("conversation_id", str(uuid4()))
     st.session_state.setdefault("current_production_turn_context", None)
+    st.session_state.setdefault("current_production_response_candidate", None)
     st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("last_reasoning", None)
     st.session_state.setdefault("cached_prompt", None)
@@ -2730,6 +2778,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_response_candidate"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -2755,6 +2804,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_response_candidate"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -4818,9 +4868,19 @@ def _append_workflow_reply(
     topic: str | None = None,
     *,
     response_source_override: str | None = None,
+    candidate_origin: str | None = RESPONSE_ORIGIN_WORKFLOW,
 ) -> None:
     response_source = response_source_override or _workflow_response_source_for_current_route()
     reply, response_source, response_empty = _resolve_assistant_reply(reply, response_source)
+    if candidate_origin is not None:
+        candidate = _record_turn_bound_response_candidate(
+            reply,
+            candidate_origin,
+            workflow_identity=intent,
+            intent_identity=intent,
+            topic_identity=topic,
+        )
+        reply = candidate.response_text
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
     if intent == V2_WORKFLOW_COST_CALCULATION:
@@ -5209,7 +5269,7 @@ def _handle_quick_action_conversation(quick_action: str, profile: dict | None) -
                 "natural_response": response.get("natural_response"),
             },
         )
-        _append_workflow_reply(response["reply"], response["intent"], None)
+        _append_workflow_reply(response["reply"], response["intent"], None, candidate_origin=None)
         return
 
     if workflow_id == V2_WORKFLOW_RECEIPT_CAPTURE:
@@ -5220,7 +5280,7 @@ def _handle_quick_action_conversation(quick_action: str, profile: dict | None) -
             response["reply"],
             {"workflow_handler": "quick_action_receipt"},
         )
-        _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
+        _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป", candidate_origin=None)
         return
 
     if workflow_id == V2_WORKFLOW_DASHBOARD_REQUEST:
@@ -5231,7 +5291,7 @@ def _handle_quick_action_conversation(quick_action: str, profile: dict | None) -
             response["reply"],
             {"workflow_handler": "quick_action_dashboard"},
         )
-        _append_workflow_reply(response["reply"], response["intent"], "วิเคราะห์ร้าน")
+        _append_workflow_reply(response["reply"], response["intent"], "วิเคราะห์ร้าน", candidate_origin=None)
 
 
 def _show_chat_companion(
@@ -5306,6 +5366,7 @@ def _show_chat_companion(
         turn_ordinal,
         user_message,
     )
+    st.session_state["current_production_response_candidate"] = None
     if reset_command:
         evidence_shadow = _record_evidence_gap_shadow_diagnostics(
             user_message,
@@ -5331,6 +5392,8 @@ def _show_chat_companion(
         )
         reset_reply = "เริ่มบทสนทนาใหม่แล้วครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
         reset_reply, reset_source, reset_empty = _resolve_assistant_reply(reset_reply, "reset_response")
+        reset_candidate = _record_turn_bound_response_candidate(reset_reply, RESPONSE_ORIGIN_RESET)
+        reset_reply = reset_candidate.response_text
         add_pipeline_event(
             "response",
             "_show_chat_companion",
@@ -5461,6 +5524,13 @@ def _show_chat_companion(
         if continuation.get("event") == "temporary_interrupt":
             resume_prompt = _workflow_missing_reply(locked_workflow.get("state_machine") or {})
             reply = f"{datetime.now().strftime('%H:%M')} ครับ\n\nกลับมาต่อเรื่องเดิมนะครับ {resume_prompt}"
+            interrupt_candidate = _record_turn_bound_response_candidate(
+                reply,
+                RESPONSE_ORIGIN_TEMPORARY_INTERRUPT,
+                workflow_identity=locked_workflow.get("workflow_id"),
+                intent_identity=locked_workflow.get("workflow_id"),
+            )
+            reply = interrupt_candidate.response_text
             _update_conversation_state_after_assistant(reply, locked_workflow.get("workflow_id"), None)
             commit_assistant_turn(
                 reply,
@@ -5485,13 +5555,13 @@ def _show_chat_companion(
 
         if continuation.get("event") == "cancelled":
             reply = "ยกเลิกงานนี้ให้แล้วครับ"
-            _append_workflow_reply(reply, locked_workflow.get("workflow_id"), None)
+            _append_workflow_reply(reply, locked_workflow.get("workflow_id"), None, candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
             _finalize_ai_pipeline_debug_trace(debug_trace, "conversation_os_control", reply, {"planner_locked": True})
             return
 
         if continuation.get("event") == "paused":
             reply = "พักเรื่องนี้ไว้ก่อนครับ กลับมาบอกว่า “ทำต่อ” ได้เลย"
-            _append_workflow_reply(reply, locked_workflow.get("workflow_id"), None)
+            _append_workflow_reply(reply, locked_workflow.get("workflow_id"), None, candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
             _finalize_ai_pipeline_debug_trace(debug_trace, "conversation_os_control", reply, {"planner_locked": True})
             return
 
@@ -5517,13 +5587,13 @@ def _show_chat_companion(
                     "natural_response": response.get("natural_response"),
                 },
             )
-            _append_workflow_reply(response["reply"], response["intent"], None)
+            _append_workflow_reply(response["reply"], response["intent"], None, candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
             return
 
         if active_workflow_id == V2_WORKFLOW_RECEIPT_CAPTURE:
             response = _handle_receipt_workflow(user_message)
             _finalize_ai_pipeline_debug_trace(debug_trace, "workflow_response", response["reply"], {"workflow_handler": "conversation_os_receipt"})
-            _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
+            _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป", candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
             return
 
     understanding_state = _sync_session_to_application_state()
@@ -5650,6 +5720,12 @@ def _show_chat_companion(
     semantic_direct_reply = build_general_direct_response(user_message)
     if semantic_direct_reply:
         semantic_direct_reply = _clean_chat_reply(semantic_direct_reply, preserve_greeting=False)
+        semantic_candidate = _record_turn_bound_response_candidate(
+            semantic_direct_reply,
+            RESPONSE_ORIGIN_DIRECT_ANSWER,
+            intent_identity=conversation_intent,
+        )
+        semantic_direct_reply = semantic_candidate.response_text
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(semantic_direct_reply, conversation_intent, topic)
 
@@ -5703,6 +5779,12 @@ def _show_chat_companion(
     )
     if structured_runtime.get("handled"):
         reply = _clean_chat_reply(structured_runtime.get("reply"))
+        structured_candidate = _record_turn_bound_response_candidate(
+            reply,
+            RESPONSE_ORIGIN_STRUCTURED_RUNTIME,
+            intent_identity=conversation_intent,
+        )
+        reply = structured_candidate.response_text
         patch = structured_runtime.get("conversation_state_patch") or {}
         nested_context = patch.get("conversation_cognitive_context") or {}
         conversation_state.update({key: value for key, value in patch.items() if key != "conversation_cognitive_context"})
@@ -5768,6 +5850,7 @@ def _show_chat_companion(
             reply,
             WORKFLOW_RECEIPT_CAPTURE,
             "บิล / สลิป",
+            candidate_origin=RESPONSE_ORIGIN_WORKFLOW,
         )
         return
 
@@ -5790,12 +5873,19 @@ def _show_chat_companion(
             reply,
             planner_first.get("intent") or conversation_intent,
             planner_first.get("topic") or state.get("current_topic"),
+            candidate_origin=RESPONSE_ORIGIN_PLANNER_FIRST,
         )
         return
 
     clarification_authority = task_route.get("clarification_authority") or {}
     if clarification_authority.get("decision") == "USE_SPECIFIC_CLARIFICATION":
         reply = _clean_chat_reply(clarification_authority.get("clarification_text"))
+        clarification_candidate = _record_turn_bound_response_candidate(
+            reply,
+            RESPONSE_ORIGIN_CLARIFICATION,
+            intent_identity=conversation_intent,
+        )
+        reply = clarification_candidate.response_text
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(reply, conversation_intent, topic)
         assistant_message = {
@@ -5961,6 +6051,12 @@ def _show_chat_companion(
 
     if direct_reply:
         direct_reply = _clean_chat_reply(direct_reply, preserve_greeting=False)
+        direct_candidate = _record_turn_bound_response_candidate(
+            direct_reply,
+            RESPONSE_ORIGIN_DIRECT_ANSWER,
+            intent_identity=conversation_intent,
+        )
+        direct_reply = direct_candidate.response_text
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(direct_reply, conversation_intent, topic)
         assistant_message = {
@@ -6046,6 +6142,7 @@ def _show_chat_companion(
             response["reply"],
             response["intent"],
             topic_labels.get(response["intent"]),
+            candidate_origin=RESPONSE_ORIGIN_WORKFLOW,
         )
         return
 
@@ -6056,25 +6153,25 @@ def _show_chat_companion(
     }:
         response = _handle_cost_workflow(user_message, starting=False)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "cost_legacy_continue"})
-        _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
+        _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน", candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
         return
 
     if not planner_workflow_v2 and detected_workflow == WORKFLOW_COST_CALCULATION:
         response = _handle_cost_workflow(user_message, starting=True)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "cost_legacy_start"})
-        _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน")
+        _append_workflow_reply(response["reply"], response["intent"], "คำนวณต้นทุน", candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
         return
 
     if not planner_workflow_v2 and detected_workflow == WORKFLOW_DASHBOARD_REQUEST:
         response = _handle_dashboard_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "dashboard_legacy"})
-        _append_workflow_reply(response["reply"], response["intent"], "แดชบอร์ดร้านค้า")
+        _append_workflow_reply(response["reply"], response["intent"], "แดชบอร์ดร้านค้า", candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
         return
 
     if not planner_workflow_v2 and detected_workflow == WORKFLOW_RECEIPT_CAPTURE:
         response = _handle_receipt_workflow(user_message)
         finalize_debug("workflow_response", response["reply"], {"workflow_handler": "receipt_legacy"})
-        _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป")
+        _append_workflow_reply(response["reply"], response["intent"], "บิล / สลิป", candidate_origin=RESPONSE_ORIGIN_WORKFLOW)
         return
 
     demo_mode = bool(st.session_state.get("demo_mode"))
@@ -6148,6 +6245,7 @@ def _show_chat_companion(
                     response["reply"],
                     response["intent"],
                     "คำนวณต้นทุน",
+                    candidate_origin=RESPONSE_ORIGIN_WORKFLOW,
                 )
                 return
             st.session_state["last_prompt_context"] = general_llm_context
@@ -6179,6 +6277,12 @@ def _show_chat_companion(
             _clean_chat_reply(general_reply),
             general_source,
         )
+        general_candidate = _record_turn_bound_response_candidate(
+            general_reply,
+            RESPONSE_ORIGIN_GENERAL_RESPONSE,
+            intent_identity=conversation_intent,
+        )
+        general_reply = general_candidate.response_text
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(general_reply, conversation_intent, topic)
         assistant_message = {
@@ -6238,6 +6342,12 @@ def _show_chat_companion(
 
     if simple_reply:
         simple_reply = _clean_chat_reply(simple_reply, preserve_greeting=conversation_intent == "GREETING")
+        simple_candidate = _record_turn_bound_response_candidate(
+            simple_reply,
+            RESPONSE_ORIGIN_SIMPLE_FOLLOWUP,
+            intent_identity=conversation_intent,
+        )
+        simple_reply = simple_candidate.response_text
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(simple_reply, conversation_intent, topic)
         assistant_message = {
@@ -6288,6 +6398,13 @@ def _show_chat_companion(
             response.get("reply"),
             "planner_response",
         )
+        product_candidate = _record_turn_bound_response_candidate(
+            response["reply"],
+            RESPONSE_ORIGIN_PRODUCT_FEEDBACK,
+            intent_identity=conversation_intent,
+            topic_identity="Product Feedback",
+        )
+        response["reply"] = product_candidate.response_text
         assistant_message = {
             "role": "assistant",
             "content": response["reply"],
@@ -6517,6 +6634,14 @@ def _show_chat_companion(
         _clean_chat_reply(response.get("reply")),
         response_source,
     )
+    legacy_candidate = _record_turn_bound_response_candidate(
+        response["reply"],
+        RESPONSE_ORIGIN_LEGACY_GUARDED,
+        workflow_identity=(task_route.get("intent_resolution") or {}).get("resolved_workflow"),
+        intent_identity=response.get("intent") or conversation_intent,
+        topic_identity=state.get("current_topic"),
+    )
+    response["reply"] = legacy_candidate.response_text
     guarded_response = guard_response(response["reply"], task_route, st.session_state["chat_history"])
     if guarded_response.get("changed"):
         response_candidates.append({"source": "guard_response", "text": guarded_response.get("reply")})
