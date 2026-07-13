@@ -70,6 +70,10 @@ from brain.production_final_response_resolution import (
     get_resolution_policy_for_origin,
     verify_production_final_response_resolution,
 )
+from brain.production_turn_commit_receipt import (
+    TURN_BOUND_EXCEPTION_COMMIT,
+    create_production_turn_commit_receipt,
+)
 from brain.business_situation import (
     ACCOUNTING as BS_ACCOUNTING,
     ANALYTICAL as BS_ANALYTICAL,
@@ -1801,6 +1805,7 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
     fallback_reply, response_source, response_empty = _resolve_assistant_reply(None, "empty_response_fallback")
     context = st.session_state.get("current_production_turn_context")
     last_chat_input = st.session_state.get("last_chat_input")
+    turn_bound_exception = False
     if (
         verify_production_turn_context(context)
         and context.conversation_id == st.session_state.get("conversation_id")
@@ -1808,6 +1813,14 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
     ):
         fallback_candidate = _record_turn_bound_response_candidate(fallback_reply, RESPONSE_ORIGIN_EXCEPTION_FALLBACK)
         fallback_reply = resolve_turn_bound_final_response(context, fallback_candidate)
+        fallback_resolution = st.session_state.get("current_production_final_response_resolution")
+        existing_receipt = st.session_state.get("current_production_turn_commit_receipt")
+        turn_bound_exception = (
+            verify_production_response_candidate(fallback_candidate, context)
+            and verify_production_final_response_resolution(fallback_resolution, fallback_candidate, context)
+            and fallback_resolution.resolved_text == fallback_reply
+            and existing_receipt is None
+        )
     history = st.session_state.setdefault("chat_history", [])
     rendered_user = False
 
@@ -1819,7 +1832,25 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
         history.append({"role": "user", "content": last_chat_input})
         rendered_user = True
 
-    if not history or history[-1].get("role") != "assistant":
+    if turn_bound_exception:
+        commit_assistant_turn(
+            fallback_reply,
+            response_metadata={
+                "response_source": response_source,
+                "last_response_empty": response_empty,
+                "user_message": context.user_message,
+                "commit_kind": TURN_BOUND_EXCEPTION_COMMIT,
+                "commit_reason": "VERIFIED_TURN_BOUND_EXCEPTION_FALLBACK",
+            },
+            assistant_message={"role": "assistant", "show_business_insights": False},
+        )
+        add_pipeline_event(
+            "response",
+            "_handle_chat_pipeline_exception",
+            "assistant message appended",
+            {"response_source": response_source, "last_response_empty": response_empty},
+        )
+    elif not history or history[-1].get("role") != "assistant":
         history.append({"role": "assistant", "content": fallback_reply, "show_business_insights": False})
         add_pipeline_event(
             "response",
@@ -1890,6 +1921,17 @@ def commit_assistant_turn(
     response_metadata: dict | None = None,
     assistant_message: dict | None = None,
 ) -> dict:
+    context = st.session_state.get("current_production_turn_context")
+    candidate = st.session_state.get("current_production_response_candidate")
+    resolution = st.session_state.get("current_production_final_response_resolution")
+    canonical_turn_commit = (
+        verify_production_turn_context(context)
+        and verify_production_response_candidate(candidate, context)
+        and verify_production_final_response_resolution(resolution, candidate, context)
+        and resolution.resolved_text == final_reply
+    )
+    if canonical_turn_commit and st.session_state.get("current_production_turn_commit_receipt") is not None:
+        raise RuntimeError("production turn response already committed")
     state = _get_application_state()
     result = commit_response_boundary(
         session_state=st.session_state,
@@ -1901,6 +1943,10 @@ def commit_assistant_turn(
         response_metadata=response_metadata,
         assistant_message=assistant_message,
     )
+    if canonical_turn_commit:
+        st.session_state["current_production_turn_commit_receipt"] = (
+            create_production_turn_commit_receipt(context, candidate, resolution, final_reply)
+        )
     _refresh_cognitive_authority_audit(
         response_source=(response_metadata or {}).get("response_source"),
         fallback_selected="fallback" in str((response_metadata or {}).get("response_source") or ""),
@@ -2315,6 +2361,7 @@ def _reset_chat_session() -> None:
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
+    st.session_state["current_production_turn_commit_receipt"] = None
     st.session_state["conversation_state"] = _new_conversation_state()
     st.session_state["pending_followup"] = None
     st.session_state["last_reasoning"] = None
@@ -2392,6 +2439,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("current_production_turn_context", None)
     st.session_state.setdefault("current_production_response_candidate", None)
     st.session_state.setdefault("current_production_final_response_resolution", None)
+    st.session_state.setdefault("current_production_turn_commit_receipt", None)
     st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("last_reasoning", None)
     st.session_state.setdefault("cached_prompt", None)
@@ -2811,6 +2859,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
+    st.session_state["current_production_turn_commit_receipt"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -2838,6 +2887,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
+    st.session_state["current_production_turn_commit_receipt"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -5403,6 +5453,7 @@ def _show_chat_companion(
     )
     st.session_state["current_production_response_candidate"] = None
     st.session_state["current_production_final_response_resolution"] = None
+    st.session_state["current_production_turn_commit_receipt"] = None
     if reset_command:
         evidence_shadow = _record_evidence_gap_shadow_diagnostics(
             user_message,
