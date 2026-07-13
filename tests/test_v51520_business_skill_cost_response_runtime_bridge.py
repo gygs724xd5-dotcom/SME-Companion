@@ -27,6 +27,7 @@ def test_positive_exact_deterministic_handoff_for_both_skills(skill,suffix):
     assert verify_cost_runtime_handoff_integrity(first.handoff)
     assert verify_cost_runtime_bridge_result_integrity(first)
     assert first.runtime_handoff_prepared and first.feature_gate_passed and first.source_delivery_ready
+    assert first.feature_gate_name==first.handoff.feature_gate_name==FEATURE_GATE_NAME
     assert not any(getattr(first,x) for x in ("runtime_routed","response_generated","response_delivered",
         "response_committed","persisted","tools_invoked","follow_up_generated",
         "business_reasoning_executed","skill_executed","calculated","presentation_generated",
@@ -43,7 +44,8 @@ def test_feature_gate_fail_closed(gates,reason):
 def test_default_policy_disabled_deny_by_default_and_exact_versions():
     p=CostRuntimeBridgePolicy()
     assert not p.enabled_by_default and p.deny_by_default
-    assert (p.bridge_version,p.required_adapter_version,p.required_qualification_version,p.required_binding_schema_version,p.required_authorization_version,p.registry_version)==("5.15.20","5.15.18","5.15.19.1","5.15.19.1","5.15.17.1","5.15.13")
+    assert HISTORICAL_COST_RUNTIME_BRIDGE_VERSION=="5.15.20"
+    assert (p.bridge_version,p.required_adapter_version,p.required_qualification_version,p.required_binding_schema_version,p.required_authorization_version,p.registry_version)==("5.15.20.1","5.15.18","5.15.19.1","5.15.19.1","5.15.17.1","5.15.13")
 
 @pytest.mark.parametrize("mutator,reason",(
     (lambda r:dataclasses.replace(r,qualification_result=None),"QUALIFICATION_RESULT_INTEGRITY_FAILED"),
@@ -111,6 +113,7 @@ def test_denied_invalid_results_never_have_usable_handoff():
     for req in (None,request(feature_gates={FEATURE_GATE_NAME:False}),request(adapter_result=None)):
         result=bridge_prepared_cost_response(req)
         assert result.handoff is None and not result.runtime_handoff_prepared
+        assert result.feature_gate_name is None and not result.feature_gate_passed
 
 def test_no_forbidden_imports_calls_state_or_environment_fallback():
     source=(Path(__file__).parents[1]/"brain"/"business_skill_cost_response_runtime_bridge.py").read_text(encoding="utf-8")
