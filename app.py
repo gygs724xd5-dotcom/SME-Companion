@@ -62,6 +62,13 @@ from brain.production_response_candidate import (
     WORKFLOW as RESPONSE_ORIGIN_WORKFLOW,
     ORIGIN_KIND_REGISTRY,
     create_production_response_candidate,
+    verify_production_response_candidate,
+)
+from brain.production_final_response_resolution import (
+    LEGACY_RESPONSE_GUARD,
+    create_production_final_response_resolution,
+    get_resolution_policy_for_origin,
+    verify_production_final_response_resolution,
 )
 from brain.business_situation import (
     ACCOUNTING as BS_ACCOUNTING,
@@ -1694,6 +1701,27 @@ def _record_turn_bound_response_candidate(
     return candidate
 
 
+def resolve_turn_bound_final_response(context, candidate, *, existing_guard_result=None) -> str:
+    """App-owned final-text owner; it never selects, guards, persists, or commits."""
+    if not verify_production_turn_context(context):
+        raise ValueError("invalid current production turn context")
+    if not verify_production_response_candidate(candidate, context):
+        raise ValueError("invalid current production response candidate")
+    policy = get_resolution_policy_for_origin(candidate.candidate_origin)
+    kwargs = {}
+    if policy is LEGACY_RESPONSE_GUARD:
+        if type(existing_guard_result) is not str:
+            raise ValueError("legacy guarded text must be supplied by the existing guard control flow")
+        kwargs = {"resolved_text": existing_guard_result, "existing_guard_applied": True}
+    elif existing_guard_result is not None:
+        raise ValueError("guard result is valid only for the legacy guarded origin")
+    resolution = create_production_final_response_resolution(context, candidate, **kwargs)
+    if not verify_production_final_response_resolution(resolution, candidate, context):
+        raise ValueError("canonical final response resolution verification failed")
+    st.session_state["current_production_final_response_resolution"] = resolution
+    return resolution.resolved_text
+
+
 def _source_when_workflow_response_blocked(route: dict | None) -> str:
     route = route or {}
     workflow = route.get("business_workflow") or ((route.get("business_context") or {}).get("workflow_intelligence")) or {}
@@ -1778,7 +1806,8 @@ def _handle_chat_pipeline_exception(error: Exception) -> None:
         and context.conversation_id == st.session_state.get("conversation_id")
         and context.user_message == last_chat_input
     ):
-        _record_turn_bound_response_candidate(fallback_reply, RESPONSE_ORIGIN_EXCEPTION_FALLBACK)
+        fallback_candidate = _record_turn_bound_response_candidate(fallback_reply, RESPONSE_ORIGIN_EXCEPTION_FALLBACK)
+        fallback_reply = resolve_turn_bound_final_response(context, fallback_candidate)
     history = st.session_state.setdefault("chat_history", [])
     rendered_user = False
 
@@ -2285,6 +2314,7 @@ def _reset_chat_session() -> None:
     st.session_state["conversation_id"] = conversation_id
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_response_candidate"] = None
+    st.session_state["current_production_final_response_resolution"] = None
     st.session_state["conversation_state"] = _new_conversation_state()
     st.session_state["pending_followup"] = None
     st.session_state["last_reasoning"] = None
@@ -2361,6 +2391,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("conversation_id", str(uuid4()))
     st.session_state.setdefault("current_production_turn_context", None)
     st.session_state.setdefault("current_production_response_candidate", None)
+    st.session_state.setdefault("current_production_final_response_resolution", None)
     st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("last_reasoning", None)
     st.session_state.setdefault("cached_prompt", None)
@@ -2779,6 +2810,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_response_candidate"] = None
+    st.session_state["current_production_final_response_resolution"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -2805,6 +2837,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_response_candidate"] = None
+    st.session_state["current_production_final_response_resolution"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -4880,7 +4913,9 @@ def _append_workflow_reply(
             intent_identity=intent,
             topic_identity=topic,
         )
-        reply = candidate.response_text
+        reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), candidate
+        )
     assistant_message = {"role": "assistant", "content": reply, "show_business_insights": False}
     _update_conversation_state_after_assistant(reply, intent, topic)
     if intent == V2_WORKFLOW_COST_CALCULATION:
@@ -5367,6 +5402,7 @@ def _show_chat_companion(
         user_message,
     )
     st.session_state["current_production_response_candidate"] = None
+    st.session_state["current_production_final_response_resolution"] = None
     if reset_command:
         evidence_shadow = _record_evidence_gap_shadow_diagnostics(
             user_message,
@@ -5393,7 +5429,9 @@ def _show_chat_companion(
         reset_reply = "เริ่มบทสนทนาใหม่แล้วครับ\n\nวันนี้อยากให้ช่วยเรื่องอะไรครับ"
         reset_reply, reset_source, reset_empty = _resolve_assistant_reply(reset_reply, "reset_response")
         reset_candidate = _record_turn_bound_response_candidate(reset_reply, RESPONSE_ORIGIN_RESET)
-        reset_reply = reset_candidate.response_text
+        reset_reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), reset_candidate
+        )
         add_pipeline_event(
             "response",
             "_show_chat_companion",
@@ -5530,7 +5568,9 @@ def _show_chat_companion(
                 workflow_identity=locked_workflow.get("workflow_id"),
                 intent_identity=locked_workflow.get("workflow_id"),
             )
-            reply = interrupt_candidate.response_text
+            reply = resolve_turn_bound_final_response(
+                st.session_state.get("current_production_turn_context"), interrupt_candidate
+            )
             _update_conversation_state_after_assistant(reply, locked_workflow.get("workflow_id"), None)
             commit_assistant_turn(
                 reply,
@@ -5725,7 +5765,9 @@ def _show_chat_companion(
             RESPONSE_ORIGIN_DIRECT_ANSWER,
             intent_identity=conversation_intent,
         )
-        semantic_direct_reply = semantic_candidate.response_text
+        semantic_direct_reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), semantic_candidate
+        )
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(semantic_direct_reply, conversation_intent, topic)
 
@@ -5784,7 +5826,9 @@ def _show_chat_companion(
             RESPONSE_ORIGIN_STRUCTURED_RUNTIME,
             intent_identity=conversation_intent,
         )
-        reply = structured_candidate.response_text
+        reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), structured_candidate
+        )
         patch = structured_runtime.get("conversation_state_patch") or {}
         nested_context = patch.get("conversation_cognitive_context") or {}
         conversation_state.update({key: value for key, value in patch.items() if key != "conversation_cognitive_context"})
@@ -5885,7 +5929,9 @@ def _show_chat_companion(
             RESPONSE_ORIGIN_CLARIFICATION,
             intent_identity=conversation_intent,
         )
-        reply = clarification_candidate.response_text
+        reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), clarification_candidate
+        )
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(reply, conversation_intent, topic)
         assistant_message = {
@@ -6056,7 +6102,9 @@ def _show_chat_companion(
             RESPONSE_ORIGIN_DIRECT_ANSWER,
             intent_identity=conversation_intent,
         )
-        direct_reply = direct_candidate.response_text
+        direct_reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), direct_candidate
+        )
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(direct_reply, conversation_intent, topic)
         assistant_message = {
@@ -6282,7 +6330,9 @@ def _show_chat_companion(
             RESPONSE_ORIGIN_GENERAL_RESPONSE,
             intent_identity=conversation_intent,
         )
-        general_reply = general_candidate.response_text
+        general_reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), general_candidate
+        )
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(general_reply, conversation_intent, topic)
         assistant_message = {
@@ -6347,7 +6397,9 @@ def _show_chat_companion(
             RESPONSE_ORIGIN_SIMPLE_FOLLOWUP,
             intent_identity=conversation_intent,
         )
-        simple_reply = simple_candidate.response_text
+        simple_reply = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), simple_candidate
+        )
         topic = state.get("current_topic")
         _update_conversation_state_after_assistant(simple_reply, conversation_intent, topic)
         assistant_message = {
@@ -6404,7 +6456,9 @@ def _show_chat_companion(
             intent_identity=conversation_intent,
             topic_identity="Product Feedback",
         )
-        response["reply"] = product_candidate.response_text
+        response["reply"] = resolve_turn_bound_final_response(
+            st.session_state.get("current_production_turn_context"), product_candidate
+        )
         assistant_message = {
             "role": "assistant",
             "content": response["reply"],
@@ -6650,6 +6704,11 @@ def _show_chat_companion(
             "response_guard",
         )
         response["intent"] = guarded_response.get("intent") or response.get("intent")
+    response["reply"] = resolve_turn_bound_final_response(
+        st.session_state.get("current_production_turn_context"),
+        legacy_candidate,
+        existing_guard_result=response["reply"],
+    )
     if response.get("suggested_action"):
         response["suggested_action"] = localize_internal_labels(response["suggested_action"])
     if response.get("related_feature"):
