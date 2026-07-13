@@ -18,8 +18,9 @@ def evidence(skill="cost.change_analysis.v1", suffix="71"):
 def test_happy_path_is_immutable_canonical_evidence(skill, suffix):
     result = qualify_controlled_runtime_integration(evidence(skill, suffix))
     assert result.qualified and result.reasons == (QUALIFIED_FOR_CONTROLLED_INTEGRATION,)
-    assert result.qualification_version == "5.15.21" and result.registry_version == "5.15.13"
-    assert result.runtime_bridge_version == COST_RUNTIME_BRIDGE_VERSION == "5.15.20.1"
+    assert HISTORICAL_QUALIFICATION_VERSION == "5.15.21"
+    assert result.qualification_version == "5.15.22.1" and result.registry_version == "5.15.13"
+    assert result.runtime_bridge_version == COST_RUNTIME_BRIDGE_VERSION == "5.15.22.1"
     assert result.feature_gate_name == FEATURE_GATE_NAME and result.feature_gate_passed
     assert result.provenance_verified and result.authority_boundary_verified
     assert verify_controlled_runtime_integration_qualification(result)

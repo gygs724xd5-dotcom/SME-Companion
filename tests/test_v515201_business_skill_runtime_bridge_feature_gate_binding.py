@@ -12,7 +12,7 @@ def test_exact_gate_identity_is_bound_for_both_skills(skill,suffix):
     req=request(skill,suffix); before=dict(req.feature_gates)
     one=bridge_prepared_cost_response(req); two=bridge_prepared_cost_response(req)
     assert one==two and one.result_digest==two.result_digest
-    assert one.bridge_version==COST_RUNTIME_BRIDGE_VERSION=="5.15.20.1"
+    assert one.bridge_version==COST_RUNTIME_BRIDGE_VERSION=="5.15.22.1"
     assert one.feature_gate_name==one.handoff.feature_gate_name==FEATURE_GATE_NAME
     assert one.feature_gate_passed and one.handoff.feature_gate_passed
     assert req.feature_gates==before

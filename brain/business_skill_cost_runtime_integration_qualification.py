@@ -19,7 +19,8 @@ from brain.business_skill_cost_response_runtime_bridge import (
     verify_cost_runtime_handoff_integrity,
 )
 
-QUALIFICATION_VERSION = "5.15.21"
+HISTORICAL_QUALIFICATION_VERSION = "5.15.21"
+QUALIFICATION_VERSION = "5.15.22.1"
 REGISTRY_VERSION = "5.15.13"
 SUPPORTED_SKILL_IDS = ("cost.change_analysis.v1", "cost.per_unit_calculation.v1")
 QUALIFIED_FOR_CONTROLLED_INTEGRATION = "QUALIFIED_FOR_CONTROLLED_INTEGRATION"
@@ -60,6 +61,7 @@ class ControlledRuntimeIntegrationQualification:
     handoff_digest: str
     result_digest: str
     request_id: str
+    request_digest: str
     payload_digest: str
     provenance_verified: bool
     authority_boundary_verified: bool
@@ -96,7 +98,8 @@ def _snapshot(value):
         "feature_gate_name": value.feature_gate_name,
         "feature_gate_passed": value.feature_gate_passed,
         "handoff_digest": value.handoff_digest, "result_digest": value.result_digest,
-        "request_id": value.request_id, "payload_digest": value.payload_digest,
+        "request_id": value.request_id, "request_digest": value.request_digest,
+        "payload_digest": value.payload_digest,
         "provenance_verified": value.provenance_verified,
         "authority_boundary_verified": value.authority_boundary_verified,
         "gate_results": tuple((g.gate, g.passed, g.reasons) for g in value.gate_results),
@@ -129,9 +132,9 @@ def _evaluate(item):
     groups.append([] if result_ok and bridge.outcome == RUNTIME_HANDOFF_PREPARED else ["INVALID_RUNTIME_BRIDGE_RESULT"])
     provenance = bool(delivery_ok and result_ok and binding is not None and handoff is not None and
         (handoff.qualification_id, handoff.qualification_digest, handoff.skill_id,
-         handoff.payload_digest, handoff.request_id) ==
+         handoff.payload_digest, handoff.request_id, handoff.request_digest) ==
         (binding.qualification_id, binding.qualification_digest, binding.skill_id,
-         binding.payload_digest, binding.payload_request_id))
+         binding.payload_digest, binding.payload_request_id, bridge.request_digest))
     groups.append([] if provenance else ["PROVENANCE_MISMATCH"])
     substitution = bool(provenance and handoff.adapter_request_id == binding.adapter_request_id and
         handoff.presentation_digest == binding.presentation_digest and handoff.draft_digest == binding.draft_digest)
@@ -153,7 +156,8 @@ def _evaluate(item):
         feature_gate_name=getattr(bridge, "feature_gate_name", "") or "",
         feature_gate_passed=getattr(bridge, "feature_gate_passed", False) is True,
         handoff_digest=getattr(handoff, "handoff_digest", ""), result_digest=getattr(bridge, "result_digest", ""),
-        request_id=getattr(handoff, "request_id", ""), payload_digest=getattr(handoff, "payload_digest", ""),
+        request_id=getattr(handoff, "request_id", ""), request_digest=getattr(bridge, "request_digest", ""),
+        payload_digest=getattr(handoff, "payload_digest", ""),
         provenance_verified=provenance, authority_boundary_verified=authority,
         gate_results=gates, qualified=qualified, reasons=reasons,
         diagnostics=(("semantics", "QUALIFICATION_EVIDENCE_ONLY"),
@@ -187,7 +191,8 @@ def verify_controlled_runtime_integration_qualification(value: Any) -> bool:
             not value.qualified or not value.provenance_verified or
             not value.authority_boundary_verified or
             any(not _HEX.fullmatch(x) for x in (value.delivery_qualification_digest,
-                value.handoff_digest, value.result_digest, value.payload_digest))): return False
+                value.handoff_digest, value.result_digest, value.request_digest,
+                value.payload_digest))): return False
         expected = _evaluate(ControlledRuntimeQualificationInput(value.skill_id,
             value.delivery_qualification, value.runtime_bridge_result))
         return value == expected and value.qualification_digest == _digest(_snapshot(value))

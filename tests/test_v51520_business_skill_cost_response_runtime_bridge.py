@@ -45,7 +45,8 @@ def test_default_policy_disabled_deny_by_default_and_exact_versions():
     p=CostRuntimeBridgePolicy()
     assert not p.enabled_by_default and p.deny_by_default
     assert HISTORICAL_COST_RUNTIME_BRIDGE_VERSION=="5.15.20"
-    assert (p.bridge_version,p.required_adapter_version,p.required_qualification_version,p.required_binding_schema_version,p.required_authorization_version,p.registry_version)==("5.15.20.1","5.15.18","5.15.19.1","5.15.19.1","5.15.17.1","5.15.13")
+    assert HISTORICAL_FEATURE_GATE_BOUND_BRIDGE_VERSION=="5.15.20.1"
+    assert (p.bridge_version,p.required_adapter_version,p.required_qualification_version,p.required_binding_schema_version,p.required_authorization_version,p.registry_version)==("5.15.22.1","5.15.18","5.15.19.1","5.15.19.1","5.15.17.1","5.15.13")
 
 @pytest.mark.parametrize("mutator,reason",(
     (lambda r:dataclasses.replace(r,qualification_result=None),"QUALIFICATION_RESULT_INTEGRITY_FAILED"),

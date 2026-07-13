@@ -32,7 +32,9 @@ from brain.business_skill_cost_response_delivery_qualification import (
 )
 
 HISTORICAL_COST_RUNTIME_BRIDGE_VERSION = "5.15.20"
-COST_RUNTIME_BRIDGE_VERSION = "5.15.20.1"
+HISTORICAL_FEATURE_GATE_BOUND_BRIDGE_VERSION = "5.15.20.1"
+COST_RUNTIME_BRIDGE_VERSION = "5.15.22.1"
+REQUEST_INTEGRITY_SCHEMA_VERSION = "5.15.22.1"
 SUPPORTED_REGISTRY_VERSION = "5.15.13"
 FEATURE_GATE_NAME = "LIMITED_COST_RESPONSE_RUNTIME_BRIDGE"
 FEATURE_GATED_HANDOFF_ONLY = "FEATURE_GATED_HANDOFF_ONLY"
@@ -94,6 +96,17 @@ class CostRuntimeBridgeRequest:
     presentation_generated: Any = False; response_authorized: Any = False
 
 @dataclass(frozen=True)
+class CostRuntimeBridgeRequestEvidence:
+    bridge_request_id: str; feature_gates: tuple[tuple[str,bool], ...]
+    adapter_result: Any; qualification_result: Any
+    scope: str; channel: str; input_mode: str; handoff_mode: str
+    runtime_routed: bool; response_generated: bool; response_delivered: bool
+    response_committed: bool; persisted: bool; tools_invoked: bool
+    follow_up_generated: bool; business_reasoning_executed: bool
+    skill_executed: bool; calculated: bool; presentation_generated: bool
+    response_authorized: bool
+
+@dataclass(frozen=True)
 class CostRuntimeBridgeGateResult:
     gate: str; passed: bool; reason_codes: tuple[str,...]
 
@@ -103,7 +116,7 @@ class CostRuntimeHandoff:
     qualification_id: str; qualification_digest: str; adapter_version: str
     adapter_request_id: str; payload_digest: str; authorization_version: str
     authorization_id: str; presentation_id: str; execution_id: str
-    request_id: str; skill_id: str; registry_version: str; scope: str
+    request_id: str; request_digest: str; skill_id: str; registry_version: str; scope: str
     locale: str; channel: str; input_mode: str; handoff_mode: str; text: str
     presentation_digest: str; draft_digest: str
     runtime_handoff_prepared: bool; feature_gate_name: str; feature_gate_passed: bool; source_delivery_ready: bool
@@ -122,6 +135,7 @@ class CostRuntimeBridgeResult:
     bridge_version: str; bridge_request_id: str; outcome: str
     gate_results: tuple[CostRuntimeBridgeGateResult,...]; reason_codes: tuple[str,...]
     handoff: CostRuntimeHandoff|None = None; denial: CostRuntimeBridgeDenial|None = None
+    canonical_request: CostRuntimeBridgeRequestEvidence|None = None; request_digest: str = ""
     runtime_handoff_prepared: bool = False; feature_gate_name: str|None = None
     feature_gate_passed: bool = False
     source_delivery_ready: bool = False
@@ -148,6 +162,38 @@ def _gate(name,reasons):
     codes=tuple(dict.fromkeys(reasons)); return CostRuntimeBridgeGateResult(name,not codes,codes or ("PASSED",))
 def _unsafe(text): return any(c!="\n" and unicodedata.category(c)=="Cc" for c in text)
 
+def compute_cost_runtime_bridge_request_digest(request: Any) -> str:
+    """Return a digest only for a complete, strictly verifiable request artifact."""
+    try:
+        if type(request) not in (CostRuntimeBridgeRequest,CostRuntimeBridgeRequestEvidence): return ""
+        if type(request.bridge_request_id) is not str or not _ID.fullmatch(request.bridge_request_id): return ""
+        if type(request) is CostRuntimeBridgeRequest:
+            if (type(request.feature_gates) is not dict or set(request.feature_gates) != {FEATURE_GATE_NAME}
+                    or type(request.feature_gates[FEATURE_GATE_NAME]) is not bool): return ""
+            gate_state=request.feature_gates[FEATURE_GATE_NAME]
+        else:
+            if request.feature_gates not in (((FEATURE_GATE_NAME,True),),((FEATURE_GATE_NAME,False),)): return ""
+            gate_state=request.feature_gates[0][1]
+        if not verify_cost_response_adapter_result_integrity(request.adapter_result): return ""
+        if not verify_cost_delivery_qualification_result_integrity(request.qualification_result): return ""
+        payload=request.adapter_result.payload; binding=request.qualification_result.binding
+        if payload is None or binding is None: return ""
+        if any(type(getattr(request,x)) is not str for x in ("scope","channel","input_mode","handoff_mode")): return ""
+        if any(type(getattr(request,x)) is not bool for x in _FALSE_FLAGS): return ""
+        material=(REQUEST_INTEGRITY_SCHEMA_VERSION, request.bridge_request_id,
+            ((FEATURE_GATE_NAME,gate_state),),
+            request.adapter_result.adapter_request_id,payload.payload_digest,
+            binding.qualification_id,binding.qualification_digest,
+            request.scope,request.channel,request.input_mode,request.handoff_mode,
+            tuple((x,getattr(request,x)) for x in _FALSE_FLAGS))
+        return _digest(material)
+    except (AttributeError,TypeError,ValueError,KeyError): return ""
+
+def _request_evidence(request: CostRuntimeBridgeRequest) -> CostRuntimeBridgeRequestEvidence:
+    values={x:getattr(request,x) for x in request.__dataclass_fields__}
+    values["feature_gates"]=((FEATURE_GATE_NAME,request.feature_gates[FEATURE_GATE_NAME]),)
+    return CostRuntimeBridgeRequestEvidence(**values)
+
 def verify_cost_runtime_handoff_integrity(handoff: Any) -> bool:
     try:
         if type(handoff) is not CostRuntimeHandoff: return False
@@ -163,7 +209,7 @@ def verify_cost_runtime_handoff_integrity(handoff: Any) -> bool:
             handoff.request_id,handoff.skill_id)
         if any(type(x) is not str or not _ID.fullmatch(x) for x in ids) or handoff.skill_id not in _SKILLS: return False
         if any(type(x) is not str or not _HEX.fullmatch(x) for x in (handoff.qualification_digest,
-            handoff.payload_digest,handoff.presentation_digest,handoff.draft_digest,handoff.handoff_digest)): return False
+            handoff.payload_digest,handoff.request_digest,handoff.presentation_digest,handoff.draft_digest,handoff.handoff_digest)): return False
         if type(handoff.text) is not str or not handoff.text.strip() or len(handoff.text)>MAX_RESPONSE_LENGTH or _unsafe(handoff.text): return False
         if not all(type(getattr(handoff,x)) is bool for x in ("runtime_handoff_prepared","feature_gate_passed","source_delivery_ready")+_FALSE_FLAGS): return False
         if not all(getattr(handoff,x) for x in ("runtime_handoff_prepared","feature_gate_passed","source_delivery_ready")): return False
@@ -177,6 +223,7 @@ def _result_material(result):
         "reason_codes":result.reason_codes,
         "denial":((result.denial.reason_codes,result.denial.first_failed_gate) if result.denial else None),
         "handoff_digest":result.handoff.handoff_digest if result.handoff else None,
+        "request_digest":result.request_digest,
         "feature_gate_name":result.feature_gate_name,
         **{x:getattr(result,x) for x in ("runtime_handoff_prepared","feature_gate_passed","source_delivery_ready")+_FALSE_FLAGS}}
 
@@ -186,10 +233,13 @@ def verify_cost_runtime_bridge_result_integrity(result: Any) -> bool:
             or tuple(g.gate for g in result.gate_results)!=GATE_ORDER): return False
         if any(type(g) is not CostRuntimeBridgeGateResult or g.passed!=(g.reason_codes==("PASSED",)) for g in result.gate_results): return False
         if result.result_digest!=_digest(_result_material(result)): return False
+        computed=compute_cost_runtime_bridge_request_digest(result.canonical_request) if result.canonical_request is not None else ""
+        if result.request_digest != computed: return False
         if result.outcome==RUNTIME_HANDOFF_PREPARED:
             return (result.reason_codes==(ALL_RUNTIME_BRIDGE_GATES_PASSED,) and result.denial is None
                 and all(g.passed for g in result.gate_results) and verify_cost_runtime_handoff_integrity(result.handoff)
                 and result.feature_gate_name==FEATURE_GATE_NAME
+                and result.request_digest==result.handoff.request_digest
                 and result.handoff.feature_gate_name==result.feature_gate_name
                 and result.runtime_handoff_prepared and result.feature_gate_passed and result.source_delivery_ready
                 and not any(getattr(result,x) for x in _FALSE_FLAGS))
@@ -211,6 +261,7 @@ def bridge_prepared_cost_response(request: Any, policy: CostRuntimeBridgePolicy|
     qual=getattr(request,"qualification_result",None) if valid else None
     payload=adapter.payload if type(adapter) is CostResponseAdapterResult else None
     binding=qual.binding if type(qual) is CostDeliveryQualificationResult else None
+    request_digest=compute_cost_runtime_bridge_request_digest(request)
     validity=[]
     if not valid: validity.append("MALFORMED_BRIDGE_REQUEST")
     if type(brid) is not str or not _ID.fullmatch(brid): validity.append("INVALID_BRIDGE_REQUEST_ID")
@@ -262,7 +313,9 @@ def bridge_prepared_cost_response(request: Any, policy: CostRuntimeBridgePolicy|
     if failures:
         first=next(g.gate for g in gate_results if not g.passed)
         out=RUNTIME_HANDOFF_INVALID if first in ("REQUEST_VALIDITY","QUALIFICATION_RESULT","QUALIFICATION_PROVENANCE","ADAPTER_RESULT_INTEGRITY","PAYLOAD_INTEGRITY","IDENTITY_BINDING") else RUNTIME_HANDOFF_DENIED
-        result=CostRuntimeBridgeResult(COST_RUNTIME_BRIDGE_VERSION,brid,out,gate_results,failures,denial=CostRuntimeBridgeDenial(failures,first))
+        evidence=_request_evidence(request) if request_digest else None
+        result=CostRuntimeBridgeResult(COST_RUNTIME_BRIDGE_VERSION,brid,out,gate_results,failures,
+            denial=CostRuntimeBridgeDenial(failures,first),canonical_request=evidence,request_digest=request_digest)
         return CostRuntimeBridgeResult(**{**_material(result,{"result_digest"}),"result_digest":_digest(_result_material(result))})
     values=dict(bridge_version=COST_RUNTIME_BRIDGE_VERSION,bridge_request_id=brid,
         qualification_version=binding.qualification_version,qualification_id=binding.qualification_id,
@@ -270,14 +323,15 @@ def bridge_prepared_cost_response(request: Any, policy: CostRuntimeBridgePolicy|
         adapter_request_id=adapter.adapter_request_id,payload_digest=payload.payload_digest,
         authorization_version=payload.authorization_policy_version,authorization_id=payload.source_authorization_id,
         presentation_id=payload.source_presentation_id,execution_id=payload.source_execution_id,
-        request_id=payload.source_request_id,skill_id=payload.source_skill_id,registry_version=SUPPORTED_REGISTRY_VERSION,
+        request_id=payload.source_request_id,request_digest=request_digest,skill_id=payload.source_skill_id,registry_version=SUPPORTED_REGISTRY_VERSION,
         scope=payload.scope,locale=payload.locale,channel=payload.target_channel,input_mode=payload.output_mode,
         handoff_mode=policy.handoff_mode,text=payload.text,presentation_digest=payload.presentation_digest,
         draft_digest=payload.draft_digest,runtime_handoff_prepared=True,feature_gate_passed=True,source_delivery_ready=True,
         feature_gate_name=validated_gate_name,**{x:False for x in _FALSE_FLAGS})
     handoff=CostRuntimeHandoff(**values,handoff_digest=_digest(values))
     result=CostRuntimeBridgeResult(COST_RUNTIME_BRIDGE_VERSION,brid,RUNTIME_HANDOFF_PREPARED,gate_results,(ALL_RUNTIME_BRIDGE_GATES_PASSED,),
-        handoff=handoff,runtime_handoff_prepared=True,feature_gate_name=validated_gate_name,
+        handoff=handoff,canonical_request=_request_evidence(request),request_digest=request_digest,
+        runtime_handoff_prepared=True,feature_gate_name=validated_gate_name,
         feature_gate_passed=True,source_delivery_ready=True)
     return CostRuntimeBridgeResult(**{**_material(result,{"result_digest"}),"result_digest":_digest(_result_material(result))})
 

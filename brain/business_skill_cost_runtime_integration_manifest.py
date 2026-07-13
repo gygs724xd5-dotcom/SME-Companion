@@ -16,7 +16,8 @@ from brain.business_skill_cost_runtime_integration_qualification import (
 )
 from brain.business_skill_cost_response_runtime_bridge import COST_RUNTIME_BRIDGE_VERSION, FEATURE_GATE_NAME
 
-CONTROLLED_RUNTIME_INTEGRATION_MANIFEST_VERSION = "5.15.22"
+HISTORICAL_CONTROLLED_RUNTIME_INTEGRATION_MANIFEST_VERSION = "5.15.22"
+CONTROLLED_RUNTIME_INTEGRATION_MANIFEST_VERSION = "5.15.22.1"
 CONTROLLED_COST_RESPONSE_RUNTIME_INTEGRATION = "CONTROLLED_COST_RESPONSE_RUNTIME_INTEGRATION"
 CONTROLLED_INTEGRATION_APPROVED = "CONTROLLED_INTEGRATION_APPROVED"
 APPROVAL_REASON = "CANONICAL_V5_15_21_QUALIFICATION_APPROVED"
@@ -42,7 +43,7 @@ class ControlledRuntimeIntegrationApproval:
     delivery_qualification_version: str; delivery_qualification_id: str
     delivery_qualification_digest: str; runtime_bridge_version: str
     feature_gate_name: str; feature_gate_passed: bool; handoff_digest: str
-    result_digest: str; request_id: str; payload_digest: str
+    result_digest: str; request_id: str; request_digest: str; payload_digest: str
     provenance_verified: bool; authority_boundary_verified: bool
     authority_boundary: AuthorityBoundary; diagnostics: tuple[tuple[str, str], ...]
     qualification: ControlledRuntimeIntegrationQualification; approval_digest: str
@@ -51,6 +52,7 @@ class ControlledRuntimeIntegrationApproval:
 class ControlledRuntimeIntegrationManifest:
     manifest_version: str; registry_version: str; integration_scope: str
     approved_skill_ids: tuple[str, ...]
+    request_digest_bindings: tuple[tuple[str, str], ...]
     approvals: tuple[ControlledRuntimeIntegrationApproval, ...]
     approval_status: str; diagnostics: tuple[tuple[str, str], ...]
     manifest_digest: str
@@ -71,7 +73,8 @@ def _approval_material(x: ControlledRuntimeIntegrationApproval):
 
 def _manifest_material(x: ControlledRuntimeIntegrationManifest):
     return (x.manifest_version, x.registry_version, x.integration_scope,
-        x.approved_skill_ids, tuple(a.approval_digest for a in x.approvals),
+        x.approved_skill_ids, x.request_digest_bindings,
+        tuple(a.approval_digest for a in x.approvals),
         x.approval_status, x.diagnostics)
 
 def get_controlled_integration_skill(skill_id: object):
@@ -95,7 +98,8 @@ def create_controlled_integration_approval(qualification: Any):
         delivery_qualification_digest=q.delivery_qualification_digest,
         runtime_bridge_version=q.runtime_bridge_version, feature_gate_name=q.feature_gate_name,
         feature_gate_passed=q.feature_gate_passed, handoff_digest=q.handoff_digest,
-        result_digest=q.result_digest, request_id=q.request_id, payload_digest=q.payload_digest,
+        result_digest=q.result_digest, request_id=q.request_id,
+        request_digest=q.request_digest, payload_digest=q.payload_digest,
         provenance_verified=q.provenance_verified,
         authority_boundary_verified=q.authority_boundary_verified,
         authority_boundary=AuthorityBoundary(), diagnostics=DIAGNOSTICS, qualification=q)
@@ -105,8 +109,26 @@ def create_controlled_integration_approval(qualification: Any):
 def verify_controlled_integration_approval(value: Any) -> bool:
     try:
         if type(value) is not ControlledRuntimeIntegrationApproval or not _HEX.fullmatch(value.approval_digest): return False
-        expected = create_controlled_integration_approval(value.qualification)
-        return value == expected and value.approval_digest == _digest(_approval_material(value))
+        q=value.qualification
+        if not verify_controlled_runtime_integration_qualification(q): return False
+        skill=get_controlled_integration_skill(q.skill_id)
+        if skill is None or skill.active_status != LIMITED_ACTIVE or BUSINESS_SKILL_REGISTRY_VERSION != "5.15.13": return False
+        expected=dict(manifest_version=CONTROLLED_RUNTIME_INTEGRATION_MANIFEST_VERSION,
+            registry_version=BUSINESS_SKILL_REGISTRY_VERSION,skill_id=q.skill_id,
+            lifecycle_status=LIMITED_ACTIVE,integration_scope=CONTROLLED_COST_RESPONSE_RUNTIME_INTEGRATION,
+            approval_status=CONTROLLED_INTEGRATION_APPROVED,approval_reason=APPROVAL_REASON,
+            qualification_version=q.qualification_version,qualification_digest=q.qualification_digest,
+            delivery_qualification_version=q.delivery_qualification_version,
+            delivery_qualification_id=q.delivery_qualification_id,
+            delivery_qualification_digest=q.delivery_qualification_digest,
+            runtime_bridge_version=q.runtime_bridge_version,feature_gate_name=q.feature_gate_name,
+            feature_gate_passed=q.feature_gate_passed,handoff_digest=q.handoff_digest,
+            result_digest=q.result_digest,request_id=q.request_id,request_digest=q.request_digest,
+            payload_digest=q.payload_digest,provenance_verified=q.provenance_verified,
+            authority_boundary_verified=q.authority_boundary_verified,
+            authority_boundary=AuthorityBoundary(),diagnostics=DIAGNOSTICS,qualification=q)
+        return (all(getattr(value,k)==v for k,v in expected.items()) and
+            value.approval_digest == _digest(_approval_material(value)))
     except (AttributeError, TypeError, ValueError): return False
 
 def create_controlled_integration_manifest(qualifications: Iterable[Any]):
@@ -118,7 +140,8 @@ def create_controlled_integration_manifest(qualifications: Iterable[Any]):
     values = dict(manifest_version=CONTROLLED_RUNTIME_INTEGRATION_MANIFEST_VERSION,
         registry_version=BUSINESS_SKILL_REGISTRY_VERSION,
         integration_scope=CONTROLLED_COST_RESPONSE_RUNTIME_INTEGRATION,
-        approved_skill_ids=SUPPORTED_SKILL_IDS, approvals=approvals,
+        approved_skill_ids=SUPPORTED_SKILL_IDS,
+        request_digest_bindings=tuple((a.skill_id,a.request_digest) for a in approvals), approvals=approvals,
         approval_status=CONTROLLED_INTEGRATION_APPROVED, diagnostics=DIAGNOSTICS)
     draft = ControlledRuntimeIntegrationManifest(**values, manifest_digest="")
     return ControlledRuntimeIntegrationManifest(**values, manifest_digest=_digest(_manifest_material(draft)))
@@ -127,7 +150,11 @@ def verify_controlled_integration_manifest(value: Any) -> bool:
     try:
         if type(value) is not ControlledRuntimeIntegrationManifest or not _HEX.fullmatch(value.manifest_digest): return False
         if value.approved_skill_ids != SUPPORTED_SKILL_IDS or tuple(a.skill_id for a in value.approvals) != SUPPORTED_SKILL_IDS: return False
+        if value.request_digest_bindings != tuple((a.skill_id,a.request_digest) for a in value.approvals): return False
         if not all(verify_controlled_integration_approval(a) for a in value.approvals): return False
-        expected = create_controlled_integration_manifest(tuple(a.qualification for a in value.approvals))
-        return value == expected and value.manifest_digest == _digest(_manifest_material(value))
+        return ((value.manifest_version,value.registry_version,value.integration_scope,
+            value.approval_status,value.diagnostics)==
+            (CONTROLLED_RUNTIME_INTEGRATION_MANIFEST_VERSION,BUSINESS_SKILL_REGISTRY_VERSION,
+             CONTROLLED_COST_RESPONSE_RUNTIME_INTEGRATION,CONTROLLED_INTEGRATION_APPROVED,DIAGNOSTICS)
+            and value.manifest_digest == _digest(_manifest_material(value)))
     except (AttributeError, TypeError, ValueError): return False
