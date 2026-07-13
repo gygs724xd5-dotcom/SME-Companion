@@ -46,6 +46,7 @@ from brain.conversation_understanding_engine import (
     understand_conversation,
 )
 from brain.cost_intent_isolation import is_strong_cost_calculation_message
+from brain.production_turn_context import resolve_production_turn_context
 from brain.business_situation import (
     ACCOUNTING as BS_ACCOUNTING,
     ANALYTICAL as BS_ANALYTICAL,
@@ -2236,6 +2237,7 @@ def _reset_chat_session() -> None:
     conversation_id = str(uuid4())
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = conversation_id
+    st.session_state["current_production_turn_context"] = None
     st.session_state["conversation_state"] = _new_conversation_state()
     st.session_state["pending_followup"] = None
     st.session_state["last_reasoning"] = None
@@ -2310,6 +2312,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("generated_calendar", None)
     st.session_state.setdefault("generated_revenue", None)
     st.session_state.setdefault("conversation_id", str(uuid4()))
+    st.session_state.setdefault("current_production_turn_context", None)
     st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("last_reasoning", None)
     st.session_state.setdefault("cached_prompt", None)
@@ -2726,6 +2729,7 @@ def _show_clear_manual_store_control() -> None:
 def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
+    st.session_state["current_production_turn_context"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -2750,6 +2754,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
 def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
+    st.session_state["current_production_turn_context"] = None
     st.session_state["last_reasoning"] = None
     st.session_state["cached_prompt"] = None
     st.session_state["last_ai_state"] = None
@@ -5287,8 +5292,21 @@ def _show_chat_companion(
     st.session_state["chat_pipeline_in_progress"] = True
 
     add_pipeline_event("control", "_show_chat_companion", "reset command check")
-    if _is_reset_command(user_message):
+    reset_command = _is_reset_command(user_message)
+    if reset_command:
         _reset_chat_session()
+    turn_ordinal = sum(
+        message.get("role") == "user"
+        for message in st.session_state.get("chat_history", [])
+        if isinstance(message, dict)
+    ) + 1
+    st.session_state["current_production_turn_context"] = resolve_production_turn_context(
+        st.session_state.get("current_production_turn_context"),
+        st.session_state.get("conversation_id"),
+        turn_ordinal,
+        user_message,
+    )
+    if reset_command:
         evidence_shadow = _record_evidence_gap_shadow_diagnostics(
             user_message,
             reset_boundary_active=True,
