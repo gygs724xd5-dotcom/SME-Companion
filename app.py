@@ -47,6 +47,10 @@ from brain.conversation_understanding_engine import (
 )
 from brain.cost_intent_isolation import is_strong_cost_calculation_message
 from brain.production_turn_context import resolve_production_turn_context, verify_production_turn_context
+from brain.production_turn_reference_time import (
+    create_production_turn_reference_time,
+    verify_production_turn_reference_time,
+)
 from brain.production_feature_gate_owner import (
     LIMITED_COST_RESPONSE_RUNTIME_BRIDGE,
     PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION,
@@ -2362,11 +2366,24 @@ def _reset_conversation_memory() -> None:
     _sync_session_to_application_state()
 
 
+def resolve_production_turn_reference_time(context):
+    """Production clock owner: reuse the exact verified turn or capture UTC once."""
+    current = st.session_state.get("current_production_turn_reference_time")
+    if verify_production_turn_reference_time(context, current):
+        return current
+    captured = create_production_turn_reference_time(context, datetime.now(timezone.utc))
+    if not verify_production_turn_reference_time(context, captured):
+        raise ValueError("canonical production turn reference time creation failed")
+    st.session_state["current_production_turn_reference_time"] = captured
+    return captured
+
+
 def _reset_chat_session() -> None:
     conversation_id = str(uuid4())
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = conversation_id
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_turn_reference_time"] = None
     st.session_state["current_production_feature_gate_evaluation"] = None
     st.session_state["current_production_turn_bound_skill_evidence"] = None
     st.session_state["current_production_response_candidate"] = None
@@ -2447,6 +2464,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("generated_revenue", None)
     st.session_state.setdefault("conversation_id", str(uuid4()))
     st.session_state.setdefault("current_production_turn_context", None)
+    st.session_state.setdefault("current_production_turn_reference_time", None)
     st.session_state.setdefault("current_production_feature_gate_evaluation", None)
     st.session_state.setdefault("current_production_turn_bound_skill_evidence", None)
     st.session_state.setdefault("current_production_response_candidate", None)
@@ -2869,6 +2887,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_turn_reference_time"] = None
     st.session_state["current_production_feature_gate_evaluation"] = None
     st.session_state["current_production_turn_bound_skill_evidence"] = None
     st.session_state["current_production_response_candidate"] = None
@@ -2899,6 +2918,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["chat_history"] = []
     st.session_state["conversation_id"] = str(uuid4())
     st.session_state["current_production_turn_context"] = None
+    st.session_state["current_production_turn_reference_time"] = None
     st.session_state["current_production_feature_gate_evaluation"] = None
     st.session_state["current_production_turn_bound_skill_evidence"] = None
     st.session_state["current_production_response_candidate"] = None
@@ -5466,6 +5486,11 @@ def _show_chat_companion(
         st.session_state.get("conversation_id"),
         turn_ordinal,
         user_message,
+    )
+    st.session_state["current_production_turn_reference_time"] = (
+        resolve_production_turn_reference_time(
+            st.session_state["current_production_turn_context"]
+        )
     )
     production_feature_gate_evaluation = resolve_production_feature_gate_evaluation(
         st.session_state.get("current_production_feature_gate_evaluation"),
