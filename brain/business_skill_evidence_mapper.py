@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
+from decimal import Decimal
+import math
 from typing import Any, Iterable, Mapping
 
 from brain.business_skill import BusinessSkill, normalize_business_skill, validate_business_skill
@@ -17,7 +19,9 @@ from brain.business_skill_registry import (
 )
 
 
-BUSINESS_SKILL_EVIDENCE_MAPPER_VERSION = "5.15.4"
+BUSINESS_SKILL_EVIDENCE_MAPPER_HISTORICAL_VERSION = "5.15.4"
+BUSINESS_SKILL_EVIDENCE_MAPPER_VERSION = BUSINESS_SKILL_EVIDENCE_MAPPER_HISTORICAL_VERSION
+BUSINESS_SKILL_EVIDENCE_MAPPER_CURRENT_VERSION = "5.15.24.6.0.1"
 
 PRESENT = "PRESENT"
 MISSING = "MISSING"
@@ -55,16 +59,54 @@ def _value_present(value: Any) -> bool:
     return True
 
 
-def _confidence(value: Any) -> tuple[float, list[str]]:
+def is_canonical_business_number(value: Any) -> bool:
+    """Return whether value is a finite supported business number without coercion."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return False
+
+
+def canonicalize_business_number(value: Any) -> int | float | Decimal:
+    """Preserve the exact supported numeric type; never coerce business evidence."""
+    if not is_canonical_business_number(value):
+        raise ValueError("business number must be a finite int, float, or Decimal")
+    return value
+
+
+def validate_business_number(value: Any, rule: str = "number") -> list[str]:
+    """Validate numeric rules using native exact comparisons."""
+    if not is_canonical_business_number(value):
+        return ["value must be a finite number"]
+    normalized_rule = str(rule or "number").strip().lower()
+    if normalized_rule == "positive_number" and value <= 0:
+        return ["value must be a positive number"]
+    if normalized_rule == "non_negative_number" and value < 0:
+        return ["value must be a non-negative number"]
+    return []
+
+
+def validate_explicit_confidence(value: Any) -> tuple[float, list[str]]:
+    """Keep the historical float score contract with a narrow parser-safe path."""
     if isinstance(value, bool):
         return 0.0, ["confidence must be a number between 0 and 1"]
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
+    if value == "1.0" or isinstance(value, Decimal) and value == Decimal("1.0"):
+        return 1.0, []
+    if not isinstance(value, (int, float)) or isinstance(value, float) and not math.isfinite(value):
         return 0.0, ["confidence must be a number between 0 and 1"]
+    number = float(value)
     if number < 0 or number > 1:
         return min(1.0, max(0.0, number)), ["confidence was clamped to the range 0..1"]
     return number, []
+
+
+def _confidence(value: Any) -> tuple[float, list[str]]:
+    return validate_explicit_confidence(value)
 
 
 def normalize_available_evidence(available_evidence: Any) -> dict[str, dict[str, Any]]:
@@ -104,7 +146,7 @@ def normalize_available_evidence(available_evidence: Any) -> dict[str, dict[str,
 
 def _type_validation(value: Any, field_type: str) -> tuple[str, list[str]]:
     kind = str(field_type or "").strip().lower().replace("string", "text")
-    number = isinstance(value, (int, float)) and not isinstance(value, bool)
+    number = is_canonical_business_number(value)
     checks = {
         "number": number,
         "integer": isinstance(value, int) and not isinstance(value, bool),
@@ -130,11 +172,11 @@ def _rule_validation(value: Any, rule: str) -> list[str]:
     rule = str(rule or "").strip().lower()
     if not rule or rule == "number":
         return []
-    number = isinstance(value, (int, float)) and not isinstance(value, bool)
-    if rule == "positive_number" and (not number or value <= 0):
-        return ["value must be a positive number"]
-    if rule == "non_negative_number" and (not number or value < 0):
-        return ["value must be a non-negative number"]
+    number = is_canonical_business_number(value)
+    if rule in {"positive_number", "non_negative_number"}:
+        errors = validate_business_number(value, rule)
+        if errors:
+            return errors
     if rule == "percentage_or_decimal" and (not number or value < 0 or value > 100):
         return ["value must be a percentage or decimal between 0 and 100"]
     if rule not in {"positive_number", "non_negative_number", "percentage_or_decimal", "number"}:
