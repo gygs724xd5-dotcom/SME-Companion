@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from decimal import Decimal
 import hashlib
 import json
+import re
 from typing import Any, Iterable, Mapping
 
 from brain.business_skill import LIMITED_ACTIVE
@@ -22,6 +24,7 @@ from brain.business_skill_registry import BUSINESS_SKILL_REGISTRY_VERSION, get_b
 LIMITED_ACTIVATION_GATEWAY_VERSION = "5.15.14.1"
 HISTORICAL_LIMITED_ACTIVATION_GATEWAY_VERSION = "5.15.14"
 ACTIVATION_BINDING_SCHEMA_VERSION = "1"
+ACTIVATION_BINDING_DECIMAL_SCHEMA_VERSION = "5.15.24.6.3"
 LIMITED_EXECUTION_ELIGIBLE = "LIMITED_EXECUTION_ELIGIBLE"
 LIMITED_EXECUTION_DENIED = "LIMITED_EXECUTION_DENIED"
 SUPPORTED_SKILL_IDS = ("cost.change_analysis.v1", "cost.per_unit_calculation.v1")
@@ -40,6 +43,7 @@ _CANONICAL_EVIDENCE_ORDER = {
     "cost.change_analysis.v1": ("previous_cost", "current_cost"),
     "cost.per_unit_calculation.v1": ("total_cost", "unit_quantity", "waste_or_loss_quantity"),
 }
+_LOWER_HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 def _freeze(value: Any) -> Any:
@@ -187,6 +191,8 @@ class LimitedActivationDecision:
 def _canonical_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
+    if type(value) is Decimal:
+        return canonicalize_activation_binding_decimal(value)
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):
             raise ValueError("non-finite binding value")
@@ -196,6 +202,22 @@ def _canonical_value(value: Any) -> Any:
             return {k: _canonical_value(v) for k, v in value}
         return [_canonical_value(x) for x in value]
     raise ValueError("unsupported binding value")
+
+
+def canonicalize_activation_binding_decimal(value: Any) -> dict[str, Any]:
+    """Return the current exact, typed Decimal binding material."""
+    if type(value) is not Decimal or not value.is_finite():
+        raise ValueError("binding Decimal must be an exact finite Decimal")
+    sign, digits, exponent = value.as_tuple()
+    return {
+        "$decimal": [
+            "DECIMAL",
+            ACTIVATION_BINDING_DECIMAL_SCHEMA_VERSION,
+            sign,
+            list(digits),
+            exponent,
+        ]
+    }
 
 
 def _binding_payload(binding: ActivationRequestBinding) -> dict[str, Any]:
@@ -229,13 +251,19 @@ def verify_activation_request_binding(binding: Any) -> bool:
                    binding.activation_scope, binding.reference_time, binding.registry_version, binding.matcher_version,
                    binding.evidence_mapper_version, binding.gateway_policy_version)
         if any(not isinstance(x, str) or not x for x in strings): return False
+        if binding.requested_skill_id != binding.matched_skill_id: return False
+        if binding.activation_scope != SUPPORTED_ACTIVATION_SCOPE: return False
+        if binding.registry_version != BUSINESS_SKILL_REGISTRY_VERSION: return False
+        if binding.matcher_version != BUSINESS_SKILL_CANDIDATE_MATCHER_VERSION: return False
+        if binding.evidence_mapper_version != BUSINESS_SKILL_EVIDENCE_MAPPER_VERSION: return False
+        if binding.gateway_policy_version != LIMITED_ACTIVATION_GATEWAY_VERSION: return False
         ids = tuple(x.evidence_id for x in binding.evidence_snapshot)
         if any(not isinstance(x, ActivationEvidenceItem) or not x.evidence_id or not x.canonical_type for x in binding.evidence_snapshot): return False
         if len(ids) != len(set(ids)): return False
         canonical = _CANONICAL_EVIDENCE_ORDER.get(binding.matched_skill_id)
         if canonical is None or any(x not in canonical for x in ids): return False
         if tuple(sorted(binding.evidence_snapshot, key=lambda x: canonical.index(x.evidence_id))) != binding.evidence_snapshot: return False
-        return len(binding.binding_digest) == 64 and binding.binding_digest == _digest(binding)
+        return bool(_LOWER_HEX_DIGEST.fullmatch(binding.binding_digest)) and binding.binding_digest == _digest(binding)
     except (TypeError, ValueError, AttributeError):
         return False
 
