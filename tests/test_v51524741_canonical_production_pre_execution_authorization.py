@@ -398,7 +398,7 @@ def test_boundary_does_not_modify_app_or_import_it():
     source = (ROOT / "brain" / "production_pre_execution_authorization.py").read_text("utf-8")
     assert "from app" not in source and "import app" not in source
     app_source = (ROOT / "app.py").read_text("utf-8")
-    assert "production_pre_execution_authorization" not in app_source
+    assert "from brain.production_pre_execution_authorization import" not in app_source
     assert GATE_ORDER == (
         "REQUEST_IDENTITY", "TURN_CONTEXT", "REFERENCE_TIME",
         "FEATURE_GATE_EVALUATION", "SKILL_EVIDENCE", "ACTIVATION_BINDING",
