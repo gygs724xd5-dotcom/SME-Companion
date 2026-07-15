@@ -229,9 +229,13 @@ def test_causal_isolation_when_downstream_entry_points_throw(monkeypatch):
     assert report is not None and owner.verify_production_pre_execution_runtime_acceptance_report(report)
 
 
-def test_app_and_prohibited_files_have_no_milestone_diff():
-    # The baseline may contain user changes in prohibited files; this milestone must not add app changes.
+def test_historical_pre_execution_contract_has_no_later_milestone_diff():
+    # Later production wiring may extend app.py but must not rewrite this historical contract.
     import subprocess
-    changed = subprocess.run(["git", "diff", "--name-only", "--", "app.py"],
+    changed = subprocess.run([
+        "git", "diff", "--name-only", "--",
+        "brain/production_pre_execution_authorization.py",
+        "brain/production_pre_execution_authorization_acceptance.py",
+    ],
                              cwd=ROOT, text=True, capture_output=True, check=True).stdout
     assert changed == ""

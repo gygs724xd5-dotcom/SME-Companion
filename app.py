@@ -53,8 +53,11 @@ from brain.production_turn_reference_time import (
 )
 from brain.production_feature_gate_owner import (
     LIMITED_COST_RESPONSE_RUNTIME_BRIDGE,
-    PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION,
     resolve_production_feature_gate_evaluation,
+)
+from brain.production_feature_gate_release_owner import get_production_feature_gate_release_owner
+from brain.production_feature_gate_release_runtime import (
+    resolve_production_feature_gate_release_runtime_binding,
 )
 from brain.production_turn_bound_skill_evidence import (
     resolve_production_turn_bound_skill_evidence_envelope,
@@ -2391,6 +2394,7 @@ def _reset_chat_session() -> None:
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_turn_reference_time"] = None
     st.session_state["current_production_feature_gate_evaluation"] = None
+    st.session_state["current_production_feature_gate_release_runtime_binding"] = None
     st.session_state["current_production_turn_bound_skill_evidence"] = None
     st.session_state["current_production_limited_activation_binding"] = None
     st.session_state["current_production_pre_execution_authorization"] = None
@@ -2474,6 +2478,7 @@ def _init_session_state() -> None:
     st.session_state.setdefault("current_production_turn_context", None)
     st.session_state.setdefault("current_production_turn_reference_time", None)
     st.session_state.setdefault("current_production_feature_gate_evaluation", None)
+    st.session_state.setdefault("current_production_feature_gate_release_runtime_binding", None)
     st.session_state.setdefault("current_production_turn_bound_skill_evidence", None)
     st.session_state.setdefault("current_production_limited_activation_binding", None)
     st.session_state.setdefault("current_production_pre_execution_authorization", None)
@@ -2899,6 +2904,7 @@ def _legacy_reset_conversation_state_for_demo_switch() -> None:
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_turn_reference_time"] = None
     st.session_state["current_production_feature_gate_evaluation"] = None
+    st.session_state["current_production_feature_gate_release_runtime_binding"] = None
     st.session_state["current_production_turn_bound_skill_evidence"] = None
     st.session_state["current_production_limited_activation_binding"] = None
     st.session_state["current_production_pre_execution_authorization"] = None
@@ -2932,6 +2938,7 @@ def _reset_conversation_state_for_demo_switch() -> None:
     st.session_state["current_production_turn_context"] = None
     st.session_state["current_production_turn_reference_time"] = None
     st.session_state["current_production_feature_gate_evaluation"] = None
+    st.session_state["current_production_feature_gate_release_runtime_binding"] = None
     st.session_state["current_production_turn_bound_skill_evidence"] = None
     st.session_state["current_production_limited_activation_binding"] = None
     st.session_state["current_production_pre_execution_authorization"] = None
@@ -5507,13 +5514,22 @@ def _show_chat_companion(
             st.session_state["current_production_turn_context"]
         )
     )
+    production_feature_gate_release_owner = get_production_feature_gate_release_owner()
     production_feature_gate_evaluation = resolve_production_feature_gate_evaluation(
         st.session_state.get("current_production_feature_gate_evaluation"),
-        PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION,
+        production_feature_gate_release_owner.configuration,
         st.session_state["current_production_turn_context"],
         LIMITED_COST_RESPONSE_RUNTIME_BRIDGE,
     )
     st.session_state["current_production_feature_gate_evaluation"] = production_feature_gate_evaluation
+    st.session_state["current_production_feature_gate_release_runtime_binding"] = (
+        resolve_production_feature_gate_release_runtime_binding(
+            st.session_state["current_production_turn_context"],
+            production_feature_gate_release_owner,
+            production_feature_gate_evaluation,
+            st.session_state.get("current_production_feature_gate_release_runtime_binding"),
+        )
+    )
     st.session_state["current_production_turn_bound_skill_evidence"] = (
         resolve_production_turn_bound_skill_evidence_envelope(
             st.session_state.get("current_production_turn_bound_skill_evidence"),

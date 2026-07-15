@@ -196,7 +196,7 @@ def test_app_single_call_order_default_deny_no_branch_and_transient_lifecycle():
     gate_calls = [node for node in calls if isinstance(node.func, ast.Name)
         and node.func.id == "resolve_production_feature_gate_evaluation"]
     assert len(gate_calls) == 1 and context_call.lineno < gate_calls[0].lineno
-    assert "PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION" in ast.unparse(gate_calls[0])
+    assert "production_feature_gate_release_owner.configuration" in ast.unparse(gate_calls[0])
     response_calls = [node for node in calls if isinstance(node.func, ast.Name)
         and node.func.id in {"_record_reasoning", "select_planner_first_response", "guard_response",
                              "_record_turn_bound_response_candidate", "commit_assistant_turn"}]
@@ -222,6 +222,7 @@ def test_quick_action_pre_turn_path_has_no_gate_evaluation_and_no_ui_or_persiste
     persistence = (ROOT / "brain" / "response_commit_boundary.py").read_text(encoding="utf-8")
     assert "production_feature_gate" not in persistence
     assert source.count('"current_production_feature_gate_evaluation"') == 6
+    assert source.count('"current_production_feature_gate_release_runtime_binding"') == 6
 
 
 def test_no_public_mutation_api_names():

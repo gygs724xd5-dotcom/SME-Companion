@@ -255,10 +255,11 @@ def test_source_audit_has_no_external_runtime_configuration_or_forbidden_systems
     )
 
 
-def test_app_and_historical_owner_remain_unwired_and_unchanged_in_usage():
+def test_app_uses_release_owner_while_historical_owner_contract_remains_unchanged():
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
-    assert "production_feature_gate_release_owner" not in app_source
-    assert app_source.count("PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION") >= 2
+    assert "get_production_feature_gate_release_owner" in app_source
+    assert "production_feature_gate_release_owner.configuration" in app_source
+    assert "PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION" not in app_source
     historical = (ROOT / "brain" / "production_feature_gate_owner.py").read_text(encoding="utf-8")
     assert 'PRODUCTION_FEATURE_GATE_OWNER_VERSION = "5.15.24.5"' in historical
     assert "PRODUCTION_DEFAULT_DENY_FEATURE_GATE_CONFIGURATION" in historical
