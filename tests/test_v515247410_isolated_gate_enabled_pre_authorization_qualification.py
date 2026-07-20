@@ -69,6 +69,24 @@ def test_canonical_full_chain_qualifies_deterministically():
     assert len(set(one.canonical_scenario_ids)) == 16
 
 
+def test_report_creation_verifies_shared_foundation_once(monkeypatch):
+    foundation = chain()[7]
+    original = qualification.verify_isolated_qualification_pre_execution_result
+    calls = 0
+
+    def counted(value):
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(
+        qualification, "verify_isolated_qualification_pre_execution_result", counted
+    )
+    value = create_isolated_gate_enabled_pre_authorization_report(foundation)
+    assert value is not None and value.qualified
+    assert calls == 1
+
+
 def test_foundation_remains_non_self_authorizing_and_forgery_is_rejected():
     foundation = chain()[7]
     accepted = create_isolated_gate_enabled_pre_authorization_report(foundation)

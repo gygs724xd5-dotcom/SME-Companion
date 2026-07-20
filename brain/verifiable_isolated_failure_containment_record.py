@@ -246,6 +246,13 @@ def create_isolated_failure_containment_record(source: Any, scenario_id: Any):
     return _admission_record(source)
 
 
+def _create_verified_source_record(source: Any, scenario_id: str):
+    """Create from a source already verified by the enclosing batch factory."""
+    if scenario_id in BRIDGE_SCENARIOS:
+        return _bridge_record(source, BRIDGE_SCENARIOS.index(scenario_id))
+    return _admission_record(source)
+
+
 def verify_isolated_failure_containment_record(value: Any) -> bool:
     """Pure verification; historical operations are never invoked here."""
     try:
@@ -295,7 +302,9 @@ def create_isolated_failure_containment_batch(bridge_source: Any, admission_sour
             or type(admission_source) is not VersionedControlledRuntimeAdmissionRequestBatch
             or not verify_versioned_controlled_runtime_admission_request_bindings(admission_source)):
         return None
-    records = tuple(create_isolated_failure_containment_record(
+    # Both sources were fully verified above. Calling the public record factory
+    # here would re-walk the same deep ancestry once per scenario.
+    records = tuple(_create_verified_source_record(
         bridge_source if scenario in BRIDGE_SCENARIOS else admission_source, scenario)
         for scenario in SCENARIO_ORDER)
     if any(x is None or not verify_isolated_failure_containment_record(x) for x in records): return None
