@@ -213,14 +213,16 @@ def _scenarios() -> tuple[IsolatedGateEnabledPreAuthorizationScenario, ...]:
     )
 
 
-def _chain_is_qualified(result: IsolatedQualificationPreExecutionResult) -> bool:
+def _chain_is_qualified(
+    result: IsolatedQualificationPreExecutionResult, *, foundation_verified: bool = False,
+) -> bool:
     binding = result.configuration_binding
     evidence = result.evidence_envelope
     limited = result.limited_activation_binding
     owner = binding.release_owner
     proposal = create_production_feature_gate_transition_proposal(LIMITED_COST_RESPONSE_RUNTIME_BRIDGE, True)
     return all((
-        verify_isolated_qualification_pre_execution_result(result),
+        foundation_verified or verify_isolated_qualification_pre_execution_result(result),
         result.version == ISOLATED_QUALIFICATION_CONFIGURATION_BINDING_VERSION,
         result.scope.endswith("PRE_EXECUTION_FOUNDATION"),
         binding.scope == ISOLATED_QUALIFICATION_CONFIGURATION_BINDING_SCOPE,
@@ -250,11 +252,15 @@ def _chain_is_qualified(result: IsolatedQualificationPreExecutionResult) -> bool
 
 
 def _observe(scenario: IsolatedGateEnabledPreAuthorizationScenario,
-             result: IsolatedQualificationPreExecutionResult
+             result: IsolatedQualificationPreExecutionResult,
+             chain_qualified: bool | None = None,
              ) -> IsolatedGateEnabledPreAuthorizationObservation:
     binding, evidence, limited = result.configuration_binding, result.evidence_envelope, result.limited_activation_binding
     owner = binding.release_owner
-    passed = _chain_is_qualified(result)
+    # A report contains many observations over the same immutable foundation.
+    # Its full ancestry verification is intentionally expensive, so callers
+    # that already verified it once may share that result across observations.
+    passed = _chain_is_qualified(result) if chain_qualified is None else chain_qualified
     observed = scenario.deterministic_outcome if passed else "REJECTED"
     draft = IsolatedGateEnabledPreAuthorizationObservation(
         ISOLATED_GATE_ENABLED_PRE_AUTHORIZATION_QUALIFICATION_VERSION,
@@ -280,7 +286,10 @@ def create_isolated_gate_enabled_pre_authorization_report(
         evidence = foundation_result.evidence_envelope
         limited = foundation_result.limited_activation_binding
         owner = binding.release_owner
-        observations = tuple(_observe(scenario, foundation_result) for scenario in _scenarios())
+        chain_qualified = _chain_is_qualified(foundation_result, foundation_verified=True)
+        observations = tuple(
+            _observe(scenario, foundation_result, chain_qualified) for scenario in _scenarios()
+        )
         qualified = len(observations) == len(CANONICAL_SCENARIO_IDS) and all(
             item.observation_passed for item in observations
         )
@@ -306,9 +315,7 @@ def create_isolated_gate_enabled_pre_authorization_report(
         return None
 
 
-def verify_isolated_gate_enabled_pre_authorization_observation(
-    value: Any, foundation_result: Any,
-) -> bool:
+def _verify_observation(value: Any, foundation_result: Any, chain_qualified: bool | None) -> bool:
     try:
         if type(value) is not IsolatedGateEnabledPreAuthorizationObservation:
             return False
@@ -316,10 +323,16 @@ def verify_isolated_gate_enabled_pre_authorization_observation(
         scenario = scenarios.get(value.scenario.scenario_id)
         return bool(
             scenario is not None and value.scenario == scenario and _HEX.fullmatch(value.observation_digest)
-            and value == _observe(scenario, foundation_result)
+            and value == _observe(scenario, foundation_result, chain_qualified)
         )
     except (AttributeError, TypeError, ValueError, UnicodeEncodeError):
         return False
+
+
+def verify_isolated_gate_enabled_pre_authorization_observation(
+    value: Any, foundation_result: Any,
+) -> bool:
+    return _verify_observation(value, foundation_result, None)
 
 
 def verify_isolated_gate_enabled_pre_authorization_report(value: Any) -> bool:
@@ -333,7 +346,9 @@ def verify_isolated_gate_enabled_pre_authorization_report(value: Any) -> bool:
             return False
         if not _authority_false(value.authority_boundary):
             return False
-        if not all(verify_isolated_gate_enabled_pre_authorization_observation(item, value.foundation_result)
+        chain_qualified = _chain_is_qualified(value.foundation_result)
+        if not all(_verify_observation(
+                       item, value.foundation_result, chain_qualified)
                    for item in value.observations):
             return False
         expected = create_isolated_gate_enabled_pre_authorization_report(value.foundation_result)
