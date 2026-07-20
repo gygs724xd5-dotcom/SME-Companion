@@ -182,8 +182,8 @@ def _manifest_binding_material(value: BridgeRecordRuntimeManifestBinding) -> tup
         value.activation_permitted, value.response_committed, value.authority_boundary)
 
 
-def _qualification_binding(record: IsolatedBridgeInvocationRecord):
-    if not verify_isolated_bridge_invocation_record(record): return None
+def _qualification_binding(record: IsolatedBridgeInvocationRecord, *, record_verified: bool = False):
+    if not record_verified and not verify_isolated_bridge_invocation_record(record): return None
     source = record.source_binding
     qualification = qualify_controlled_runtime_integration(ControlledRuntimeQualificationInput(
         record.skill_id, source.delivery_qualification, record.bridge_result))
@@ -216,7 +216,7 @@ def verify_bridge_record_qualification_binding(value: Any) -> bool:
 
 def create_bridge_record_runtime_manifest_binding(source: Any):
     if type(source) is not IsolatedBridgeInvocationBatch or not verify_isolated_bridge_invocation_batch(source): return None
-    bindings = tuple(_qualification_binding(x) for x in source.records)
+    bindings = tuple(_qualification_binding(x, record_verified=True) for x in source.records)
     if any(x is None for x in bindings) or tuple(x.skill_id for x in bindings) != SUPPORTED_ADAPTER_SKILL_IDS: return None
     qualifications = tuple(x.runtime_qualification for x in bindings)
     manifest = create_controlled_integration_manifest(qualifications)

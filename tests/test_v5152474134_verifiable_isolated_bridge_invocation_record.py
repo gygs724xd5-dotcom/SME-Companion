@@ -43,6 +43,23 @@ def test_builder_invokes_once_and_verifier_is_pure(monkeypatch):
     assert "bridge_prepared_cost_response" not in {n.func.id for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name)}
 
 
+def test_batch_reuses_verified_source_for_records(monkeypatch):
+    source = source_batch()
+    monkeypatch.setattr(
+        owner,
+        "create_isolated_bridge_invocation_record",
+        lambda *a, **k: pytest.fail("public record factory repeated source verification"),
+    )
+    value = owner.create_isolated_bridge_invocation_batch(source)
+    assert value is not None
+    monkeypatch.setattr(
+        owner,
+        "verify_isolated_bridge_invocation_record",
+        lambda *a, **k: pytest.fail("public record verifier repeated source verification"),
+    )
+    assert owner.verify_isolated_bridge_invocation_batch(value)
+
+
 def test_gate_identity_authority_and_counts(batch):
     assert (batch.isolated_execution_invocations,batch.isolated_calculator_invocations,
         batch.isolated_bridge_invocations,batch.isolated_admission_invocations,

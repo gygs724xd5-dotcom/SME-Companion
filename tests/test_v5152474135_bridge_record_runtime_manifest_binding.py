@@ -35,6 +35,17 @@ def test_exact_records_fixed_order_and_no_reinvocation(binding, bridge_batch, mo
     assert owner.verify_bridge_record_runtime_manifest_binding(binding)
 
 
+def test_manifest_builder_reuses_batch_verified_records(bridge_batch, monkeypatch):
+    monkeypatch.setattr(
+        owner,
+        "verify_isolated_bridge_invocation_record",
+        lambda *a, **k: pytest.fail("record ancestry verified again after batch verification"),
+    )
+    value = owner.create_bridge_record_runtime_manifest_binding(bridge_batch)
+    assert value is not None
+    assert value.skill_order == owner.SUPPORTED_ADAPTER_SKILL_IDS
+
+
 def test_qualification_exact_continuity_and_handoff_ancestry(binding):
     for record, item in zip(binding.source_batch.records, binding.qualification_bindings):
         assert owner.verify_bridge_record_qualification_binding(item)

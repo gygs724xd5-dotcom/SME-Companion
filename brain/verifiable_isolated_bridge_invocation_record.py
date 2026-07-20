@@ -169,8 +169,9 @@ def _request_continuity(record: IsolatedBridgeInvocationRecord) -> bool:
     except (AttributeError,KeyError,TypeError): return False
 
 
-def create_isolated_bridge_invocation_record(source: Any):
-    if type(source) is not ExecutionResultRuntimeBridgeRequestBinding or not verify_execution_result_runtime_bridge_request_binding(source): return None
+def _create_record(source: Any, *, source_verified: bool = False):
+    if type(source) is not ExecutionResultRuntimeBridgeRequestBinding: return None
+    if not source_verified and not verify_execution_result_runtime_bridge_request_binding(source): return None
     request=source.bridge_request
     result=bridge_prepared_cost_response(request)
     if (type(result) is not CostRuntimeBridgeResult or not verify_cost_runtime_bridge_result_integrity(result)
@@ -186,10 +187,14 @@ def create_isolated_bridge_invocation_record(source: Any):
     return candidate if _request_continuity(candidate) else None
 
 
-def verify_isolated_bridge_invocation_record(value: Any) -> bool:
+def create_isolated_bridge_invocation_record(source: Any):
+    return _create_record(source)
+
+
+def _verify_record(value: Any, *, source_verified: bool = False) -> bool:
     try:
         if type(value) is not IsolatedBridgeInvocationRecord: return False
-        if not verify_execution_result_runtime_bridge_request_binding(value.source_binding): return False
+        if not source_verified and not verify_execution_result_runtime_bridge_request_binding(value.source_binding): return False
         expected_input=_input(value.source_binding)
         if value.input_binding!=expected_input or value.bridge_request is not value.source_binding.bridge_request: return False
         if not verify_cost_runtime_bridge_result_integrity(value.bridge_result): return False
@@ -207,11 +212,15 @@ def verify_isolated_bridge_invocation_record(value: Any) -> bool:
     except (AttributeError,TypeError,ValueError,UnicodeEncodeError): return False
 
 
+def verify_isolated_bridge_invocation_record(value: Any) -> bool:
+    return _verify_record(value)
+
+
 def create_isolated_bridge_invocation_batch(source: Any):
     if type(source) is not ExecutionResultRuntimeBridgeRequestBatch or not verify_execution_result_runtime_bridge_request_bindings(source): return None
-    records=tuple(create_isolated_bridge_invocation_record(x) for x in source.bindings)
+    records=tuple(_create_record(x, source_verified=True) for x in source.bindings)
     if any(x is None for x in records) or tuple(x.skill_id for x in records)!=SUPPORTED_ADAPTER_SKILL_IDS: return None
-    verified=tuple(x for x in records if verify_isolated_bridge_invocation_record(x))
+    verified=tuple(x for x in records if _verify_record(x, source_verified=True))
     if len(verified)!=len(records): return None
     draft=IsolatedBridgeInvocationBatch(VERSION,SCOPE,STAGE_IDENTITY,SUPPORTED_ADAPTER_SKILL_IDS,source,records,
         sum(x.invocation_record is not None for x in source.bindings),
@@ -227,7 +236,7 @@ def verify_isolated_bridge_invocation_batch(value: Any) -> bool:
         if tuple(x.source_binding for x in value.records)!=value.source_binding_batch.bindings: return False
         if tuple(x.skill_id for x in value.records)!=SUPPORTED_ADAPTER_SKILL_IDS: return False
         if len({x.record_digest for x in value.records})!=len(SUPPORTED_ADAPTER_SKILL_IDS): return False
-        if not all(verify_isolated_bridge_invocation_record(x) for x in value.records): return False
+        if not all(_verify_record(x, source_verified=True) for x in value.records): return False
         counts=(sum(x.invocation_record is not None for x in value.source_binding_batch.bindings),
             sum(x.invocation_record.output_artifact is not None for x in value.source_binding_batch.bindings),
             sum(x.stage_identity==STAGE_IDENTITY for x in value.records),0,0)
